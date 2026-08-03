@@ -1,0 +1,19 @@
+# Template only. GitHub ignores this filename.
+# Replace every placeholder with a real GitHub user/team before installing this
+# file as .github/CODEOWNERS on the protected default branch.
+
+/.research/decisions/ @REPLACE_WITH_RESEARCH_MANAGER_TEAM
+/.research/policies/ @REPLACE_WITH_RESEARCH_MANAGER_TEAM
+/.research/project.yaml @REPLACE_WITH_RESEARCH_MANAGER_TEAM
+/.research/reports/ @REPLACE_WITH_RESEARCH_MANAGER_TEAM
+/.research/schemas/ @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/.research/tasks/ @REPLACE_WITH_RESEARCH_MANAGER_TEAM
+
+/.github/CODEOWNERS @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/.github/workflows/ @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/pyproject.toml @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/src/researchctl/ @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/src/researchctl/adapters/git_ci.py @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/src/researchctl/services/ci_validation.py @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/src/researchctl/services/linear_delivery.py @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM
+/src/researchctl/services/linear_preview.py @REPLACE_WITH_CONTROL_PLANE_SECURITY_TEAM

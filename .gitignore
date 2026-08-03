@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+.idea/
+.vscode/
+
+# Private design source retained only in the local workspace.
+ChatGPT-Agent与项目管理 (1).md
+research_control_plane_implementation_spec.md
+
+# Local credentials and runtime state.
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.pem
+*.key

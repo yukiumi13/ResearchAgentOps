@@ -1,0 +1,55 @@
+name: research-source-tests
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-source-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-tests:
+    name: researchctl/source-tests
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+      RCP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Check out exact pull request head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify exact pull request head
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RCP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          observed_head="$(git rev-parse --verify HEAD^{commit})"
+          if [[ "$observed_head" != "$RCP_HEAD_SHA" ]]; then
+            echo "::error::Checked-out source differs from the event's exact head"
+            exit 2
+          fi
+
+      - name: Install pull request source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/researchctl-source-tests"
+          "$RUNNER_TEMP/researchctl-source-tests/bin/python" -m pip install '.[dev]'
+
+      - name: Run source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/researchctl-source-tests/bin/python" -m pytest

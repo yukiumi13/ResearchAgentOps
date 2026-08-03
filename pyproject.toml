@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-control-plane"
+version = "0.1.0"
+description = "Git-native governance and execution control for research agents"
+authors = [{ name = "ResearchAgentOps contributors" }]
+maintainers = [{ name = "yukiumi13" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+keywords = [
+    "agent-harness",
+    "agent-ops",
+    "human-in-the-loop",
+    "reproducible-research",
+    "research-automation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic==2.12.5",
+    "PyYAML==6.0.3",
+    "typer==0.24.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/yukiumi13/ResearchAgentOps"
+Repository = "https://github.com/yukiumi13/ResearchAgentOps"
+Issues = "https://github.com/yukiumi13/ResearchAgentOps/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "ruff>=0.12",
+]
+
+[project.scripts]
+researchctl = "researchctl.cli:app"
+researchctl-linear-host = "researchctl.trusted_linear_host:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+researchctl = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

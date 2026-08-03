@@ -1,0 +1,15 @@
+/.research/decisions/ @yukiumi13
+/.research/policies/ @yukiumi13
+/.research/project.yaml @yukiumi13
+/.research/reports/ @yukiumi13
+/.research/schemas/ @yukiumi13
+/.research/tasks/ @yukiumi13
+
+/.github/CODEOWNERS @yukiumi13
+/.github/workflows/ @yukiumi13
+/pyproject.toml @yukiumi13
+/src/researchctl/ @yukiumi13
+/src/researchctl/adapters/git_ci.py @yukiumi13
+/src/researchctl/services/ci_validation.py @yukiumi13
+/src/researchctl/services/linear_delivery.py @yukiumi13
+/src/researchctl/services/linear_preview.py @yukiumi13
