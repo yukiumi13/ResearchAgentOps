@@ -23,6 +23,10 @@ from researchctl.services.requests import (
     SubmissionCreateRequest,
 )
 from researchctl.services.run_records import GitRunRecordRepository
+from researchctl.services.submission_delivery import (
+    SubmissionBranchDelivery,
+    SubmissionPullRequestReceipt,
+)
 from researchctl.services.submission_workflow import SubmissionWorkflowService
 from researchctl.services.task_records import TaskRecordRepository
 
@@ -34,6 +38,43 @@ def _git(repository: Path, *arguments: str) -> str:
         capture_output=True,
         text=True,
     ).stdout
+
+
+class _Delivery:
+    def __init__(self) -> None:
+        self.push_calls: list[dict[str, object]] = []
+        self.pr_calls: list[dict[str, object]] = []
+        self.pushed = False
+        self.opened = False
+
+    def push_exact(self, **values) -> SubmissionBranchDelivery:
+        self.push_calls.append(values)
+        effect_applied = not self.pushed
+        self.pushed = True
+        return SubmissionBranchDelivery(
+            remote="origin",
+            branch=values["branch"],
+            ref=f"refs/heads/{values['branch']}",
+            commit=values["commit"],
+            pushed=effect_applied,
+        )
+
+    def open_or_observe(self, **values) -> SubmissionPullRequestReceipt:
+        self.pr_calls.append(values)
+        created = not self.opened
+        self.opened = True
+        branch = values["branch"]
+        return SubmissionPullRequestReceipt(
+            host="github.example.invalid",
+            repository="owner/project",
+            number=17,
+            url="https://github.example.invalid/owner/project/pull/17",
+            state="open",
+            base_branch=values["base_branch"],
+            head_branch=branch.branch,
+            head_commit=branch.commit,
+            created=created,
+        )
 
 
 def test_real_submission_and_acceptance_are_isolated_atomic_and_reproducible(
@@ -111,6 +152,11 @@ def test_real_submission_and_acceptance_are_isolated_atomic_and_reproducible(
             session_id=spec.session_id,
             state="open",
             run_result_ids=[result.result_id],
+            dependencies={
+                "paths": ["src/training/stop.py"],
+                "resources": ["validation-split"],
+                "environments": ["trainer-cu128"],
+            },
         )
     )
     proposal = ReportProposal(
@@ -120,10 +166,12 @@ def test_real_submission_and_acceptance_are_isolated_atomic_and_reproducible(
         title="Stopping policy result",
         evidence_tree=source_tree,
     )
+    delivery = _Delivery()
     workflow = SubmissionWorkflowService(
         repository_root=repository,
         worktrees_directory=worktrees,
         default_branch="main",
+        delivery=delivery,
     )
     create = SubmissionCreateRequest(
         operation_id="operation_20260803T120000Z_" + "1" * 24,
@@ -140,6 +188,32 @@ def test_real_submission_and_acceptance_are_isolated_atomic_and_reproducible(
     assert first.commit.commit == repeated.commit.commit
     assert first.commit.changed is True
     assert repeated.commit.changed is False
+    assert first.pull_request.created is True
+    assert repeated.pull_request.created is False
+    assert first.pull_request.head_commit == first.commit.commit
+    assert delivery.push_calls == [
+        {
+            "repository_root": repository,
+            "branch": first.commit.branch,
+            "commit": first.commit.commit,
+        },
+        {
+            "repository_root": repository,
+            "branch": first.commit.branch,
+            "commit": first.commit.commit,
+        },
+    ]
+    assert len(delivery.pr_calls) == 2
+    assert delivery.pr_calls[0]["submission_id"] == submission.submission_id
+    assert delivery.pr_calls[0]["base_branch"] == "main"
+    assert delivery.pr_calls[0]["title"] == (
+        f"researchctl: {task.key} proposal {submission.submission_id}"
+    )
+    assert f"Proposal commit: `{first.commit.commit}`" in delivery.pr_calls[0]["body"]
+    assert "## Dependencies" in delivery.pr_calls[0]["body"]
+    assert "path:src/training/stop.py" in delivery.pr_calls[0]["body"]
+    assert "resource:validation-split" in delivery.pr_calls[0]["body"]
+    assert "environment:trainer-cu128" in delivery.pr_calls[0]["body"]
     assert first.evidence_commits == (
         {
             "run_id": spec.run_id,
@@ -307,10 +381,12 @@ def test_submission_rejects_out_of_scope_source_before_proposal_side_effects(
         report_proposal=proposal,
         run_ids=(spec.run_id,),
     )
+    delivery = _Delivery()
     workflow = SubmissionWorkflowService(
         repository_root=repository,
         worktrees_directory=worktrees,
         default_branch="main",
+        delivery=delivery,
     )
     refs_before = _git(
         repository,
@@ -337,3 +413,5 @@ def test_submission_rejects_out_of_scope_source_before_proposal_side_effects(
     assert not (
         worktrees / f"submission-{submission.submission_id}"
     ).exists()
+    assert delivery.push_calls == []
+    assert delivery.pr_calls == []

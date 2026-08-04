@@ -8,6 +8,7 @@ import pytest
 from researchctl.domain.enums import (
     ClaimScope,
     CodeDisposition,
+    ImpactDisposition,
     ReviewDisposition,
     RunAttemptState,
     SessionState,
@@ -35,6 +36,9 @@ from researchctl.services.requests import (
     InboxAckRequest,
     InboxListRequest,
     InboxResolveRequest,
+    ImpactBatchCreateRequest,
+    ImpactCreateRequest,
+    ImpactDecisionCreateRequest,
     ReviewAcceptRequest,
     RunCollectRequest,
     RunRetryRequest,
@@ -73,6 +77,14 @@ def _agent(session_id: str) -> ActorContext:
     )
 
 
+def _automation() -> ActorContext:
+    return ActorContext(
+        actor_id="researchctl-impact",
+        role=ActorRole.TRUSTED_AUTOMATION,
+        credential_kind=CredentialKind.AUTOMATION_CREDENTIAL,
+    )
+
+
 def _service(tmp_path: Path) -> tuple[ApplicationService, RuntimeStore]:
     (tmp_path / ".research" / "tasks").mkdir(parents=True)
     tasks = TaskRecordRepository(tmp_path)
@@ -83,6 +95,7 @@ def _service(tmp_path: Path) -> tuple[ApplicationService, RuntimeStore]:
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )
@@ -233,6 +246,21 @@ class _SubmissionWorkflowResult:
             "terminal_result": self.terminal_result,
             "bundle": {"submission_id": self.submission_id},
             "proposal": {"commit": self.commit},
+            "delivery": {
+                "branch": {
+                    "branch": f"research/submission/{self.submission_id}",
+                    "commit": self.commit,
+                    "pushed": True,
+                },
+                "pull_request": {
+                    "repository": "owner/project",
+                    "number": 17,
+                    "url": "https://github.example.invalid/owner/project/pull/17",
+                    "state": "open",
+                    "head_commit": self.commit,
+                    "created": True,
+                },
+            },
         }
 
 
@@ -245,8 +273,32 @@ class _SubmissionWorkflow:
         self,
         request: SubmissionCreateRequest,
         task: TaskRecord,
+        *,
+        event_callback=None,
     ) -> _SubmissionWorkflowResult:
         self.proposal_calls.append((request, task))
+        if event_callback is not None:
+            event_callback(
+                "submission_proposal_prepared",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "proposal_commit": "6" * 40,
+                },
+            )
+            event_callback(
+                "submission_branch_pushed",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "proposal_commit": "6" * 40,
+                },
+            )
+            event_callback(
+                "submission_pr_created",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "pull_request_number": 17,
+                },
+            )
         return _SubmissionWorkflowResult(
             "proposal_open",
             request.submission.submission_id,
@@ -275,6 +327,92 @@ class _SubmissionWorkflow:
             "7" * 40,
         )
 
+
+class _ImpactWorkflowResult:
+    terminal_result = "proposal_open"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "terminal_result": self.terminal_result,
+            "bundle": {"impact_id": _id("impact", "8")},
+            "proposal": {"commit": "8" * 40},
+        }
+
+
+class _ImpactWorkflow:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def propose(self, request, *, generated_at, event_callback=None):
+        self.calls.append(
+            {"request": request, "generated_at": generated_at}
+        )
+        if event_callback is not None:
+            event_callback(
+                "impact_proposal_prepared",
+                {"impact_id": request.impact_id, "proposal_commit": "8" * 40},
+            )
+            event_callback(
+                "impact_branch_pushed",
+                {"impact_id": request.impact_id, "proposal_commit": "8" * 40},
+            )
+            event_callback(
+                "impact_pr_created",
+                {"impact_id": request.impact_id, "pull_request_number": 18},
+            )
+        return _ImpactWorkflowResult()
+
+    def propose_batch(self, request, *, event_callback=None):
+        self.calls.append({"request": request})
+        if event_callback is not None:
+            event_callback(
+                "impact_proposal_prepared",
+                {"impact_id": request.impact_id, "proposal_commit": "8" * 40},
+            )
+            event_callback(
+                "impact_branch_pushed",
+                {"impact_id": request.impact_id, "proposal_commit": "8" * 40},
+            )
+            event_callback(
+                "impact_pr_created",
+                {"impact_id": request.impact_id, "pull_request_number": 18},
+            )
+        return _ImpactWorkflowResult()
+
+
+class _ImpactDecisionWorkflow:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def propose(
+        self,
+        request,
+        *,
+        reviewer_actor,
+        decided_at,
+        event_callback=None,
+    ):
+        self.calls.append(
+            {
+                "request": request,
+                "reviewer_actor": reviewer_actor,
+                "decided_at": decided_at,
+            }
+        )
+        if event_callback is not None:
+            event_callback(
+                "impact_decision_prepared",
+                {"decision_id": request.decision_id, "proposal_commit": "9" * 40},
+            )
+            event_callback(
+                "impact_decision_branch_pushed",
+                {"decision_id": request.decision_id, "proposal_commit": "9" * 40},
+            )
+            event_callback(
+                "impact_decision_pr_created",
+                {"decision_id": request.decision_id, "pull_request_number": 19},
+            )
+        return _ImpactWorkflowResult()
 
 def _run_spec(run_spec_payload, task: TaskRecord, session_id: str) -> RunSpec:
     return RunSpec.model_validate(
@@ -555,6 +693,7 @@ def test_submission_create_is_session_scoped_journaled_and_replayable(
     assert replayed == first
     assert first.terminal_result == "proposal_open"
     assert first.data["submission"]["proposal"]["commit"] == "6" * 40
+    assert first.data["submission"]["delivery"]["pull_request"]["number"] == 17
     assert workflow.proposal_calls == [(request, task)]
     operation = runtime.get_operation(request.operation_id)
     assert operation is not None
@@ -563,6 +702,8 @@ def test_submission_create_is_session_scoped_journaled_and_replayable(
         "operation_started",
         "actor_authorized",
         "submission_proposal_prepared",
+        "submission_branch_pushed",
+        "submission_pr_created",
         "operation_finished",
     ]
 
@@ -585,6 +726,267 @@ def test_submission_create_is_session_scoped_journaled_and_replayable(
     assert [event.kind for event in denied_operation.events].count(
         "authorization_denied"
     ) == 1
+
+
+def test_impact_is_manager_owned_journaled_and_denies_agent_before_workflow(
+    tmp_path: Path,
+) -> None:
+    service, runtime = _service(tmp_path)
+    workflow = _ImpactWorkflow()
+    service.impact_workflow = workflow
+    request = ImpactCreateRequest(
+        operation_id=_id("operation", "8"),
+        idempotency_key="impact-evaluator-fix",
+        impact_id=_id("impact", "8"),
+        report_id=_id("report", "9"),
+        expected_report_revision=1,
+        target_commit="8" * 40,
+    )
+
+    first = service.impact_create(request, _manager())
+    replayed = service.impact_create(request, _manager())
+
+    assert replayed == first
+    assert first.terminal_result == "proposal_open"
+    assert len(workflow.calls) == 1
+    operation = runtime.get_operation(request.operation_id)
+    assert operation is not None
+    assert [event.kind for event in operation.events] == [
+        "operation_started",
+        "actor_authorized",
+        "impact_proposal_prepared",
+        "impact_branch_pushed",
+        "impact_pr_created",
+        "operation_finished",
+    ]
+
+    denied = request.model_copy(
+        update={
+            "operation_id": _id("operation", "5"),
+            "idempotency_key": "agent-batch-impact-denied",
+        }
+    )
+    with pytest.raises(RCPError) as raised:
+        service.impact_batch_create(denied, _agent(_id("session", "5")))
+
+    assert raised.value.code == "authorization_denied"
+    assert len(workflow.calls) == 1
+    assert workflow.calls[0]["generated_at"] == NOW
+    operation = runtime.get_operation(request.operation_id)
+    assert operation is not None
+    assert [event.kind for event in operation.events] == [
+        "operation_started",
+        "actor_authorized",
+        "impact_proposal_prepared",
+        "impact_branch_pushed",
+        "impact_pr_created",
+        "operation_finished",
+    ]
+
+    denied = request.model_copy(
+        update={
+            "operation_id": _id("operation", "7"),
+            "idempotency_key": "agent-impact-denied",
+        }
+    )
+    with pytest.raises(RCPError) as raised:
+        service.impact_create(denied, _agent(_id("session", "7")))
+
+    assert raised.value.code == "authorization_denied"
+    assert len(workflow.calls) == 1
+    denied_operation = runtime.get_operation(denied.operation_id)
+    assert denied_operation is not None
+    assert denied_operation.terminal_result == "denied"
+
+
+def test_impact_batch_is_trusted_automation_owned_and_replayable(
+    tmp_path: Path,
+) -> None:
+    service, runtime = _service(tmp_path)
+    workflow = _ImpactWorkflow()
+    service.impact_workflow = workflow
+    request = ImpactBatchCreateRequest(
+        operation_id=_id("operation", "6"),
+        idempotency_key="main-push-impact",
+        impact_id=_id("impact", "6"),
+        before_commit="6" * 40,
+        target_commit="7" * 40,
+        generated_at=NOW,
+    )
+
+    first = service.impact_batch_create(request, _automation())
+    replayed = service.impact_batch_create(request, _automation())
+
+    assert replayed == first
+    assert first.terminal_result == "proposal_open"
+    assert len(workflow.calls) == 1
+
+
+def test_impact_decision_is_manager_only_journaled_and_never_runs_work(
+    tmp_path: Path,
+) -> None:
+    service, runtime = _service(tmp_path)
+    workflow = _ImpactDecisionWorkflow()
+    service.impact_decision_workflow = workflow
+    request = ImpactDecisionCreateRequest(
+        operation_id=_id("operation", "3"),
+        idempotency_key="keep-impact-stale",
+        decision_id=_id("decision", "3"),
+        impact_id=_id("impact", "3"),
+        report_id=_id("report", "3"),
+        expected_report_revision=2,
+        expected_impact_digest="sha256:" + "3" * 64,
+        target_commit="3" * 40,
+        disposition=ImpactDisposition.KEEP_STALE,
+        reason="Awaiting a reviewed rerun plan.",
+    )
+
+    first = service.impact_decide(request, _manager())
+    replayed = service.impact_decide(request, _manager())
+
+    assert replayed == first
+    assert first.terminal_result == "proposal_open"
+    assert len(workflow.calls) == 1
+    assert workflow.calls[0]["reviewer_actor"] == "uid-1000"
+    operation = runtime.get_operation(request.operation_id)
+    assert operation is not None
+    assert [event.kind for event in operation.events] == [
+        "operation_started",
+        "actor_authorized",
+        "impact_decision_prepared",
+        "impact_decision_branch_pushed",
+        "impact_decision_pr_created",
+        "operation_finished",
+    ]
+
+    denied = request.model_copy(
+        update={
+            "operation_id": _id("operation", "2"),
+            "idempotency_key": "agent-impact-decision-denied",
+        }
+    )
+    with pytest.raises(RCPError) as raised:
+        service.impact_decide(denied, _agent(_id("session", "2")))
+
+    assert raised.value.code == "authorization_denied"
+    assert len(workflow.calls) == 1
+
+
+def test_delivery_workflow_event_namespace_fails_closed(
+    tmp_path: Path,
+) -> None:
+    service, runtime = _service(tmp_path)
+
+    class _InvalidImpactWorkflow(_ImpactWorkflow):
+        def propose_batch(self, request, *, event_callback=None):
+            assert event_callback is not None
+            event_callback("caller_selected_event", {"impact_id": request.impact_id})
+            raise AssertionError("unsupported event must stop the workflow")
+
+    service.impact_workflow = _InvalidImpactWorkflow()
+    request = ImpactBatchCreateRequest(
+        operation_id=_id("operation", "4"),
+        idempotency_key="invalid-impact-event",
+        impact_id=_id("impact", "4"),
+        before_commit="4" * 40,
+        target_commit="5" * 40,
+        generated_at=NOW,
+    )
+
+    with pytest.raises(RCPError) as raised:
+        service.impact_batch_create(request, _automation())
+
+    assert raised.value.code == "workflow_event_invalid"
+    operation = runtime.get_operation(request.operation_id)
+    assert operation is not None
+    assert operation.terminal_result == "failed"
+    assert [event.kind for event in operation.events] == [
+        "operation_started",
+        "actor_authorized",
+        "operation_failed",
+        "operation_finished",
+    ]
+
+
+def test_submission_delivery_uncertainty_keeps_operation_running_and_recovers(
+    tmp_path: Path,
+    task_payload,
+    submission_payload,
+) -> None:
+    service, runtime = _service(tmp_path)
+    task = TaskRecord.model_validate(task_payload(state="ready"))
+    service.tasks.create(task)
+    session_id = _session(runtime, task)
+    request = _submission_create_request(task, session_id, submission_payload)
+
+    class _RecoveringWorkflow(_SubmissionWorkflow):
+        def propose(self, request, task, *, event_callback=None):
+            self.proposal_calls.append((request, task))
+            assert event_callback is not None
+            event_callback(
+                "submission_proposal_prepared",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "proposal_commit": "6" * 40,
+                },
+            )
+            event_callback(
+                "submission_branch_pushed",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "proposal_commit": "6" * 40,
+                },
+            )
+            if len(self.proposal_calls) == 1:
+                raise RCPError(
+                    code="submission_delivery_uncertain",
+                    message="PR create outcome is uncertain.",
+                    context={"stage": "pull_request_create"},
+                )
+            event_callback(
+                "submission_pr_observed",
+                {
+                    "submission_id": request.submission.submission_id,
+                    "pull_request_number": 17,
+                },
+            )
+            return _SubmissionWorkflowResult(
+                "proposal_open",
+                request.submission.submission_id,
+                "6" * 40,
+            )
+
+    workflow = _RecoveringWorkflow()
+    service.submission_workflow = workflow
+
+    with pytest.raises(RCPError) as uncertain:
+        service.submission_create(request, _agent(session_id))
+
+    assert uncertain.value.code == "submission_delivery_uncertain"
+    running = runtime.get_operation(request.operation_id)
+    assert running is not None
+    assert running.state == "running"
+    assert [event.kind for event in running.events] == [
+        "operation_started",
+        "actor_authorized",
+        "submission_proposal_prepared",
+        "submission_branch_pushed",
+    ]
+
+    recovered = service.submission_create(request, _agent(session_id))
+
+    assert recovered.terminal_result == "proposal_open"
+    assert len(workflow.proposal_calls) == 2
+    terminal = runtime.get_operation(request.operation_id)
+    assert terminal is not None
+    assert [event.kind for event in terminal.events] == [
+        "operation_started",
+        "actor_authorized",
+        "submission_proposal_prepared",
+        "submission_branch_pushed",
+        "submission_pr_observed",
+        "operation_finished",
+    ]
 
 
 def test_review_accept_is_manager_only_journaled_and_replayable(

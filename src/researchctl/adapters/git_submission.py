@@ -67,7 +67,7 @@ class GitSubmissionAdapter:
         expected_head: str | None = None,
     ) -> tuple[str, Path]:
         self._validate_identity(submission_id, base_commit)
-        branch = f"research/submission/{submission_id}"
+        branch = self._branch_for(submission_id)
         worktree = worktrees_directory / f"submission-{submission_id}"
         selected = base_commit
         existing = self._resolve(
@@ -196,7 +196,7 @@ class GitSubmissionAdapter:
         self._validate_identity(submission_id, expected_parent)
         if not _OPERATION_ID.fullmatch(operation_id):
             self._invalid_identity()
-        expected_branch = f"research/submission/{submission_id}"
+        expected_branch = self._branch_for(submission_id)
         if branch != expected_branch:
             self._invalid_identity()
         root = Path(os.path.abspath(os.fspath(worktree)))
@@ -271,6 +271,10 @@ class GitSubmissionAdapter:
             changed=changed,
             paths=expected_paths,
         )
+
+    @staticmethod
+    def _branch_for(submission_id: str) -> str:
+        return f"research/submission/{submission_id}"
 
     def _verify_commit(
         self,

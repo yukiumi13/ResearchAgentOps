@@ -114,6 +114,14 @@ class ReportApplicability(StrEnum):
     SUPERSEDED = "superseded"
 
 
+class ImpactDisposition(StrEnum):
+    RERUN = "rerun"
+    WAIVE = "waive"
+    KEEP_STALE = "keep_stale"
+    INVALIDATE = "invalidate"
+    DEPENDENCY_FIX = "dependency_fix"
+
+
 class InputKind(StrEnum):
     CONFIG = "config"
     DATASET = "dataset"

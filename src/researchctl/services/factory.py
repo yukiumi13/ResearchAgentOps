@@ -9,6 +9,11 @@ from pathlib import Path
 
 from researchctl.adapters.git_commit import GitSessionCommitVerifier
 from researchctl.adapters.git_accepted_merge import GitAcceptedMergeReader
+from researchctl.adapters.github_impact import GitHubImpactDelivery
+from researchctl.adapters.github_impact_decision import (
+    GitHubImpactDecisionDelivery,
+)
+from researchctl.adapters.github_submission import GitHubSubmissionDelivery
 from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH
 from researchctl.domain.enums import ProjectState
 from researchctl.domain.models import LinearProjectionPolicy, RunSpec
@@ -23,6 +28,11 @@ from researchctl.services.bootstrap_proposal import BootstrapProposalService
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
 from researchctl.services.control_tasks import ControlTaskRecordRepository
+from researchctl.services.impact_workflow import ImpactWorkflowService
+from researchctl.services.impact_decision_workflow import (
+    ImpactDecisionWorkflowService,
+)
+from researchctl.services.report_status import ReportStatusService
 from researchctl.services.local_run import LocalRunExecutor
 from researchctl.services.linear_delivery import (
     AcceptedMergeReader,
@@ -72,6 +82,11 @@ class TrustedLinearApplicationHandle(ApplicationHandle):
 
 @dataclass(slots=True)
 class TrustedPostMergeApplicationHandle(ApplicationHandle):
+    pass
+
+
+@dataclass(slots=True)
+class TrustedImpactApplicationHandle(ApplicationHandle):
     pass
 
 
@@ -318,6 +333,32 @@ def open_application(
                 repository_root=project.repository_root,
                 worktrees_directory=project.runtime.worktrees_directory,
                 default_branch=project.project.repository.default_branch,
+                delivery=GitHubSubmissionDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
+            ),
+            impact_workflow=ImpactWorkflowService(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                delivery=GitHubImpactDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
+            ),
+            report_status_reader=ReportStatusService(
+                repository_root=project.repository_root,
+                default_branch=project.project.repository.default_branch,
+            ),
+            impact_decision_workflow=ImpactDecisionWorkflowService(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                delivery=GitHubImpactDecisionDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
             ),
         )
         return ApplicationHandle(
@@ -449,3 +490,27 @@ def open_post_merge_application(
     except Exception:
         base.close()
         raise
+
+
+def open_impact_automation_application(
+    path: Path = Path("."),
+    *,
+    automation_identity: str = "researchctl-impact",
+    local_host: str | None = None,
+) -> TrustedImpactApplicationHandle:
+    """Compose the main-push Impact scanner under one trusted identity."""
+
+    if not automation_identity.strip():
+        raise ValueError("automation_identity must be non-empty")
+    base = open_application(path, local_host=local_host, environment={})
+    actor = ActorContext(
+        actor_id=automation_identity,
+        role=ActorRole.TRUSTED_AUTOMATION,
+        credential_kind=CredentialKind.AUTOMATION_CREDENTIAL,
+    )
+    return TrustedImpactApplicationHandle(
+        project=base.project,
+        runtime=base.runtime,
+        service=base.service,
+        actor=actor,
+    )

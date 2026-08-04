@@ -123,6 +123,14 @@ ReportId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("report")),
 ]
+ImpactId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("impact")),
+]
+DependencyReceiptId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("receipt")),
+]
 StatusUpdateId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("update")),

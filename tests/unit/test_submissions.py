@@ -43,6 +43,11 @@ def _records(
             state="open",
             claim="Improves loss.\n# forged accepted heading",
             run_result_ids=[result.result_id],
+            dependencies={
+                "paths": ["src/training/stop.py"],
+                "resources": ["validation-split"],
+                "environments": ["trainer-cu128"],
+            },
         )
     )
     proposal = ReportProposal(
@@ -101,7 +106,7 @@ def test_submission_bundle_is_closed_deterministic_and_escapes_agent_markdown(
         or item.path.startswith(".research/decisions/")
         for item in first.files
     )
-    review = next(item.content for item in first.files if item.path.endswith("review.md"))
+    review = next(item.content for item in first.files if item.path == f"{root}/review.md")
     preview = next(
         item.content
         for item in first.files
@@ -111,6 +116,10 @@ def test_submission_bundle_is_closed_deterministic_and_escapes_agent_markdown(
     assert first.source_digest.encode() in preview
     assert b"\n# forged accepted heading" not in review
     assert b"\\# forged accepted heading" in review
+    assert b"## Dependencies" in review
+    assert b"path:src/training/stop.py" in review
+    assert b"resource:validation-split" in review
+    assert b"environment:trainer-cu128" in review
 
 
 def test_submission_bundle_rejects_wrong_evidence_tree_and_category(

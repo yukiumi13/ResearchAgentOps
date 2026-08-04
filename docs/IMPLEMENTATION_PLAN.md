@@ -15,8 +15,10 @@ ADRs. This plan controls sequencing, not semantics.
 - Phase 2 is substantially implemented locally: one shared
   `ApplicationService`, manager and Session actors, Task proposals, isolated
   worktree/tmux Agent Sessions, durable operation journal, status, exception
-  inbox, read-only `session list/show/address`, and read-only reconcile. Guided
-  Task creation, HostPool selection, and primary-inbox grouping remain gaps.
+  inbox with stable management-question groups, guided and non-interactive Task
+  creation, read-only `session list/show/address`, and read-only reconcile.
+  HostPool selection, formal stale-observation labeling, and the production
+  inbox SLO run remain gaps.
   Task write scope is enforced during Submission preparation, exact-head
   Submission CI, and frozen-source Run start/retry; it is mistake containment,
   not hostile same-user process isolation.
@@ -28,29 +30,45 @@ ADRs. This plan controls sequencing, not semantics.
   preparation; protected-base multi-type `ci dispatch`; conditional nested
   Submission attestation; protected-base workflow; a separate credential-free
   exact-PR-source test workflow; an installed single-maintainer CODEOWNERS
-  baseline; and a reusable inert template. Supported
+  baseline; a constrained `git push` plus authenticated `gh api` Submission PR
+  adapter with observe-before-mutate recovery; and a reusable inert template. Supported
   protocol PRs validate, unknown or mixed control changes fail closed, and an
   ordinary source PR is `not_applicable` only to exact-head protocol validation
   while the source workflow tests its exact head. Branch rules, reviewer-policy
-  verification, and a GitHub PR adapter remain deployment/product work.
+  verification, GitHub credential installation, and a live PR pilot remain
+  deployment work. ExperimentPlan lint and independent PlanReview are designed
+  below but are not implemented.
 - Phase 8's durable repository core is implemented and fake-port tested:
   credential-free preview, accepted-result and Session-reply delivery, Session
   inbox/outbox, fixed ingress grammar, verified receipts, claim/lease/retry/dead
   letter, stable-marker observation, fallback, and recovery. A real
   authenticated Linear webhook/poller and real publisher adapter remain
-  deployment work. A credential-free post-merge shadow host and real Git-object
-  accepted-merge reader are implemented; authenticated GitHub artifact ingress
-  and a live shadow/canary pilot remain deployment work. No live Linear
-  operation is implied by fake-port tests.
-- Phases 5 through 7 and general Phase 9 presentation adapters are not
-  implemented. They remain separate release gates so the v0.1 harness does not
-  acquire a daemon, scheduler, broker, or distributed database prematurely.
+  deployment work. A credential-free post-merge shadow host, real Git-object
+  accepted-merge reader, and one-shot authenticated `gh api` artifact ingress
+  are implemented and tested. Credential installation, trusted scheduling, and
+  a live shadow/canary pilot remain deployment work. No live Linear operation
+  is implied by fake-port tests.
+- Phase 5 has a typed outbound-only SSH transport primitive with bounded
+  observation and mutation-uncertainty behavior. The fixed remote runner,
+  host-profile integration, fleet observation, and cross-host Run workflow are
+  not implemented.
+- Phase 6 implements Git code-path Report Impact through merge-triggered batch
+  PR creation and protected-base regeneration. Typed resource/environment
+  receipts, fail-closed unresolved classification, effective applicability
+  reads, and explicit manager Decision PRs are implemented; trusted live
+  provider adapters, protected provider replay, and Session sync remain open.
+  Phase 7 and general Phase 9 presentation adapters are not implemented. They
+  remain separate release gates so the v0.1 harness does not acquire a daemon,
+  scheduler, broker, or distributed database prematurely.
 
 The implementation order, quality assessment, goal simulations, and explicit
 exit conditions are in `docs/DESIGN_ASSESSMENT.md`. Gate R0 closes the current
 repository; R1 is the protected GitHub plus real Linear shadow pilot; R2 adds
 SSH; R3 adds impact/sync; R4 adds a shared GPU controller only when contention
 actually requires it.
+
+`docs/WORKFLOW_COVERAGE.md` is the audited workflow/status checklist for every
+stable use case. Its `[x]` marks mapping completeness, not runtime acceptance.
 
 Statuses above describe repository code and tests only; they do not mean GitHub
 protection, either workflow, or Linear automation has been installed. A release
@@ -143,6 +161,11 @@ Gate:
 Deliverables:
 
 - RunSpec, RunAttempt, RunResult and retry lineage;
+- a strict ExperimentPlan schema, canonical Plan digest, deterministic
+  Plan-to-RunSpec compiler, no-fallback lint, and typed independent PlanReview;
+- a short-lived read-only reviewer invocation that may use a provider subagent
+  without requiring a second persistent Session, plus an isolated fallback
+  adapter that fails closed when review capability is unavailable;
 - run branches and immutable tags;
 - strict Task-required input, environment/config/input identity, explicit-host,
   worktree/path, executable, disk, fresh GPU identity, and artifact-path
@@ -152,6 +175,10 @@ Deliverables:
 
 Gate:
 
+- missing user intent becomes `needs_input` before Run side effects, and an
+  Agent/provider/CLI default cannot satisfy an undeclared semantic choice;
+- Plan review binds the exact Plan and Task digests, cannot be performed under
+  the drafting invocation identity, and cannot grant human acceptance;
 - a run uses its frozen commit while session code changes;
 - wrong typed inputs fail before launch;
 - kill or timeout after every launch step does not duplicate a process;
@@ -163,6 +190,8 @@ Gate:
 Deliverables:
 
 - ResearchSubmission and deterministic canonical Report renderer;
+- assigned-Agent push plus open-or-observe PR delivery using only the derived
+  remote, Submission branch, default base, title, and body;
 - manager review accept command and atomic Report materialization;
 - protected-base dispatcher, trusted Submission validator, outer exact-head
   workflow envelope, conditional typed Submission attestation, PR path matrix,
@@ -172,6 +201,8 @@ Deliverables:
 
 Gate:
 
+- `proposal_open` is returned only after the exact remote head and one open PR
+  are observed; delivery timeouts recover by observation and do not duplicate;
 - one merged commit contains evidence, submission, decision, and Report;
 - an agent cannot self-declare acceptance;
 - every CI result and generated-output digest is bound to the exact PR head and
@@ -199,6 +230,31 @@ Gate:
 - partial host failure returns bounded, timestamped fleet results.
 
 ## Phase 6: Conservative impact
+
+Implemented increment:
+
+- strict ReportImpact schema and canonical digest;
+- exact path and trailing `/**` dependency matching;
+- per-Report overlap-to-stale and reviewed no-overlap basis advance proposals;
+- merge-triggered all-Report scanning with deterministic classification;
+- one digest-bound `ReportImpactBatch`, fixed commit, branch, and GitHub PR;
+- clean-runner commit-SHA replay and protected-base whole-batch regeneration;
+- fixed Impact branch/commit/PR delivery with optimistic revision/main checks;
+- protected-base exact-head regeneration and Agent authority denial.
+
+Remaining Phase 6 work:
+
+- trusted resource/environment provider adapters and protected-base replay;
+- explicit worktree synchronization.
+
+Implemented Phase 6 decision slice:
+
+- `report status` derives effective applicability at an exact commit, ignores
+  protocol-only tree changes, and fails an unavailable basis closed;
+- manager-only `review impact` materializes digest-bound rerun, waiver,
+  keep-stale, invalidation, or dependency-fix records and a Report revision;
+- rerun binds an accepted planned/ready Task but never launches a Run;
+- protected-base dispatch regenerates the exact Decision and Report bytes.
 
 Deliverables:
 

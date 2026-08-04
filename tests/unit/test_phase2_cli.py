@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
 from researchctl.cli import app
-from researchctl.domain.models import LinearProjectionPolicy, RunSpec, TaskRecord
+from researchctl.domain.models import (
+    InputIdentity,
+    LinearProjectionPolicy,
+    RunSpec,
+    StatusUpdate,
+    TaskRecord,
+)
 from researchctl.errors import RCPError
 from researchctl.output import envelope
 from researchctl.serialization import canonical_digest, dump_yaml
@@ -22,6 +30,8 @@ from researchctl.services.requests import (
     InboxResolveRequest,
     InboxSnoozeRequest,
     LinearConfigureRequest,
+    LinearDeliveryListRequest,
+    LinearDeliveryShowRequest,
     RunCollectRequest,
     RunRetryRequest,
     RunStartRequest,
@@ -51,6 +61,7 @@ class _SpyService:
     def __init__(self) -> None:
         self.calls: list[_Call] = []
         self.error: RCPError | None = None
+        self.inbox_items: tuple[object, ...] = ()
 
     def __getattr__(self, method: str):
         def invoke(request: Any, actor: object) -> Any:
@@ -58,9 +69,44 @@ class _SpyService:
             if self.error is not None:
                 raise self.error
             if method == "inbox_list":
-                return ()
+                return self.inbox_items
             if method == "session_attach":
                 return {"attach_argv": ["true"], "session": {"state": "active"}}
+            if method in {"linear_delivery_list", "linear_delivery_show"}:
+                delivery = {
+                    "project_id": _id("project", "a"),
+                    "topic": request.topic or "linear.accepted-result.v1",
+                    "outbox_id": getattr(request, "outbox_id", "linear-event-test"),
+                    "aggregate_id": "report:test:1",
+                    "state": "pending",
+                    "created_at": "2026-08-03T12:00:00Z",
+                    "age_seconds": 30,
+                    "pending_age_seconds": 30,
+                    "attempt_count": 2,
+                    "last_error_code": "linear_delivery_unavailable",
+                    "last_claim_id": "claim-previous",
+                    "active_claim": {
+                        "claim_id": "claim-active",
+                        "claimed_at": "2026-08-03T12:00:20Z",
+                        "expires_at": "2026-08-03T12:05:20Z",
+                    },
+                    "receipt": {
+                        "receipt_id": "linear-receipt-test",
+                        "comment_id": "44444444-4444-4444-8444-444444444444",
+                        "thread_id": "33333333-3333-4333-8333-333333333333",
+                        "payload_digest": "sha256:" + "a" * 64,
+                    },
+                    "lineage": {"task_id": _id("task", "b")},
+                }
+                if method == "linear_delivery_list":
+                    return {
+                        "topic": request.topic,
+                        "state": request.state,
+                        "limit": request.limit,
+                        "count": 1,
+                        "items": [delivery],
+                    }
+                return {"delivery": delivery}
             command = {
                 "bootstrap_accept": "bootstrap.accept",
                 "bootstrap_propose": "bootstrap.propose",
@@ -202,6 +248,51 @@ def cli_spy(monkeypatch: pytest.MonkeyPatch):
 
 def _payload(request: Any) -> str:
     return json.dumps(request.model_dump(mode="json", exclude_none=True))
+
+
+def _attention_item(
+    *,
+    kind: str,
+    fill: str,
+    status: str,
+    summary: str,
+    blocker_category: str | None = None,
+    blocker_detail: str | None = None,
+    decision_needed: dict[str, object] | None = None,
+    suggested_next_action: str | None = None,
+) -> SimpleNamespace:
+    observed_at = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+    update = StatusUpdate(
+        update_id=_id("update", fill),
+        task_id=_id("task", fill),
+        session_id=_id("session", fill),
+        status=status,
+        summary=summary,
+        observed_at=observed_at,
+        blocker_category=blocker_category,
+        blocker_detail=blocker_detail,
+        decision_needed=decision_needed,
+        suggested_next_action=suggested_next_action,
+    )
+    return SimpleNamespace(
+        dedupe_key="sha256:" + fill * 64,
+        generation=1,
+        state="open",
+        kind=kind,
+        priority=10,
+        task_id=update.task_id,
+        session_id=update.session_id,
+        current_update=update,
+        first_seen_at=observed_at,
+        last_seen_at=observed_at,
+        acknowledged_by=None,
+        acknowledged_at=None,
+        snoozed_by=None,
+        snoozed_until=None,
+        resolved_by=None,
+        resolved_at=None,
+        resolution_reason=None,
+    )
 
 
 def _case_data(
@@ -745,6 +836,239 @@ def test_machine_mutation_error_keeps_operation_identity_without_text_pollution(
     assert subprocess_calls == []
 
 
+def test_inbox_human_and_json_present_the_same_management_groups(cli_spy) -> None:
+    service, _actor, _opens, _subprocess_calls = cli_spy
+    service.inbox_items = (
+        _attention_item(
+            kind="waiting",
+            fill="7",
+            status="blocked",
+            summary="Waiting for the external benchmark.",
+            blocker_category="waiting",
+            blocker_detail="The benchmark service has not returned.",
+        ),
+        _attention_item(
+            kind="running",
+            fill="6",
+            status="running",
+            summary="Training is still running.",
+        ),
+        _attention_item(
+            kind="failed_or_lost",
+            fill="5",
+            status="blocked",
+            summary="The remote Session was lost.",
+            blocker_category="lost",
+            blocker_detail="The owning host is unreachable.",
+        ),
+        _attention_item(
+            kind="stale_or_needs_rerun",
+            fill="4",
+            status="blocked",
+            summary="The evaluator changed after this result.",
+            blocker_category="stale",
+            blocker_detail="The result needs an impact decision.",
+        ),
+        _attention_item(
+            kind="needs_review",
+            fill="3",
+            status="ready_for_review",
+            summary="The result bundle is ready.",
+            suggested_next_action="Review the exact Submission head.",
+        ),
+        _attention_item(
+            kind="blocked",
+            fill="2",
+            status="blocked",
+            summary="Dataset access is blocked.",
+            blocker_category="data_access",
+            blocker_detail="The immutable dataset URI is not reachable.",
+        ),
+        _attention_item(
+            kind="needs_decision",
+            fill="1",
+            status="needs_input",
+            summary="Choose whether to rerun seed 3.\x1b[31m",
+            decision_needed={
+                "question": "Rerun the missing seed?",
+                "options": ("rerun", "accept four seeds"),
+            },
+            suggested_next_action="Choose one option before submission.",
+        ),
+    )
+    runner = CliRunner()
+
+    human = runner.invoke(app, ["inbox", "list"])
+    machine = runner.invoke(
+        app,
+        ["inbox", "list", "--json"],
+        input=_payload(InboxListRequest()),
+    )
+
+    assert human.exit_code == 0, human.output
+    assert machine.exit_code == 0, machine.output
+    headings = [
+        "Needs Decision (1)",
+        "Blocked (1)",
+        "Needs Review (1)",
+        "Stale or Needs Rerun (1)",
+        "Failed or Lost (1)",
+        "Running (1)",
+        "Waiting (1)",
+    ]
+    assert [human.output.index(heading) for heading in headings] == sorted(
+        human.output.index(heading) for heading in headings
+    )
+    assert "Decision: Rerun the missing seed?" in human.output
+    assert "Blocker: The immutable dataset URI is not reachable." in human.output
+    assert "Next: Review the exact Submission head." in human.output
+    assert "\\u001b[31m" in human.output
+    assert "\x1b[31m" not in human.output
+
+    payload = json.loads(machine.output)
+    assert [group["group"] for group in payload["data"]["groups"]] == [
+        "needs_decision",
+        "blocked",
+        "needs_review",
+        "stale_or_needs_rerun",
+        "failed_or_lost",
+        "running",
+        "waiting",
+    ]
+    assert sum(group["count"] for group in payload["data"]["groups"]) == len(
+        payload["data"]["items"]
+    )
+
+
+def test_guided_and_flag_task_creation_build_the_same_typed_request(
+    tmp_path: Path,
+    cli_spy,
+    monkeypatch,
+) -> None:
+    service, _actor, _opens, _subprocess_calls = cli_spy
+    observed_at = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr("researchctl.phase2_cli.utc_now", lambda: observed_at)
+    operation_id = _id("operation", "8")
+    task_id = _id("task", "9")
+    common = [
+        "--task-id",
+        task_id,
+        "--operation-id",
+        operation_id,
+        "--idempotency-key",
+        "guided-parity",
+        "--project",
+        str(tmp_path),
+    ]
+    required_input = InputIdentity(
+        kind="dataset",
+        logical_id="validation-split",
+        version="2026-08-01",
+    )
+    input_path = tmp_path / "required-input.yaml"
+    input_path.write_text(dump_yaml(required_input), encoding="utf-8")
+    runner = CliRunner()
+
+    guided = runner.invoke(
+        app,
+        ["task", "create", "--guided", *common],
+        input=(
+            "MAR-17\n"
+            "Evaluate a stopping policy\n"
+            "Determine whether the policy improves validation loss.\n"
+            "The comparison and uncertainty are recorded.\n"
+            "n\n"
+            "on-prem\n"
+            "src/training\n"
+            "n\n"
+            "A comparison report with uncertainty.\n"
+            "n\n"
+            "\n"
+            "Whether to promote the candidate policy.\n"
+            "y\n"
+            "dataset\n"
+            "validation-split\n"
+            "version\n"
+            "2026-08-01\n"
+            "\n"
+            "\n"
+            "n\n"
+            "n\n"
+        ),
+    )
+    flags = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            *common,
+            "--key",
+            "MAR-17",
+            "--title",
+            "Evaluate a stopping policy",
+            "--goal",
+            "Determine whether the policy improves validation loss.",
+            "--done-when",
+            "The comparison and uncertainty are recorded.",
+            "--execution-domain",
+            "on-prem",
+            "--allow-write",
+            "src/training",
+            "--deliverable",
+            "A comparison report with uncertainty.",
+            "--required-input-file",
+            str(input_path),
+            "--next-decision",
+            "Whether to promote the candidate policy.",
+        ],
+    )
+
+    assert guided.exit_code == 0, guided.output
+    assert flags.exit_code == 0, flags.output
+    guided_request = service.calls[-2].request
+    flags_request = service.calls[-1].request
+    assert isinstance(guided_request, TaskCreateRequest)
+    assert guided_request == flags_request
+    assert guided_request.task.execution_domain == "on-prem"
+    assert guided_request.task.required_inputs == (required_input,)
+    assert guided_request.task.next_decision == (
+        "Whether to promote the candidate policy."
+    )
+
+
+def test_flag_task_creation_identifies_a_missing_done_condition(
+    tmp_path: Path,
+    cli_spy,
+) -> None:
+    _service, _actor, opens, _subprocess_calls = cli_spy
+    result = CliRunner().invoke(
+        app,
+        [
+            "task",
+            "create",
+            "--project",
+            str(tmp_path),
+            "--key",
+            "MAR-17",
+            "--title",
+            "Evaluate a stopping policy",
+            "--goal",
+            "Determine whether the policy improves validation loss.",
+            "--execution-domain",
+            "on-prem",
+            "--allow-write",
+            "src/training",
+            "--deliverable",
+            "A comparison report with uncertainty.",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Human mode requires at least one --done-when." in result.output
+    assert "--done-when" in result.output
+    assert opens == []
+
+
 def test_linear_configure_human_and_json_share_one_secretless_request_path(
     tmp_path: Path,
     cli_spy,
@@ -831,6 +1155,119 @@ def test_linear_configure_json_cannot_spoof_actor_identity(cli_spy) -> None:
         app,
         ["linear", "configure", "--json"],
         input=json.dumps(payload),
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.output)["errors"][0]["code"] == "validation_error"
+    assert opens == []
+
+
+def test_linear_delivery_list_show_human_and_json_share_read_only_service(
+    tmp_path: Path,
+    cli_spy,
+) -> None:
+    service, actor, opens, _subprocess_calls = cli_spy
+    list_request = LinearDeliveryListRequest(
+        topic="linear.session-reply.v1",
+        state="pending",
+        limit=7,
+    )
+    show_request = LinearDeliveryShowRequest(
+        topic="linear.accepted-result.v1",
+        outbox_id="linear-event-test",
+    )
+    runner = CliRunner()
+
+    human_list = runner.invoke(
+        app,
+        [
+            "linear",
+            "delivery",
+            "list",
+            "--project",
+            str(tmp_path),
+            "--topic",
+            list_request.topic,
+            "--state",
+            "pending",
+            "--limit",
+            "7",
+        ],
+    )
+    json_list = runner.invoke(
+        app,
+        [
+            "linear",
+            "delivery",
+            "list",
+            "--json",
+            "--project",
+            str(tmp_path),
+        ],
+        input=_payload(list_request),
+    )
+    human_show = runner.invoke(
+        app,
+        [
+            "linear",
+            "delivery",
+            "show",
+            show_request.outbox_id,
+            "--topic",
+            show_request.topic,
+            "--project",
+            str(tmp_path),
+        ],
+    )
+    json_show = runner.invoke(
+        app,
+        [
+            "linear",
+            "delivery",
+            "show",
+            "--json",
+            "--project",
+            str(tmp_path),
+        ],
+        input=_payload(show_request),
+    )
+
+    for result in (human_list, json_list, human_show, json_show):
+        assert result.exit_code == 0, result.output
+    assert [call.method for call in service.calls[-4:]] == [
+        "linear_delivery_list",
+        "linear_delivery_list",
+        "linear_delivery_show",
+        "linear_delivery_show",
+    ]
+    assert service.calls[-4].request == list_request
+    assert service.calls[-3].request == list_request
+    assert service.calls[-2].request == show_request
+    assert service.calls[-1].request == show_request
+    assert all(call.actor is actor for call in service.calls[-4:])
+    assert opens == [(tmp_path, {})] * 4
+    assert "[pending]" in human_list.output
+    assert "attempts=2" in human_list.output
+    assert "Active claim: claim-active" in human_list.output
+    assert "Receipt: linear-receipt-test" in human_show.output
+    assert "Lineage:" in human_show.output
+    assert json.loads(json_list.output)["command"] == "linear.delivery.list"
+    assert json.loads(json_show.output)["command"] == "linear.delivery.show"
+
+    help_result = runner.invoke(app, ["linear", "delivery", "list", "--help"])
+    assert help_result.exit_code == 0
+    lowered = help_result.output.lower()
+    assert "api-key" not in lowered
+    assert "token" not in lowered
+    assert "secret" not in lowered
+
+
+def test_linear_delivery_json_rejects_actor_spoof_before_open(cli_spy) -> None:
+    _service, _actor, opens, _subprocess_calls = cli_spy
+    result = CliRunner().invoke(
+        app,
+        ["linear", "delivery", "list", "--json"],
+        input=json.dumps({"limit": 10, "actor_role": "manager"}),
     )
 
     assert result.exit_code == 2

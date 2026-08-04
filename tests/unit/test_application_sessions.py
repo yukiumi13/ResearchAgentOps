@@ -168,6 +168,7 @@ def _service(tmp_path: Path) -> tuple[ApplicationService, RuntimeStore, TaskReco
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )

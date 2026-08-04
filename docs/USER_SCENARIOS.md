@@ -267,9 +267,12 @@ but this ID remains the acceptance-suite and reporting key.
   which reports may be affected and chooses to rerun, explicitly waive, or mark
   stale instead of silently changing a dependency commit.
 - Scope / earliest phase / test: Core / Phase 6 / `AT-US-020`.
-- Acceptance: a relevant baseline change creates an `impact_pending` proposal
-  with those three decisions; no-overlap never auto-validates; an outdated
-  expected Report revision or main tree is rejected by optimistic concurrency.
+- Acceptance: a relevant baseline change makes the effective read
+  `impact_pending`; accepted Impact analysis exposes the affected dependencies,
+  and a separate manager Decision records rerun, waiver, or keep-stale without
+  starting a Run. No-overlap never auto-validates, and an outdated Impact
+  digest, expected Report revision, or main tree is rejected by optimistic
+  concurrency.
 
 ### US-021 - Trusted CI validates; SSH runners experiment
 

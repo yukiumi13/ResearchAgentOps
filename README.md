@@ -13,10 +13,11 @@ HTTP service, broker, custom web UI, or always-on Agent daemon.
 
 > **Status: pre-release local implementation.** The local harness, immutable
 > Runs, deterministic Reports, two-check CI contract, durable Session
-> notifications, and credential-free post-merge shadow are implemented and
-> tested. Real repository protection, authenticated GitHub post-merge ingress,
-> production Linear transport, and the measured shadow/canary pilot remain
-> deployment work. No production latency or production-readiness claim is made.
+> notifications, credential-free post-merge shadow, and authenticated GitHub
+> post-merge observation/enqueue are implemented and tested. Real repository
+> protection, trusted scheduling and credentials, production Linear transport,
+> and the measured shadow/canary pilot remain deployment work. No production
+> latency or production-readiness claim is made.
 
 ## Workflow
 
@@ -60,6 +61,8 @@ writer, consistent backups, and a tested restore procedure.
 A final Report is not authored by CI or invented after merge:
 
 1. The Agent proposes a canonical Submission and evidence.
+   `researchctl submit` pushes the one derived Submission branch and creates or
+   observes its deterministic GitHub PR; it does not ask the human to open it.
 2. `researchctl review accept` is manager-only and materializes a candidate
    Decision, Report YAML, Report Markdown, and credential-free Linear preview
    on the exact proposal head.
@@ -81,8 +84,9 @@ no governed RCP protocol path changed. It is not a source test, and cannot
 replace `researchctl/source-tests`.
 
 The protected-base dispatcher currently recognizes Submission, generated Task
-control, bootstrap proposal/acceptance, and manager-owned Linear policy control
-changes. Unknown or mixed protocol mutations fail closed. Review the installed
+control, Report Impact, explicit ImpactDecision, bootstrap proposal/acceptance,
+and manager-owned Linear policy control changes. Unknown or mixed protocol
+mutations fail closed. Review the installed
 single-maintainer CODEOWNERS baseline, require both checks, dismiss stale
 approvals, and restrict protected-branch updates before treating merge as an
 acceptance boundary.
@@ -154,11 +158,17 @@ observation. It performs no network call and writes no live outbox row. Enqueue
 requires authenticated GitHub provenance with workflow, check, and artifact
 identities; only a later trusted delivery worker may use the Linear credential.
 
-The repository does not yet ship a deployed GitHub artifact-authentication
-adapter, a production Linear API/MCP adapter, or a webhook/poller installation.
-Until those deployment adapters are configured and can verify stable internal
-`author_app_id` values, tests with fake ports and local shadow runs are not a
-claim of live Linear integration.
+`researchctl-github-post-merge` is the one-shot authenticated enqueue adapter.
+It uses an authenticated `gh api` environment to bind one merged PR to the
+fixed workflow, exact check run, and exact attestation artifact before it may
+write the durable outbox event. Artifact-derived local requests remain
+shadow-only and cannot self-assert authenticated provenance.
+
+The repository does not yet ship a production Linear API/MCP adapter or a
+deployed webhook/poller installation. The GitHub adapter is also not scheduled
+or credentialed merely because its code is installed. Until those deployment
+adapters can verify stable internal `author_app_id` values, fake-port tests and
+local shadow runs are not a claim of live Linear integration.
 
 ## Implemented Boundary
 
@@ -166,24 +176,35 @@ Implemented and tested locally:
 
 - safe existing-repository initialization, doctor, protocol compatibility, and
   isolated bootstrap acceptance;
-- manager-owned Task proposals and Agent capability denials;
+- manager-owned Task proposals, guided Task creation, and Agent capability
+  denials;
 - Codex/Claude Session worktrees, tmux identity, attach/pause/continue, status,
-  notification inbox, and terminal fallback;
+  grouped exception inbox, notification inbox, and terminal fallback;
 - frozen local Runs, preflight, attempts/retries, immutable provenance,
   collection, and read-only reconciliation;
 - Submission, Decision, deterministic Report rendering, manager acceptance,
-  protected-base dispatch, exact-head validation, and source tests;
+  constrained Agent-authored GitHub PR delivery, protected-base dispatch,
+  exact-head validation, and source tests;
+- manager/trusted-automation Report Impact proposals with strict code-path
+  dependencies, optimistic concurrency, merge-triggered all-Report batching,
+  fixed GitHub delivery, clean-runner replay, exact-head regeneration,
+  effective `report status` reads, and manager-only rerun/waive/keep-stale/
+  invalidate/dependency-fix Decision PRs; no Impact or decision path launches
+  an experiment;
 - accepted-merge Git-object validation, credential-free post-merge shadow,
-  Linear outbox/worker state machines, ingress grammar, and receipt lineage.
+  authenticated GitHub observation/enqueue, Linear outbox/worker state
+  machines, ingress grammar, and receipt lineage.
 
 Still gated deployment or later-phase work:
 
 - branch rules and reviewer-policy verification for the installed CODEOWNERS
-  baseline, GitHub post-merge artifact authentication, and trusted scheduling;
+  baseline, GitHub Submission/post-merge credential installation, a live PR
+  pilot, and trusted scheduling;
 - real Linear transport under the deployment credential and a measured shadow
   then allowlisted canary pilot;
 - SSH fleet execution and cross-host artifact staging;
-- dependency impact and safe batch worktree synchronization;
+- trusted live resource/environment Impact providers, protected provider replay,
+  and safe batch worktree synchronization;
 - mobile/chat views and a shared GPU controller, only if operational evidence
   justifies their additional complexity.
 
@@ -203,12 +224,14 @@ python -m pip install -e '.[dev]'
 python -m pytest
 researchctl --help
 researchctl-linear-host --help
+researchctl-github-post-merge --help
 ```
 
 The authoritative contracts are
 [RESEARCH_CONTROL_PLANE_SPEC.md](docs/RESEARCH_CONTROL_PLANE_SPEC.md), the
 accepted [ADRs](docs/adr), [MUTATION_CONTRACTS.md](docs/MUTATION_CONTRACTS.md),
-and [TRACEABILITY_MATRIX.md](docs/TRACEABILITY_MATRIX.md). Development and tests
+the audited [WORKFLOW_COVERAGE.md](docs/WORKFLOW_COVERAGE.md), and
+[TRACEABILITY_MATRIX.md](docs/TRACEABILITY_MATRIX.md). Development and tests
 must write only inside the checked-out workspace or explicit temporary
 directories; external reference repositories are read-only inputs.
 

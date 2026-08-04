@@ -48,6 +48,7 @@ dev = [
 [project.scripts]
 researchctl = "researchctl.cli:app"
 researchctl-linear-host = "researchctl.trusted_linear_host:app"
+researchctl-github-post-merge = "researchctl.github_post_merge_host:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]

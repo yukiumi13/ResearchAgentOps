@@ -34,6 +34,7 @@ DENIED_PATHS = (
     ".research/decisions/**",
     ".research/policies/**",
     ".research/project.yaml",
+    ".research/impacts/**",
     ".research/reports/**",
     ".research/tasks/**",
 )

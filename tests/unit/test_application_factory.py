@@ -272,6 +272,7 @@ def test_task_mutation_factory_journals_an_isolated_replayable_proposal(
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )
@@ -411,6 +412,7 @@ def _prepare_factory_run(
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )

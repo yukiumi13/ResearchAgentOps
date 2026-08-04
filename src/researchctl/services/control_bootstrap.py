@@ -37,6 +37,7 @@ _MANAGED_DIRECTORIES = (
     "submissions",
     "decisions",
     "reports",
+    "impacts",
 )
 _PROJECT_RECORD_PATH = ".research/project.yaml"
 _POLICY_PATH = ".research/policies/default.yaml"

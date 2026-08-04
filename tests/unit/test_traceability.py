@@ -10,18 +10,64 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_CATALOG = REPOSITORY_ROOT / "docs" / "USER_SCENARIOS.md"
 TRACEABILITY_MATRIX = REPOSITORY_ROOT / "docs" / "TRACEABILITY_MATRIX.md"
 REQUIREMENT_LEDGER = REPOSITORY_ROOT / "docs" / "REQUIREMENT_LEDGER.md"
+WORKFLOW_COVERAGE = REPOSITORY_ROOT / "docs" / "WORKFLOW_COVERAGE.md"
 PROMPT_MANIFEST = REPOSITORY_ROOT / "docs" / "HISTORICAL_PROMPT_MANIFEST.json"
 
 EXPECTED_SCENARIO_IDS = tuple(f"US-{number:03d}" for number in range(1, 34))
 EXPECTED_TEST_IDS = tuple(f"AT-US-{number:03d}" for number in range(1, 34))
 EXPECTED_POST_EXPORT_REQUIREMENTS = tuple(
-    f"REQ-20260803-{number:03d}" for number in range(1, 7)
+    f"REQ-20260803-{number:03d}" for number in range(1, 13)
 )
 
 _SCENARIO_HEADING = re.compile(r"^### (US-\d{3}) - .+$", re.MULTILINE)
 _MATRIX_SCENARIO = re.compile(r"`(US-\d{3})`")
 _MATRIX_TEST = re.compile(r"`(AT-US-\d{3})`")
 _PHASE = re.compile(r"(\d+)( Integrations)?")
+_WORKFLOW_HEADING = re.compile(r"^### (WF-\d{2}) - .+$", re.MULTILINE)
+
+EXPECTED_WORKFLOW_STATUSES = {
+    "verified_local": {
+        "US-003",
+        "US-008",
+        "US-014",
+        "US-015",
+        "US-016",
+        "US-023",
+        "US-025",
+    },
+    "partial": {
+        "US-001",
+        "US-002",
+        "US-011",
+        "US-012",
+        "US-013",
+        "US-017",
+        "US-018",
+        "US-019",
+        "US-020",
+        "US-021",
+        "US-022",
+        "US-026",
+        "US-027",
+        "US-028",
+        "US-031",
+    },
+    "deployment_pending": {
+        "US-006",
+        "US-009",
+        "US-010",
+        "US-030",
+        "US-033",
+    },
+    "designed": {
+        "US-004",
+        "US-005",
+        "US-007",
+        "US-024",
+        "US-029",
+        "US-032",
+    },
+}
 
 
 def _scenario_sections(catalog: str) -> list[tuple[str, str]]:
@@ -175,3 +221,42 @@ def test_post_export_requirement_ledger_is_complete() -> None:
         assert re.search(r"^- Maps to: .*`US-\d{3}`", section, re.MULTILINE)
         assert re.search(r"^- Acceptance: \S", section, re.MULTILINE)
         assert matrix.count(f"`{requirement_id}`") == 1
+
+
+def test_every_scenario_has_one_valid_workflow_and_status_checklist_row() -> None:
+    content = WORKFLOW_COVERAGE.read_text(encoding="utf-8")
+    workflow_ids = tuple(_WORKFLOW_HEADING.findall(content))
+    assert workflow_ids == tuple(f"WF-{number:02d}" for number in range(15))
+    assert len(workflow_ids) == len(set(workflow_ids))
+
+    rows: list[tuple[str, ...]] = []
+    for line in content.splitlines():
+        if not line.startswith("| [x] | `US-"):
+            continue
+        cells = tuple(cell.strip() for cell in line.strip().strip("|").split("|"))
+        assert len(cells) == 7, f"malformed workflow checklist row: {line}"
+        rows.append(cells)
+
+    scenario_ids = tuple(cell[1].strip("`") for cell in rows)
+    assert scenario_ids == EXPECTED_SCENARIO_IDS
+    assert len(scenario_ids) == len(set(scenario_ids))
+
+    observed_statuses = {status: set() for status in EXPECTED_WORKFLOW_STATUSES}
+    referenced_workflows: set[str] = set()
+    for check, scenario_cell, status_cell, primary_cell, supporting, proof, gap in rows:
+        scenario_id = scenario_cell.strip("`")
+        status = status_cell.strip("`")
+        primary = primary_cell.strip("`")
+        assert check == "[x]"
+        assert status in observed_statuses, f"unknown status for {scenario_id}: {status}"
+        assert primary in workflow_ids, f"unknown primary workflow for {scenario_id}"
+        assert proof and gap
+        observed_statuses[status].add(scenario_id)
+        referenced_workflows.add(primary)
+        for supporting_id in re.findall(r"`(WF-\d{2})`", supporting):
+            assert supporting_id in workflow_ids
+            assert supporting_id != primary
+            referenced_workflows.add(supporting_id)
+
+    assert observed_statuses == EXPECTED_WORKFLOW_STATUSES
+    assert referenced_workflows == set(workflow_ids)

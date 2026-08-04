@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from researchctl.domain.models import (
+    ImpactDecision,
     ReportProposal,
     ReportRecord,
     ResearchSubmission,
@@ -16,7 +17,7 @@ from researchctl.domain.models import (
     TaskRecord,
 )
 from researchctl.errors import UnsafeRepositoryPathError
-from researchctl.serialization import dump_yaml
+from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services.doctor import doctor
 
 
@@ -24,6 +25,37 @@ OTHER_SUBMISSION_ID = "submission_20260802T123456Z_" + "7" * 24
 OTHER_RUN_ID = "run_20260802T123456Z_" + "8" * 24
 OTHER_DECISION_ID = "decision_20260802T123456Z_" + "9" * 24
 OTHER_REPORT_ID = "report_20260802T123456Z_" + "6" * 24
+
+
+def test_doctor_accepts_canonical_impact_decision(
+    initialized_repository: Path,
+) -> None:
+    payload = {
+        "schema_version": "0.1",
+        "decision_id": OTHER_DECISION_ID,
+        "impact_id": "impact_20260802T123456Z_" + "5" * 24,
+        "report_id": OTHER_REPORT_ID,
+        "expected_report_revision": 2,
+        "expected_impact_digest": "sha256:" + "1" * 64,
+        "impact_target_commit": "2" * 40,
+        "impact_target_tree": "3" * 40,
+        "decision_base_commit": "4" * 40,
+        "decision_base_tree": "5" * 40,
+        "disposition": "keep_stale",
+        "reviewer_actor": "manager@example.invalid",
+        "reason": "Awaiting a reviewed rerun plan.",
+        "decided_at": "2026-08-03T15:00:00Z",
+    }
+    decision = ImpactDecision.model_validate(
+        {**payload, "decision_digest": canonical_digest(payload)}
+    )
+    relative = f".research/decisions/{decision.decision_id}.yaml"
+    _write_model(initialized_repository, relative, decision)
+
+    report = doctor(initialized_repository)
+    checks = {check.name: check for check in report.checks}
+
+    assert checks[f"record:{relative}"].status == "pass"
 
 
 def _write_model(repository: Path, relative: str, record: BaseModel) -> None:

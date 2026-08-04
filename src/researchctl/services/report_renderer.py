@@ -85,6 +85,15 @@ def render_submission_review(
     )
     lines.extend(["", "## Metrics", "", *_metrics(submission.metrics)])
     lines.extend(["", "## Limitations", "", *_items(submission.limitations)])
+    dependencies = [
+        *(f"path:{value}" for value in submission.dependencies.paths),
+        *(f"resource:{value}" for value in submission.dependencies.resources),
+        *(
+            f"environment:{value}"
+            for value in submission.dependencies.environments
+        ),
+    ]
+    lines.extend(["", "## Dependencies", "", *_items(dependencies)])
     lines.extend(["", "## Decision Requests", ""])
     if submission.decision_needed:
         for decision in submission.decision_needed:

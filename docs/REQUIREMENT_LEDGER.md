@@ -62,3 +62,82 @@ requirements so traceability does not silently stop at that boundary.
   lost Sessions reroute visibly to the manager. App comments and receipts retain
   Agent, Session, Task, optional Report, event, and payload attribution without
   per-Session email accounts or external users.
+
+## REQ-20260803-007 - The assigned Agent proposes the Submission PR
+
+- Source: post-export workflow correction, 2026-08-03.
+- Maps to: `US-017`, `US-018`, `US-021`, `US-026`.
+- Acceptance: `researchctl submit` validates collected evidence, creates and
+  pushes the one derived Submission branch and commit, and creates or observes
+  the exact GitHub PR with a deterministic title/body. The operation is not
+  `proposal_open` after only a local commit, and the caller cannot select an
+  arbitrary repository, head, base, or PR body. The Agent proposes; only the
+  manager can prepare acceptance, and only protected exact-head review and merge
+  create accepted truth.
+
+## REQ-20260803-008 - Plans cannot hide Agent fallback decisions
+
+- Source: post-export Plan/schema/reviewer correction, 2026-08-03.
+- Maps to: `US-008`, `US-013`, `US-021`, `US-023`, `US-027`.
+- Acceptance: any supported `PLAN.yaml` is a strict versioned ExperimentPlan
+  with generated schema and deterministic RunSpec compilation. Local lint and
+  exact-head Submission CI reject missing semantic choices, unknown fields,
+  implicit provider/CLI/library defaults, and values without an authenticated
+  user, accepted Task, or explicit Project-policy source. An independent typed
+  PlanReview is bound to the exact Plan/Task digests; it may run as a read-only
+  background subagent without another persistent Session, but it has a distinct
+  invocation identity and can only pass, request input, or report invalidity.
+
+## REQ-20260803-009 - Main merges create at most one reviewed Impact batch
+
+- Source: post-export Report-code dependency continuation, 2026-08-03.
+- Maps to: `US-019`, `US-020`, `US-021`, `US-026`.
+- Acceptance: every accepted main push may invoke `researchctl ci impact` under
+  trusted automation. It scans every accepted baseline Report from that
+  Report's own validation basis, emits no mutation when no proposals exist,
+  otherwise creates one digest-bound batch commit/branch/PR, and never launches
+  a Run. Stable event-derived identity and commit timestamps make clean-runner
+  retries reproduce the same commit SHA. Protected-base CI rescans all Reports
+  and requires the exact generated path set and bytes before merge.
+
+## REQ-20260803-010 - Every use case names its workflow and honest status
+
+- Source: post-export workflow coverage and dependency-framework review,
+  2026-08-03.
+- Maps to: `US-014`, `US-020`, `US-025`, `US-027`.
+- Acceptance: every stable `US-001` through `US-033` appears exactly once in a
+  workflow checklist with one existing primary workflow, zero or more existing
+  supporting workflows, current proof, and an open acceptance gap. Status must
+  distinguish locally verified, partial, deployment-pending, and design-only
+  work. Dependency tools may provide typed change evidence, but cannot become a
+  second Report authority or silently turn missing lineage into no change.
+
+## REQ-20260803-011 - External dependency evidence fails closed
+
+- Source: post-export typed dependency-receipt continuation, 2026-08-03.
+- Maps to: `US-016`, `US-020`, `US-021`.
+- Acceptance: every resource/environment receipt binds provider identity and
+  version, provider-query digest, Report basis, exact target, sorted
+  observations, external basis/target identities, evidence digests,
+  observation time, and a canonical receipt digest. `unknown`, absent,
+  duplicate, undeclared, or target-mismatched evidence cannot produce a
+  no-overlap validity advance. Batch scans expose unresolved Report IDs without
+  blocking conservative stale proposals or automatically starting a Run. Live
+  third-party adapters and protected provider replay remain a separate gate.
+
+## REQ-20260803-012 - Effective Report state and Impact decisions are explicit
+
+- Source: post-export Impact decision and manager-role continuation,
+  2026-08-03.
+- Maps to: `US-002`, `US-018`, `US-020`, `US-021`.
+- Acceptance: `report status` derives applicability at an exact commit from the
+  accepted Report and immutable Git objects. A changed full tree caused only by
+  `.research/**` records does not make a newly accepted Report immediately
+  pending; a governed source change or unavailable validation basis fails closed
+  as `impact_pending`. Rerun, waiver, keep-stale, invalidation, and dependency
+  correction are canonical digest-bound `ImpactDecision` records prepared only
+  by an authenticated manager. Each decision binds the accepted Impact digest,
+  Impact target, current Report revision, exact decision base, reviewer, reason,
+  and disposition-specific inputs. Protected-base CI regenerates the exact
+  Decision/Report bytes. A rerun decision references a manager-created Task but
+  never starts, retries, or collects a Run.

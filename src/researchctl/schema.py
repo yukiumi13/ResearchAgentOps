@@ -14,9 +14,13 @@ from researchctl.constants import (
 from researchctl.domain.types import Sha256Digest
 from researchctl.domain.models import (
     CIValidationAttestation,
+    DependencyChangeReceipt,
+    ImpactDecision,
     LinearProjectionPolicy,
     ProjectRecord,
     ProjectPolicy,
+    ReportImpact,
+    ReportImpactBatch,
     ReportRecord,
     ReportProposal,
     ResearchSubmission,
@@ -30,10 +34,14 @@ from researchctl.domain.models import (
 
 SCHEMA_MODELS: Mapping[str, type[BaseModel]] = {
     "ci-validation-attestation": CIValidationAttestation,
+    "dependency-change-receipt": DependencyChangeReceipt,
+    "impact-decision": ImpactDecision,
     "linear-projection-policy": LinearProjectionPolicy,
     "project": ProjectRecord,
     "policy": ProjectPolicy,
     "report": ReportRecord,
+    "report-impact": ReportImpact,
+    "report-impact-batch": ReportImpactBatch,
     "report-proposal": ReportProposal,
     "research-submission": ResearchSubmission,
     "review-decision": ReviewDecision,

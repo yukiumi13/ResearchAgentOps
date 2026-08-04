@@ -9,6 +9,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "research-validate-pr.yml"
 SOURCE_TEST_WORKFLOW = (
     ROOT / ".github" / "workflows" / "research-source-tests.yml"
 )
+IMPACT_WORKFLOW = ROOT / ".github" / "workflows" / "research-impact.yml"
 CODEOWNERS_TEMPLATE = ROOT / ".github" / "CODEOWNERS.template"
 
 
@@ -91,3 +92,35 @@ def test_codeowners_template_has_no_claimed_real_owner() -> None:
     owners = re.findall(r"(?m)^/\S+\s+(@\S+)$", content)
     assert owners
     assert all(owner.startswith("@REPLACE_WITH_") for owner in owners)
+
+
+def test_main_push_impact_workflow_is_exact_and_uses_trusted_cli_entrypoint() -> None:
+    content = IMPACT_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "push:\n    branches: [main]" in content
+    assert "contents: write\n  pull-requests: write" in content
+    assert "pull_request_target:" not in content
+    assert "ref: ${{ github.event.after }}" in content
+    assert 'observed_head" != "$RCP_AFTER' in content
+    assert 'git update-ref refs/heads/main "$RCP_AFTER"' in content
+    assert 'researchctl" ci impact' in content
+    assert '--before "$RCP_BEFORE"' in content
+    assert '--after "$RCP_AFTER"' in content
+    assert '--generated-at "$RCP_GENERATED_AT"' in content
+    assert "run.start" not in content
+    assert "run retry" not in content
+    assert "SSH_" not in content
+    assert "LINEAR" not in content
+
+
+def test_main_push_impact_workflow_pins_actions_and_serializes_main_scans() -> None:
+    content = IMPACT_WORKFLOW.read_text(encoding="utf-8")
+    action_references = re.findall(r"uses: ([^\s]+)", content)
+
+    assert action_references
+    assert all(
+        re.fullmatch(r"[^@]+@[0-9a-f]{40}", item)
+        for item in action_references
+    )
+    assert "group: research-impact-${{ github.ref }}" in content
+    assert "cancel-in-progress: true" in content

@@ -39,6 +39,14 @@ from researchctl.services.linear_delivery import (
     strip_linear_transport_envelope,
 )
 from researchctl.services.ci_dispatch import CIPRDispatchAttestation
+from researchctl.services.ci_validation import CI_CHECK_IDENTITY, CI_WORKFLOW_ID
+from researchctl.services.github_post_merge import (
+    GITHUB_WORKFLOW_EVENT,
+    GITHUB_WORKFLOW_PATH,
+    AuthenticatedGitHubPostMergeBridge,
+    AuthenticatedGitHubPostMergeObservation,
+    github_artifact_name,
+)
 from researchctl.services.linear_preview import build_linear_preview
 from researchctl.services.post_merge import (
     TrustedPostMergeService,
@@ -399,7 +407,7 @@ def test_post_merge_shadow_is_credential_free_and_writes_no_live_outbox(
     assert observed["outbox_state"] is None
 
 
-def test_post_merge_enqueue_requires_authenticated_provenance_and_is_idempotent(
+def test_post_merge_enqueue_requires_authenticated_github_bridge_and_is_idempotent(
     tmp_path,
     delivery_case: DeliveryCase,
 ) -> None:
@@ -410,15 +418,51 @@ def test_post_merge_enqueue_requires_authenticated_provenance_and_is_idempotent(
             merge_commit=MERGE_COMMIT,
             mode="enqueue",
         )
-    request = post_merge_request_from_artifact(
-        dispatch_artifact=content,
+    with pytest.raises(ValueError, match="shadow-only"):
+        post_merge_request_from_artifact(
+            dispatch_artifact=content,
+            merge_commit=MERGE_COMMIT,
+            mode="enqueue",
+            provenance="github_authenticated",
+            workflow_run_id="17",
+            check_run_id="23",
+            artifact_id="29",
+        )
+
+    observation = AuthenticatedGitHubPostMergeObservation(
+        repository=delivery_case.ci.repository,
+        pull_request_number=delivery_case.ci.pull_request_number,
+        merged=True,
+        base_ref="main",
+        base_sha=delivery_case.ci.base_commit,
+        subject_head=delivery_case.ci.subject_head,
         merge_commit=MERGE_COMMIT,
-        mode="enqueue",
-        provenance="github_authenticated",
-        workflow_run_id="workflow-run-17",
-        check_run_id="check-run-23",
-        artifact_id="artifact-29",
+        workflow_id=CI_WORKFLOW_ID,
+        workflow_path=GITHUB_WORKFLOW_PATH,
+        workflow_event=GITHUB_WORKFLOW_EVENT,
+        workflow_run_id="17",
+        workflow_status="completed",
+        workflow_conclusion="success",
+        check_identity=CI_CHECK_IDENTITY,
+        check_run_id="23",
+        check_status="completed",
+        check_conclusion="success",
+        artifact_id="29",
+        artifact_name=github_artifact_name(
+            delivery_case.ci.pull_request_number,
+            delivery_case.ci.subject_head,
+        ),
+        artifact_expired=False,
+        artifact_bytes=content,
+        artifact_digest="sha256:" + hashlib.sha256(content).hexdigest(),
     )
+
+    class GitHubObservation:
+        def observe(self, *, repository: str, pull_request_number: int):
+            assert repository == observation.repository
+            assert pull_request_number == observation.pull_request_number
+            return observation
+
     with RuntimeStore(tmp_path / "runtime.sqlite3") as runtime:
         service = TrustedPostMergeService(
             runtime=runtime,
@@ -427,20 +471,36 @@ def test_post_merge_enqueue_requires_authenticated_provenance_and_is_idempotent(
             ),
         )
 
-        queued = service.process(
-            request=request,
-            dispatch_artifact=content,
+        class PostMergeApplication:
+            def post_merge_process(self, *, request, dispatch_artifact, actor):
+                return service.process(
+                    request=request,
+                    dispatch_artifact=dispatch_artifact,
+                    actor=actor,
+                )
+
+        bridge = AuthenticatedGitHubPostMergeBridge(
+            github=GitHubObservation(),
+            application=PostMergeApplication(),
             actor=_trusted_actor(),
         )
-        replay = service.process(
-            request=request,
-            dispatch_artifact=content,
-            actor=_trusted_actor(),
+
+        queued = bridge.enqueue(
+            repository=observation.repository,
+            pull_request_number=observation.pull_request_number,
+        )
+        replay = bridge.enqueue(
+            repository=observation.repository,
+            pull_request_number=observation.pull_request_number,
         )
 
         assert queued.state == "queued"
         assert replay.state == "already_queued"
         assert queued.event == replay.event
+        assert queued.event is not None
+        assert queued.event.workflow_run_id == "17"
+        assert queued.event.check_run_id == "23"
+        assert queued.event.artifact_id == "29"
         rows = runtime.list_linear_projection_outbox(delivery_case.project_id)
         assert len(rows) == 1
         assert rows[0].state == "pending"

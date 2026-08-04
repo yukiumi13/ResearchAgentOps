@@ -11,13 +11,15 @@ from pathlib import Path
 from typing import Annotated, Any, TypeVar
 
 import typer
+from click import Choice
 from pydantic import BaseModel
 
-from researchctl.domain.enums import Priority, SessionState, StatusKind
+from researchctl.domain.enums import InputKind, Priority, SessionState, StatusKind
 from researchctl.domain.ids import new_id
 from researchctl.domain.models import (
     DecisionRequest,
     ExecutionPreferences,
+    InputIdentity,
     LinearProjectionPolicy,
     RunSpec,
     StatusEvidence,
@@ -40,6 +42,8 @@ from researchctl.services.requests import (
     InboxResolveRequest,
     InboxSnoozeRequest,
     LinearConfigureRequest,
+    LinearDeliveryListRequest,
+    LinearDeliveryShowRequest,
     MutationRequest,
     RunCollectRequest,
     RunRetryRequest,
@@ -71,10 +75,29 @@ linear_app = typer.Typer(
     help="Configure the governed Linear projection policy.",
     no_args_is_help=True,
 )
+linear_delivery_app = typer.Typer(
+    help="Inspect local Linear delivery state.",
+    no_args_is_help=True,
+)
+linear_app.add_typer(linear_delivery_app, name="delivery")
 
 RequestT = TypeVar("RequestT", bound=BaseModel)
 HumanBuilder = Callable[[], RequestT]
 HumanRenderer = Callable[[dict[str, Any]], None]
+
+_INBOX_GROUPS = (
+    ("needs_decision", "Needs Decision", frozenset({"needs_decision", "needs_input"})),
+    ("blocked", "Blocked", frozenset({"blocked"})),
+    ("needs_review", "Needs Review", frozenset({"needs_review"})),
+    (
+        "stale_or_needs_rerun",
+        "Stale or Needs Rerun",
+        frozenset({"stale_or_needs_rerun"}),
+    ),
+    ("failed_or_lost", "Failed or Lost", frozenset({"failed_or_lost"})),
+    ("running", "Running", frozenset({"running"})),
+    ("waiting", "Waiting", frozenset({"waiting"})),
+)
 
 _TASK_COMMANDS = frozenset({"task.create", "task.update", "task.cancel"})
 _BOOTSTRAP_COMMANDS = frozenset({"bootstrap.accept", "bootstrap.propose"})
@@ -96,6 +119,61 @@ def _required(value: str | None, option: str) -> str:
     if value is None or not value.strip():
         raise _input_error(f"Human mode requires {option}.", option=option)
     return value
+
+
+def _required_many(values: list[str] | None, option: str) -> tuple[str, ...]:
+    selected = tuple(value for value in (values or ()) if value.strip())
+    if not selected:
+        raise _input_error(
+            f"Human mode requires at least one {option}.",
+            option=option,
+        )
+    return selected
+
+
+def _prompt_many(prompt: str) -> tuple[str, ...]:
+    values = [typer.prompt(prompt)]
+    while typer.confirm("Add another?", default=False):
+        values.append(typer.prompt(prompt))
+    return tuple(values)
+
+
+def _prompt_optional(prompt: str) -> str | None:
+    value = typer.prompt(prompt, default="", show_default=False).strip()
+    return value or None
+
+
+def _guided_required_inputs() -> tuple[InputIdentity, ...]:
+    inputs: list[InputIdentity] = []
+    while typer.confirm("Add a required input?", default=False):
+        kind = typer.prompt(
+            "Input kind",
+            type=Choice([item.value for item in InputKind], case_sensitive=False),
+        )
+        logical_id = typer.prompt("Input logical ID")
+        identity_kind = typer.prompt(
+            "Input identity",
+            type=Choice(["version", "digest"], case_sensitive=False),
+        )
+        identity_value = typer.prompt(
+            "Immutable version" if identity_kind == "version" else "SHA-256 digest"
+        )
+        inputs.append(
+            InputIdentity(
+                kind=kind,
+                logical_id=logical_id,
+                version=identity_value if identity_kind == "version" else None,
+                digest=identity_value if identity_kind == "digest" else None,
+                uri=_prompt_optional("Input URI (optional)"),
+                resolver=_prompt_optional("Resolver policy (optional)"),
+                waiver_allowed=typer.confirm("May a manager waive this input?", default=False),
+            )
+        )
+    return tuple(inputs)
+
+
+def _load_required_inputs(paths: list[Path] | None) -> tuple[InputIdentity, ...]:
+    return tuple(load_model(path, InputIdentity) for path in (paths or ()))
 
 
 def _operation_fields(
@@ -158,10 +236,25 @@ def _attention_data(item: Any) -> dict[str, Any]:
 def _result_data(value: Any) -> dict[str, Any]:
     if isinstance(value, ServiceResult):
         return value.as_dict()
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_none=True)
     if isinstance(value, tuple):
         if value and all(isinstance(item, SessionNotification) for item in value):
             return {"items": [_notification_item_data(item) for item in value]}
-        return {"items": [_attention_data(item) for item in value]}
+        items = [_attention_data(item) for item in value]
+        groups = []
+        for group_id, title, kinds in _INBOX_GROUPS:
+            grouped = [item for item in items if item["kind"] in kinds]
+            if grouped:
+                groups.append(
+                    {
+                        "group": group_id,
+                        "title": title,
+                        "count": len(grouped),
+                        "items": grouped,
+                    }
+                )
+        return {"items": items, "groups": groups}
     if isinstance(value, dict):
         return value
     raise TypeError(f"unsupported ApplicationService result: {type(value).__name__}")
@@ -274,13 +367,99 @@ def _render_result(data: dict[str, Any]) -> None:
     if isinstance(submission, dict):
         proposal = submission.get("proposal")
         bundle = submission.get("bundle")
+        delivery = submission.get("delivery")
         if isinstance(bundle, dict):
             typer.echo(f"Submission: {bundle.get('submission_id')}")
             typer.echo(f"Bundle digest: {bundle.get('manifest_digest')}")
         if isinstance(proposal, dict):
             typer.echo(f"Proposal branch: {proposal.get('branch')}")
             typer.echo(f"Proposal commit: {proposal.get('commit')}")
-        typer.echo("Next: push this branch, open a PR, and review its exact head.")
+        if isinstance(delivery, dict):
+            pull_request = delivery.get("pull_request")
+            if isinstance(pull_request, dict):
+                typer.echo(
+                    "Pull request: "
+                    f"#{_terminal_text(pull_request.get('number'))} "
+                    f"{_terminal_text(pull_request.get('url'))}"
+                )
+        typer.echo(
+            "Proposal opened: human review, exact-head CI, approval, and merge "
+            "are still required."
+        )
+    impact = data.get("impact")
+    if isinstance(impact, dict):
+        proposal = impact.get("proposal")
+        bundle = impact.get("bundle")
+        delivery = impact.get("delivery")
+        if isinstance(bundle, dict):
+            typer.echo(f"Impact: {bundle.get('impact_id')}")
+            if bundle.get("report_count") is not None:
+                typer.echo(f"Reports proposed: {bundle.get('report_count')}")
+            else:
+                typer.echo(
+                    f"Report: {bundle.get('report_id')} revision "
+                    f"{bundle.get('proposed_report_revision')}"
+                )
+                typer.echo(f"Outcome: {bundle.get('outcome')}")
+        analysis = impact.get("analysis")
+        if isinstance(analysis, dict):
+            typer.echo(f"Reports scanned: {len(analysis.get('report_ids') or [])}")
+            unresolved = analysis.get("unresolved_report_ids") or []
+            if unresolved:
+                typer.echo(f"Reports unresolved: {len(unresolved)}")
+        if isinstance(proposal, dict):
+            typer.echo(f"Proposal branch: {proposal.get('branch')}")
+            typer.echo(f"Proposal commit: {proposal.get('commit')}")
+        if isinstance(delivery, dict):
+            pull_request = delivery.get("pull_request")
+            if isinstance(pull_request, dict):
+                typer.echo(
+                    "Pull request: "
+                    f"#{_terminal_text(pull_request.get('number'))} "
+                    f"{_terminal_text(pull_request.get('url'))}"
+                )
+        if impact.get("terminal_result") == "impact_unresolved":
+            typer.echo(
+                "Impact unresolved: external dependency evidence is incomplete; "
+                "no Report validity changed and no experiment was started."
+            )
+        elif impact.get("terminal_result") == "no_change":
+            typer.echo(
+                "No Impact proposal was needed; no Report changed and no "
+                "experiment was started."
+            )
+        else:
+            typer.echo(
+                "Impact proposed only: no Report validity changed and no experiment "
+                "was started."
+            )
+    impact_decision = data.get("impact_decision")
+    if isinstance(impact_decision, dict):
+        proposal = impact_decision.get("proposal")
+        bundle = impact_decision.get("bundle")
+        delivery = impact_decision.get("delivery")
+        if isinstance(bundle, dict):
+            typer.echo(f"Decision: {bundle.get('decision_id')}")
+            typer.echo(
+                f"Report: {bundle.get('report_id')} revision "
+                f"{bundle.get('report_revision')}"
+            )
+            typer.echo(f"Disposition: {bundle.get('disposition')}")
+        if isinstance(proposal, dict):
+            typer.echo(f"Proposal branch: {proposal.get('branch')}")
+            typer.echo(f"Proposal commit: {proposal.get('commit')}")
+        if isinstance(delivery, dict):
+            pull_request = delivery.get("pull_request")
+            if isinstance(pull_request, dict):
+                typer.echo(
+                    "Pull request: "
+                    f"#{_terminal_text(pull_request.get('number'))} "
+                    f"{_terminal_text(pull_request.get('url'))}"
+                )
+        typer.echo(
+            "Decision proposed only: protected review and merge are required; "
+            "no experiment was started."
+        )
     review = data.get("review")
     if isinstance(review, dict):
         proposal = review.get("proposal")
@@ -318,16 +497,43 @@ def _render_result(data: dict[str, Any]) -> None:
 
 
 def _render_inbox(data: dict[str, Any]) -> None:
-    items = data.get("items")
-    if not isinstance(items, list) or not items:
+    groups = data.get("groups")
+    if not isinstance(groups, list) or not groups:
         typer.echo("Inbox is clear.")
         return
-    for item in items:
-        update = item["current_update"]
-        typer.echo(
-            f"[{item['kind']}] {update['summary']} "
-            f"(update {update['update_id']}, generation {item['generation']})"
-        )
+    for group in groups:
+        items = group.get("items")
+        if not isinstance(items, list):
+            raise TypeError("inbox result contains a malformed group")
+        typer.echo(f"{_terminal_text(group.get('title'))} ({len(items)})")
+        for item in items:
+            update = item.get("current_update")
+            if not isinstance(update, dict):
+                raise TypeError("inbox result contains a malformed item")
+            state = "" if item.get("state") == "open" else f" [{item.get('state')}]"
+            typer.echo(f"  {_terminal_text(update.get('summary'))}{state}")
+            typer.echo(
+                "    "
+                f"Task {_terminal_text(item.get('task_id'))} | "
+                f"Session {_terminal_text(item.get('session_id'))} | "
+                f"Update {_terminal_text(update.get('update_id'))} | "
+                f"Generation {_terminal_text(item.get('generation'))}"
+            )
+            if update.get("blocker_detail") is not None:
+                typer.echo(f"    Blocker: {_terminal_text(update['blocker_detail'])}")
+            decision = update.get("decision_needed")
+            if isinstance(decision, dict):
+                typer.echo(f"    Decision: {_terminal_text(decision.get('question'))}")
+                options = decision.get("options")
+                if isinstance(options, list):
+                    typer.echo(
+                        "    Options: "
+                        + " | ".join(_terminal_text(option) for option in options)
+                    )
+            if update.get("suggested_next_action") is not None:
+                typer.echo(
+                    f"    Next: {_terminal_text(update['suggested_next_action'])}"
+                )
 
 
 def _render_attach(data: dict[str, Any]) -> None:
@@ -390,6 +596,73 @@ def _render_session_address(data: dict[str, Any]) -> None:
     if not isinstance(command_header, str) or data.get("message_required") is not True:
         raise TypeError("session.address returned a malformed command header")
     typer.echo(_terminal_text(command_header))
+
+
+def _render_linear_delivery_summary(delivery: dict[str, Any]) -> None:
+    typer.echo(
+        f"{_terminal_text(delivery.get('outbox_id'))} "
+        f"[{_terminal_text(delivery.get('state'))}] "
+        f"topic={_terminal_text(delivery.get('topic'))}"
+    )
+    typer.echo(
+        f"  Created: {_terminal_text(delivery.get('created_at'))} "
+        f"age={_terminal_text(delivery.get('age_seconds'))}s "
+        f"attempts={_terminal_text(delivery.get('attempt_count'))}"
+    )
+    if delivery.get("last_error_code") is not None:
+        typer.echo(f"  Last error: {_terminal_text(delivery['last_error_code'])}")
+    claim = delivery.get("active_claim")
+    if isinstance(claim, dict):
+        typer.echo(
+            f"  Active claim: {_terminal_text(claim.get('claim_id'))} "
+            f"until {_terminal_text(claim.get('expires_at'))}"
+        )
+    receipt = delivery.get("receipt")
+    if isinstance(receipt, dict):
+        typer.echo(f"  Receipt: {_terminal_text(receipt.get('receipt_id'))}")
+
+
+def _render_linear_delivery_list(data: dict[str, Any]) -> None:
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        typer.echo("No Linear deliveries found.")
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            raise TypeError("linear.delivery.list returned a malformed item")
+        _render_linear_delivery_summary(item)
+
+
+def _render_linear_delivery_show(data: dict[str, Any]) -> None:
+    delivery = data.get("delivery")
+    if not isinstance(delivery, dict):
+        raise TypeError("linear.delivery.show returned a malformed delivery")
+    _render_linear_delivery_summary(delivery)
+    typer.echo(f"Aggregate: {_terminal_text(delivery.get('aggregate_id'))}")
+    typer.echo(
+        "Pending age: "
+        + (
+            f"{_terminal_text(delivery.get('pending_age_seconds'))}s"
+            if delivery.get("pending_age_seconds") is not None
+            else "-"
+        )
+    )
+    typer.echo(f"Last claim: {_terminal_text(delivery.get('last_claim_id'))}")
+    lineage = delivery.get("lineage")
+    if isinstance(lineage, dict):
+        typer.echo(
+            "Lineage: "
+            + json.dumps(lineage, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        )
+    receipt = delivery.get("receipt")
+    if isinstance(receipt, dict):
+        typer.echo(
+            f"Linear comment: {_terminal_text(receipt.get('comment_id'))} "
+            f"thread={_terminal_text(receipt.get('thread_id'))}"
+        )
+        typer.echo(
+            f"Payload digest: {_terminal_text(receipt.get('payload_digest'))}"
+        )
 
 
 def _run_command(
@@ -522,6 +795,57 @@ def linear_configure_command(
         json_input=json_input,
         request_model=LinearConfigureRequest,
         human_builder=human_request,
+    )
+
+
+@linear_delivery_app.command("list")
+def linear_delivery_list_command(
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    topic: Annotated[str | None, typer.Option("--topic")] = None,
+    state: Annotated[str | None, typer.Option("--state")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=1000)] = 100,
+) -> None:
+    """List bounded local delivery status across both Linear topics."""
+
+    _run_command(
+        command="linear.delivery.list",
+        method_name="linear_delivery_list",
+        project=project,
+        json_input=json_input,
+        request_model=LinearDeliveryListRequest,
+        human_builder=lambda: LinearDeliveryListRequest(
+            topic=topic,
+            state=state,
+            limit=limit,
+        ),
+        human_renderer=_render_linear_delivery_list,
+    )
+
+
+@linear_delivery_app.command("show")
+def linear_delivery_show_command(
+    outbox_id: Annotated[
+        str | None,
+        typer.Argument(help="Exact durable outbox identity."),
+    ] = None,
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    topic: Annotated[str | None, typer.Option("--topic")] = None,
+) -> None:
+    """Show one local delivery using its exact topic and outbox identity."""
+
+    _run_command(
+        command="linear.delivery.show",
+        method_name="linear_delivery_show",
+        project=project,
+        json_input=json_input,
+        request_model=LinearDeliveryShowRequest,
+        human_builder=lambda: LinearDeliveryShowRequest(
+            topic=_required(topic, "--topic"),
+            outbox_id=_required(outbox_id, "OUTBOX_ID"),
+        ),
+        human_renderer=_render_linear_delivery_show,
     )
 
 
@@ -717,6 +1041,10 @@ def task_create_command(
     project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
     json_input: Annotated[bool, typer.Option("--json")] = False,
     task_file: Annotated[Path | None, typer.Option("--task-file")] = None,
+    guided: Annotated[
+        bool,
+        typer.Option("--guided", help="Prompt for a compact, well-formed Task."),
+    ] = False,
     task_id: Annotated[str | None, typer.Option("--task-id")] = None,
     key: Annotated[str | None, typer.Option("--key")] = None,
     title: Annotated[str | None, typer.Option("--title")] = None,
@@ -729,6 +1057,15 @@ def task_create_command(
     parent_task_id: Annotated[str | None, typer.Option("--parent-task-id")] = None,
     milestone: Annotated[str | None, typer.Option("--milestone")] = None,
     constraint: Annotated[list[str] | None, typer.Option("--constraint")] = None,
+    required_input_file: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--required-input-file",
+            help="YAML or JSON InputIdentity record; repeat for multiple inputs.",
+        ),
+    ] = None,
+    waiting_on: Annotated[str | None, typer.Option("--waiting-on")] = None,
+    next_decision: Annotated[str | None, typer.Option("--next-decision")] = None,
     preferred_host: Annotated[list[str] | None, typer.Option("--preferred-host")] = None,
     preferred_pool: Annotated[list[str] | None, typer.Option("--preferred-pool")] = None,
     gpu_count: Annotated[int, typer.Option("--gpu-count", min=0)] = 0,
@@ -741,22 +1078,69 @@ def task_create_command(
 
     def human_request() -> TaskCreateRequest:
         if task_file is not None:
+            if guided:
+                raise _input_error(
+                    "Use either --task-file or --guided, not both.",
+                    option="--guided",
+                )
             task = load_model(task_file, TaskRecord)
         else:
             now = utc_now()
+            selected_key = key
+            selected_title = title
+            selected_goal = goal
+            selected_done_when = tuple(done_when or ())
+            selected_domain = execution_domain
+            selected_allowed_write = tuple(allowed_write or ())
+            selected_deliverables = tuple(deliverable or ())
+            selected_waiting_on = waiting_on
+            selected_next_decision = next_decision
+            selected_inputs = _load_required_inputs(required_input_file)
+            if guided:
+                selected_key = selected_key or typer.prompt("Task key")
+                selected_title = selected_title or typer.prompt("Title")
+                selected_goal = selected_goal or typer.prompt("Goal")
+                selected_done_when = selected_done_when or _prompt_many("Done when")
+                selected_domain = selected_domain or typer.prompt(
+                    "Execution domain / team"
+                )
+                selected_allowed_write = selected_allowed_write or _prompt_many(
+                    "Allowed write path"
+                )
+                selected_deliverables = selected_deliverables or _prompt_many(
+                    "Deliverable"
+                )
+                if selected_waiting_on is None:
+                    selected_waiting_on = _prompt_optional("Waiting on (optional)")
+                if selected_next_decision is None:
+                    selected_next_decision = _prompt_optional(
+                        "Next human decision (optional)"
+                    )
+                if not selected_inputs:
+                    selected_inputs = _guided_required_inputs()
             task = TaskRecord(
                 task_id=task_id or new_id("task"),
-                key=_required(key, "--key"),
-                title=_required(title, "--title"),
-                goal=_required(goal, "--goal"),
-                done_when=tuple(done_when or ()),
-                execution_domain=_required(execution_domain, "--execution-domain"),
-                allowed_write_paths=tuple(allowed_write or ()),
-                deliverables=tuple(deliverable or ()),
+                key=_required(selected_key, "--key"),
+                title=_required(selected_title, "--title"),
+                goal=_required(selected_goal, "--goal"),
+                done_when=(
+                    selected_done_when
+                    or _required_many(done_when, "--done-when")
+                ),
+                execution_domain=_required(selected_domain, "--execution-domain"),
+                allowed_write_paths=(
+                    selected_allowed_write
+                    or _required_many(allowed_write, "--allow-write")
+                ),
+                deliverables=(
+                    selected_deliverables
+                    or _required_many(deliverable, "--deliverable")
+                ),
                 priority=priority,
                 parent_task_id=parent_task_id,
                 milestone=milestone,
                 constraints=tuple(constraint or ()),
+                required_inputs=selected_inputs,
                 execution=ExecutionPreferences(
                     preferred_hosts=tuple(preferred_host or ()),
                     preferred_pools=tuple(preferred_pool or ()),
@@ -764,6 +1148,8 @@ def task_create_command(
                     gpu_type=gpu_type,
                     min_gpu_memory_gb=min_gpu_memory_gb,
                 ),
+                waiting_on=selected_waiting_on,
+                next_decision=selected_next_decision,
                 created_at=now,
                 updated_at=now,
             )

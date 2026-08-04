@@ -11,14 +11,26 @@ EXPECTED_FILE_SHA256 = {
     "ci-validation-attestation.schema.json": (
         "28545c955f8732f6f07b0ace2655888c410a64bb6745d078de0fc8bf57165100"
     ),
+    "dependency-change-receipt.schema.json": (
+        "9c84ab2efb3a14e72194aea7dc724d733492f44a111ed9da648c09ea9259517a"
+    ),
+    "impact-decision.schema.json": (
+        "c4b0de7410fdd75e3e14fbec15199cfab7b6e5940dce08d8687bf4e36ec4d311"
+    ),
     "linear-projection-policy.schema.json": (
         "1fe26641a13487c156e897b61dc57e728ecdb3e9ea933e96f6084710d11b2646"
     ),
     "policy.schema.json": "62cf93fe513fdf886d079ea0ea879ad7843c197bb940cae867a45d0759ea3761",
-    "manifest.json": "529195b4b22db8db8e61ffbc12c348b4ffa4e22e51063c6502f3f4ccc0520048",
+    "manifest.json": "2a503a09ad1966486db0d4b8350be595ebdc5bf5ae53e5fc3e4bc7d80fb0b3df",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "report-proposal.schema.json": (
         "4208f055cfc0429fb10f6d33b9b82d5b9bd6716eeae712974023bb8c52be75c6"
+    ),
+    "report-impact.schema.json": (
+        "5372761260e39a0897ebb2ec4b9999d5a0a3c6b5e71bfeca2599fc689cd72250"
+    ),
+    "report-impact-batch.schema.json": (
+        "50e2fe243da5cbb24ec3a49578afccc9974edfdd880e16428be4a84d0e4b6d16"
     ),
     "report.schema.json": "6c2ba291f310a5c0e4f17683b41ebc4337b8ad40c61852e016717f4e7fdf62ae",
     "research-submission.schema.json": (

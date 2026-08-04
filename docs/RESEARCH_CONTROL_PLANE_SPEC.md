@@ -80,7 +80,7 @@ No field may have two writers. A projection may be rebuilt from its authority.
 | Live RunAttempt and operation journal | host-local SQLite | researchctl/runner | reconciliation |
 | Final RunResult | submission branch, then default branch | deterministic collector | Git clone |
 | ResearchSubmission | submission branch | agent through renderer | Git remote |
-| ReviewDecision and Report revision | same submission PR before merge | manager | Git clone |
+| ReviewDecision/ImpactDecision and Report revision | reviewed decision PR before merge | manager | Git clone |
 | Pull request and review state | GitHub | GitHub users/workflows | GitHub API |
 | CIValidationAttestation | GitHub exact-head check and artifact | trusted CI | deterministic rerun |
 | Live GPU allocation and lease | Resource Controller | controller transaction | DB and host reconcile |
@@ -220,6 +220,31 @@ claim_scope snapshot describes a historical result at an exact tree and is not
 invalidated merely because main changes. claim_scope baseline asserts
 applicability to a baseline and records validation_basis.main_tree_sha.
 
+Stored applicability is not by itself the current read model. `report status`
+evaluates a Report at an exact target commit/tree. Snapshot, stale, and
+superseded stored states remain authoritative. For a stored current or
+impact_pending baseline, the read compares its basis tree with the target and
+excludes `.research/**` from governed source changes. This is required because
+accepting a Report, Impact, or Decision changes the protocol tree and must not
+make its own result immediately pending. Any governed source change yields
+effective `impact_pending`; an unavailable basis tree also fails closed as
+`impact_pending`. The result exposes both stored and effective applicability,
+the exact target identity, comparison reason, and changed governed paths.
+
+An `ImpactDecision` is distinct from `ReportImpact`. Impact records analyzer
+facts; Decision records a manager disposition:
+
+    rerun | waive | keep_stale | invalidate | dependency_fix
+
+Every Decision binds its ID, accepted Impact ID/digest and target commit/tree,
+current expected Report revision, exact decision base commit/tree,
+authenticated reviewer actor, reason, decision time, disposition-specific
+inputs, and a canonical digest. `rerun` requires an accepted planned/ready Task
+ID but starts no Run. `waive` advances the validation basis and keeps verified
+evidence current. `keep_stale` and `rerun` remain stale. `invalidate` makes
+evidence invalid and applicability stale. `dependency_fix` requires a changed
+dependency declaration and remains stale until new analysis resolves it.
+
 ### 6.7 Allocation
 
     queued -> offered -> launching -> running -> releasing -> released
@@ -274,6 +299,55 @@ RunSpec is produced before any remote launch and contains:
 - canonical record digest.
 
 Secrets and secret environment values are never persisted.
+
+#### ExperimentPlan and independent plan review
+
+`PLAN.yaml` is a planned structured input, not a currently implemented CLI
+contract. Before that command surface is exposed, the protocol must add a
+versioned `ExperimentPlan` Pydantic model, generated JSON Schema, canonical
+serialization, and a deterministic compiler from `ExperimentPlan` to
+`RunSpec`. The schema forbids unknown fields and represents at least the
+hypothesis, comparison or baseline, argv, configuration, immutable inputs,
+metrics and directions, repetitions or seeds, resource request, stop/failure
+conditions, and artifact declarations. Prose may explain a choice but cannot
+replace a typed decision-bearing field.
+
+Every resolved value that could change experiment semantics records its source:
+an explicit authenticated user decision, a field in the accepted Task, or an
+allowlisted Project policy field, together with the referenced record digest
+and field path. `agent_inference`, provider defaults, environment-dependent
+defaults, and omitted critical values are invalid sources. A policy default is
+legal only when the accepted policy explicitly defines that exact value; it is
+never inferred merely because a CLI or library has a default.
+
+The planned `researchctl plan lint PLAN.yaml` gate performs schema validation,
+canonicalization, cross-field checks, Task and input binding, default-source
+validation, and deterministic compilation without creating a Run ref,
+allocating resources, or launching a process. Missing or ambiguous semantic
+choices return `needs_input` with stable field-level findings. The Agent must
+ask the user or manager; it may not repair the Plan by guessing.
+
+Deterministic lint is followed by an independent semantic review against the
+accepted Task and explicit decision receipts. The reviewer emits a
+schema-registered `PlanReview` bound to the exact Plan digest, Task digest,
+review policy version, reviewer execution identity, and typed findings. Its
+outcome is `passed`, `needs_input`, or `invalid`; `passed` is evidence that the
+review ran, not human approval or authority to accept a Report.
+
+The reviewer may be a short-lived background subagent under the parent RCP
+Session and does not need another long-lived worktree, tmux process, or
+user-addressable Session. It still requires a distinct invocation ID,
+independent context, read-only access, and a completion receipt. The Session
+harness must negotiate this capability. If the provider cannot supply it, RCP
+uses an isolated ephemeral reviewer adapter or fails closed; it never silently
+falls back to self-review by the drafting Agent. The reviewer cannot edit the
+Plan, create a RunSpec, execute, submit, accept, approve, or merge.
+
+The compiler binds the accepted Plan and PlanReview digests into the resulting
+RunSpec. Execution cannot begin until lint and required review pass. Submission
+CI later repeats deterministic lint and verifies that the frozen RunSpec and
+observed RunResult preserve the reviewed values and their sources. This feature
+is not implemented until those models, schemas, adapters, and gates exist.
 
 ### 7.3 RunAttempt
 
@@ -383,7 +457,7 @@ Standard refs are preferred:
     research/task/TASK_KEY/SESSION_ID
     research/run/RUN_ID
     research/submission/SUBMISSION_ID
-    research/impact/OPERATION_ID
+    research/impact/IMPACT_ID
 
 An immutable research-run/RUN_ID tag points to the commit containing the frozen
 RunSpec and retains its parent code commit. The run executes the recorded code
@@ -507,7 +581,10 @@ Linear into an authority for research acceptance.
 
 `researchctl run start` does not implicitly commit arbitrary worktree changes.
 The default requires a clean committed HEAD. Explicit snapshot mode previews
-allowed paths before creating a snapshot commit.
+allowed paths before creating a snapshot commit. Once ExperimentPlan support is
+enabled, Plan schema/lint and the required independent review complete before
+the first Run operation side effect. `needs_input` creates no Run ref, process,
+or resource allocation.
 
 For local `run start` and `run retry`, the launch boundary first resolves one
 exact local protected-head object ID, loads the canonical Task bytes from that
@@ -580,9 +657,19 @@ attestation explicitly.
 
 ## 14. Submission and atomic human acceptance
 
-researchctl submit creates a branch from the default branch and adds:
+`researchctl submit` is invoked by the assigned Agent after collection. It
+validates evidence, creates the fixed Submission branch and deterministic
+proposal commit from the protected default branch, pushes that exact commit,
+and creates or observes the one GitHub PR for the derived repository, head, and
+base. The caller cannot choose an arbitrary branch, base, repository, title, or
+body. The title and body are deterministic renderings of structured records.
+The operation reaches `proposal_open` only after the exact remote branch and PR
+are observed; a local proposal commit alone is not an open proposal.
+
+The Submission branch adds:
 
 - finalized RunSpec and RunResult records;
+- for a Plan-backed Run, the finalized ExperimentPlan and PlanReview records;
 - ResearchSubmission;
 - deterministic review bundle;
 - a proposed Report diff stored under the proposal, not accepted paths.
@@ -618,6 +705,130 @@ validity.
 
 Impact changes use optimistic concurrency against expected Report revision and
 latest main tree. A stale impact PR must be regenerated before merge.
+
+The first implemented code-path slice is:
+
+    researchctl impact REPORT_ID \
+      --expected-report-revision REVISION \
+      --target-commit FULL_MAIN_COMMIT
+
+Only a manager or trusted automation may invoke it. The command resolves the
+exact protected default head, loads the latest accepted Report from that Git
+object, and diffs the Report's own `validation_basis.main_tree` against the
+target tree with rename detection disabled. Protocol records under `.research`
+are excluded from code-path impact so an Impact revision cannot recursively
+trigger itself. Path dependencies are either exact repository paths or a
+single trailing `/**` segment-prefix pattern; other glob syntax and protected
+control paths are invalid.
+
+Changed-path collection, dependency evaluation, and Report governance are
+separate boundaries. The built-in `DeclaredDependencyImpactEvaluator` consumes
+canonical Git changed paths plus optional typed resource/environment receipts
+and may return only declared dependencies. The Report builder rejects evidence
+mutation, undeclared matches, omitted receipt uncertainty, or evaluator identity
+drift. Optional dependency frameworks still require a trusted adapter and
+protected-base provider replay; they cannot be injected through an untrusted PR
+or selected by an Agent.
+
+Each `DependencyChangeReceipt` binds provider ID/version, a provider-query
+digest, Report basis tree, exact target commit/tree, known or unknown
+observations, external identities, evidence digests, observation time, and a
+canonical receipt digest. `changed` and `unchanged` must agree with the recorded
+basis/target identities; `unknown` requires a reason. Each `ReportImpact`
+persists the complete receipts it consumed plus `change_provider_id` and
+`dependency_evaluator_id`. Its canonical digest and rendered review artifact
+bind these values, and a batch source digest binds each child source digest.
+
+A path overlap can conservatively propose `stale` even when an external
+dependency remains unresolved. A no-overlap validity advance requires a known
+observation for every declared resource and environment. With no trusted live
+provider configured, the Git batch records those Reports as unresolved and
+does not propose a Report revision for them.
+
+The generated branch is `research/impact/<impact-id>` with the exact target
+commit as its single parent. It adds exactly:
+
+- `.research/impacts/<impact-id>/impact.yaml`;
+- `.research/reports/<report-id>/<next-revision>.yaml`; and
+- `.research/reports/<report-id>/<next-revision>.md`.
+
+An overlap proposes `stale` while preserving the prior validation basis. A
+no-overlap proposes `current` with the validation basis advanced to the exact
+target tree. Neither changes evidence tree, accepted-at tree, RunResult IDs,
+claim, dependency declarations, or evidence status. Both outcomes require an
+Impact PR, protected-base byte regeneration, human review, and merge; neither
+starts a Run. Snapshot Reports are not applicable.
+
+After an Impact analysis and its conservative Report revision are accepted, a
+manager may record the actual disposition:
+
+    researchctl report status REPORT_ID [--target-commit FULL_COMMIT]
+
+    researchctl review impact IMPACT_ID REPORT_ID \
+      --expected-impact-digest sha256:... \
+      --expected-report-revision REVISION \
+      --target-commit FULL_MAIN_COMMIT \
+      --disposition rerun|waive|keep_stale|invalidate|dependency_fix \
+      --reason TEXT
+
+The status command is read-only and is available to manager, Agent, and trusted
+automation roles. The decision command is manager-only. Caller input cannot set
+reviewer identity, decision time, repository, remote, branch, base branch, PR
+title/body, or rendered Report bytes. A rerun disposition additionally names an
+already accepted manager-created Task. It does not invoke `run start`, `run
+retry`, or `run collect`.
+
+The derived decision branch is
+`research/impact-decision/<decision-id>` over the exact current protected main
+commit. It adds exactly one canonical `ImpactDecision` under
+`.research/decisions/` and the next Report YAML/Markdown revision. The PR is
+manager-authored through the shared ApplicationService. Protected-base CI loads
+the accepted single or batch Impact and current Report from the exact base,
+checks optimistic concurrency and any rerun Task, rebuilds the Decision bundle,
+and compares the complete path set and bytes. A reviewer string in YAML or a
+commit author is not manager authentication; accepted authority still requires
+current CODEOWNER approval, required exact-head checks, branch protection, and
+merge into protected main.
+
+This slice analyzes Git code-path events only. It does not interpret the absence
+of an external resource signal as proof that datasets, checkpoints, or runtime
+environments did not change.
+
+The merge-triggered code-path workflow is also implemented:
+
+    researchctl ci impact \
+      --before PREVIOUS_MAIN_COMMIT \
+      --after CURRENT_MAIN_COMMIT \
+      --generated-at MERGE_TIMESTAMP
+
+The trusted main-push entry point scans every accepted Report at the exact
+target commit. Snapshot Reports are recorded but skipped; stale or superseded
+Reports are ineligible; Reports already based on the target tree are up to
+date. Every other eligible Report is compared from its own validation basis,
+not from `--before`. If proposals exist, one `ReportImpactBatch` and one fixed
+Impact branch/PR contain the next YAML and Markdown revision for every affected
+Report. Reports lacking complete external evidence are recorded as
+`unresolved_report_ids` and never receive a no-overlap validity revision. If no
+proposals exist, the operation returns `impact_unresolved` when such Reports
+exist, otherwise `no_change`, before creating a worktree, pushing, or contacting
+GitHub.
+
+The batch ID, operation ID, rendered bytes, Git timestamps, commit SHA, branch,
+and PR are deterministic for the push event. Protected-base CI parses the batch
+record and independently repeats the all-Report scan from the exact PR base,
+then requires the exact generated path set and bytes. The batch is limited to
+256 Report proposals. It never launches or retries a Run.
+
+Trusted live resource/environment provider adapters, protected-base provider
+replay, and safe Session baseline synchronization remain required extensions.
+
+Dependency engines are evidence providers, not Report authorities. Repositories
+that already use DVC, Bazel/Pants/Nx, dbt, Dagster, or OpenLineage may later
+enable a typed adapter that emits immutable path/resource/environment changes
+and a source receipt. Missing, ambiguous, or unstructured provider output fails
+closed. No adapter may advance applicability, create a waiver, start a Run, or
+accept a PR. Git path comparison remains the dependency-free built-in provider;
+ADR 0013 defines the integration boundary.
 
 A live session, dirty worktree, or unknown state receives update_pending. The
 MVP never tries to infer an agent safe point. Only a stopped session or explicit
@@ -661,6 +872,7 @@ marker and corroborating source ref, never by branch name alone. It supports:
 
 - Submission proposal and acceptance;
 - generated Task create, update, and cancel control changes;
+- generated Report Impact proposals;
 - bootstrap proposal and acceptance;
 - manager-owned Linear projection policy control; and
 - ordinary source changes with no protocol path, reported as
@@ -668,7 +880,9 @@ marker and corroborating source ref, never by branch name alone. It supports:
 
 Unknown or mixed protocol changes fail closed. Standalone post-bootstrap
 policy, schema, Project, Report, Decision, and other control mutations are
-unsupported until a protected-base validator and tests are added for that type.
+unsupported until a protected-base validator and tests are added for that type;
+the only supported Report-only revision is the closed generated revision inside
+a validated Impact proposal.
 An ordinary-source `not_applicable` result proves only protocol-path absence;
 it does not run tests, validate semantics, or approve source. The workflow never
 checks out, imports, installs, or executes PR source.
@@ -687,6 +901,14 @@ this path regenerates and byte-compares canonical Report YAML, accepted Report
 Markdown, and, when configured, the credential-free
 `linear.accepted-result.v1` preview. It does not query or mutate Linear. A
 missing integration is recorded as `projection: disabled`.
+
+For Plan-backed Runs, Submission validation also reruns ExperimentPlan lint,
+validates the independent PlanReview receipt and reviewer/drafter separation,
+and compares every decision-bearing Plan value and source with the frozen
+RunSpec and collected RunResult. An omitted source, an Agent-invented default,
+a provider-dependent fallback, review of a different Plan digest, or execution
+that drifted from the reviewed Plan fails the exact-head check. A review-model
+opinion never overrides a deterministic failure.
 
 The outer artifact is not committed back to the PR, because doing so would
 create a new head that invalidates its own evidence. Repository unit and
@@ -725,8 +947,11 @@ The exact-head PR workflow runs from the protected base and uses no untrusted se
 `pull_request_target` supplies only protected executable code; the PR head is
 read as Git objects. Only the trusted post-merge projection worker may load
 Linear credentials. The repository contains a real local Git accepted-merge
-reader, a one-shot shadow host, enqueue/delivery core, and fake-port transport
-tests. A GitHub-authenticated artifact ingress and real Linear publisher adapter
+reader, a one-shot shadow host, an authenticated `gh api` post-merge ingress,
+enqueue/delivery core, and fake-port transport tests. The authenticated ingress
+binds the merged PR, protected workflow identity, exact successful check run,
+and exact non-expired artifact before enqueue. Installing its GitHub credential,
+scheduling it from a trusted environment, and providing a real Linear publisher
 remain deployment-specific and are not claimed to be live.
 
 ## 18. Idempotency, reconciliation, and observability
@@ -808,6 +1033,9 @@ tmux, agent adapters, status events, operation journal, and inbox.
 
 Implement RunSpec, RunAttempt, RunResult, manual/static allocation, local runner,
 preflight, artifact review bundles, collection, retry, and reconciliation.
+Add ExperimentPlan, deterministic Plan-to-RunSpec compilation, strict plan lint,
+and independent read-only PlanReview only as one complete gated slice; until
+then `PLAN.yaml` is not a supported interface.
 
 ### Phase 4: trusted GitHub review
 
