@@ -5,7 +5,7 @@
 Status: Phase 0 contract freeze
 Protocol version: 0.1
 Target release: v0.1 Core
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 This document is the implementation authority for Research Control Plane (RCP).
 Historical design notes are inputs, not executable requirements. A change to an
@@ -302,28 +302,32 @@ Secrets and secret environment values are never persisted.
 
 #### ExperimentPlan and independent plan review
 
-`PLAN.yaml` is a planned structured input, not a currently implemented CLI
-contract. Before that command surface is exposed, the protocol must add a
-versioned `ExperimentPlan` Pydantic model, generated JSON Schema, canonical
-serialization, and a deterministic compiler from `ExperimentPlan` to
-`RunSpec`. The schema forbids unknown fields and represents at least the
+`PLAN.yaml` is the strict `ExperimentPlan` CLI contract. The protocol provides
+the versioned Pydantic model, generated `experiment-plan.schema.json`, canonical
+Plan digest, typed `PlanReview`, generated `plan-review.schema.json`, and a
+deterministic compiler from `ExperimentPlan` to `RunSpec`. The schema forbids
+unknown fields and represents the
 hypothesis, comparison or baseline, argv, configuration, immutable inputs,
 metrics and directions, repetitions or seeds, resource request, stop/failure
 conditions, and artifact declarations. Prose may explain a choice but cannot
 replace a typed decision-bearing field.
 
 Every resolved value that could change experiment semantics records its source:
-an explicit authenticated user decision, a field in the accepted Task, or an
-allowlisted Project policy field, together with the referenced record digest
-and field path. `agent_inference`, provider defaults, environment-dependent
-defaults, and omitted critical values are invalid sources. A policy default is
-legal only when the accepted policy explicitly defines that exact value; it is
-never inferred merely because a CLI or library has a default.
+an exact value in the accepted Task's `plan_choices` or the accepted Project
+policy's `plan_choices`, together with the referenced record digest and field
+path. An authenticated user decision therefore becomes executable only after a
+manager-owned Task or policy proposal is reviewed and merged. A drafting Agent
+cannot prove user intent by writing `source: user` into its own Plan.
+`agent_inference`, provider defaults, environment-dependent defaults, and
+omitted critical values are invalid sources. A policy default is legal only
+when the accepted policy explicitly defines that exact value; it is never
+inferred merely because a CLI or library has a default.
 
-The planned `researchctl plan lint PLAN.yaml` gate performs schema validation,
+`researchctl plan lint PLAN.yaml` performs schema validation,
 canonicalization, cross-field checks, Task and input binding, default-source
-validation, and deterministic compilation without creating a Run ref,
-allocating resources, or launching a process. Missing or ambiguous semantic
+validation, and compilation precondition checks without creating a Run ref,
+allocating resources, or launching a process. A separate `plan compile` reruns
+those gates and deterministically emits the RunSpec. Missing or ambiguous semantic
 choices return `needs_input` with stable field-level findings. The Agent must
 ask the user or manager; it may not repair the Plan by guessing.
 
@@ -336,18 +340,32 @@ review ran, not human approval or authority to accept a Report.
 
 The reviewer may be a short-lived background subagent under the parent RCP
 Session and does not need another long-lived worktree, tmux process, or
-user-addressable Session. It still requires a distinct invocation ID,
-independent context, read-only access, and a completion receipt. The Session
-harness must negotiate this capability. If the provider cannot supply it, RCP
-uses an isolated ephemeral reviewer adapter or fails closed; it never silently
-falls back to self-review by the drafting Agent. The reviewer cannot edit the
-Plan, create a RunSpec, execute, submit, accept, approve, or merge.
+user-addressable Session. The implemented adapter starts a distinct invocation:
+Codex is ephemeral and read-only; Claude is non-persistent, uses plan permission
+mode, and uses bare mode with tools, slash commands, and ambient MCP
+configuration disabled. Both require an explicit manager-owned provider,
+model, policy version, and timeout. GitHub, Linear, Session-capability, and SSH
+agent credentials are removed from the reviewer environment. If the provider
+cannot supply a distinct attributed result, review fails closed; it never
+silently falls back to self-review by the drafting Agent. The reviewer cannot
+edit the Plan, create a RunSpec, execute, submit, accept, approve, or merge.
+
+The manager configures that provider/model contract with
+`researchctl plan configure-review`. The command derives one fixed
+`research/control/<operation-id>` proposal and may change only `plan_review` in
+`.research/policies/default.yaml`. Protected-base CI reloads the previous and
+replacement ProjectPolicy and rejects changes to any other policy field. The
+command prepares a reviewed proposal; it does not push, approve, merge, or grant
+manager authority to an Agent.
 
 The compiler binds the accepted Plan and PlanReview digests into the resulting
 RunSpec. Execution cannot begin until lint and required review pass. Submission
 CI later repeats deterministic lint and verifies that the frozen RunSpec and
-observed RunResult preserve the reviewed values and their sources. This feature
-is not implemented until those models, schemas, adapters, and gates exist.
+observed RunResult preserve the reviewed values and their sources. Local Run
+start additionally requires the journaled `plan.review` completion receipt for
+the exact Review digest. Plan-backed Submission evidence stores Plan and Review
+as separate files. Live provider invocation remains a deployment canary rather
+than a claimed production integration.
 
 ### 7.3 RunAttempt
 
@@ -581,8 +599,8 @@ Linear into an authority for research acceptance.
 
 `researchctl run start` does not implicitly commit arbitrary worktree changes.
 The default requires a clean committed HEAD. Explicit snapshot mode previews
-allowed paths before creating a snapshot commit. Once ExperimentPlan support is
-enabled, Plan schema/lint and the required independent review complete before
+allowed paths before creating a snapshot commit. For a Plan-backed Run, Plan
+schema/lint and the required independent review complete before
 the first Run operation side effect. `needs_input` creates no Run ref, process,
 or resource allocation.
 
@@ -1033,9 +1051,11 @@ tmux, agent adapters, status events, operation journal, and inbox.
 
 Implement RunSpec, RunAttempt, RunResult, manual/static allocation, local runner,
 preflight, artifact review bundles, collection, retry, and reconciliation.
-Add ExperimentPlan, deterministic Plan-to-RunSpec compilation, strict plan lint,
-and independent read-only PlanReview only as one complete gated slice; until
-then `PLAN.yaml` is not a supported interface.
+ExperimentPlan, deterministic Plan-to-RunSpec compilation, strict plan lint,
+independent read-only PlanReview, manager-owned reviewer configuration, Run
+gating, Submission evidence, and protected-CI replay are implemented as one
+gated slice. A live explicitly selected Codex/Claude reviewer remains a pilot
+gate.
 
 ### Phase 4: trusted GitHub review
 

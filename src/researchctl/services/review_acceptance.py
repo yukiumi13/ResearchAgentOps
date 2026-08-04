@@ -14,6 +14,7 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     ReportProposal,
+    ProjectPolicy,
     ReportRecord,
     ResearchSubmission,
     ReviewDecision,
@@ -72,12 +73,14 @@ class ReviewAcceptanceBuilder:
         claim_scope: ClaimScope,
         code_disposition: CodeDisposition,
         accepted_base_tree: str,
+        policy: ProjectPolicy | None = None,
     ) -> AcceptanceBundle:
         open_bundle = self.submissions.build(
             task=task,
             submission=submission,
             proposal=proposal,
             evidence=evidence,
+            policy=policy,
         )
         self._validate_revision(proposal, current_report)
         if (

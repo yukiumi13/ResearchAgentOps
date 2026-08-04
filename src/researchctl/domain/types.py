@@ -111,6 +111,14 @@ RunResultId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("result")),
 ]
+PlanId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("plan")),
+]
+PlanReviewId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("plan_review")),
+]
 SubmissionId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("submission")),

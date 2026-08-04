@@ -2,7 +2,7 @@
 
 Status: Normative Phase 0 addendum
 Scope: v0.1 command and application-service mutations
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 This document makes the mutation boundary in
 `RESEARCH_CONTROL_PLANE_SPEC.md` executable. Where earlier text is ambiguous,
@@ -78,6 +78,7 @@ journal is operational evidence, not a second authority.
 | `researchctl task create` | Manager; Task record on protected default branch | `OperationStarted`, then control-branch commit and PR | Task ID + canonical create-request digest | Observe Task ID, branch, commit, and PR; duplicate key with different Task ID is a conflict | `proposal_open`, `accepted` after merge, or `canceled` |
 | `researchctl task update TASK_ID` | Manager; Task record on protected default branch | `OperationStarted`, then control-branch commit based on expected Task digest | Task ID + expected revision/digest + patch digest | Compare current Task digest before continuing; regenerate on stale base, never silently rebase intent | `proposal_open`, `accepted` after merge, `stale`, or `canceled` |
 | `researchctl task cancel TASK_ID` | Manager; Task state on protected default branch | `OperationStarted`, then control-branch cancellation commit | Task ID + expected revision + reason digest | Observe accepted Task and proposal PR; cancellation does not kill Sessions or Runs implicitly | `proposal_open`, `canceled` after merge, or `stale` |
+| `researchctl plan configure-review` | Manager only; protected Project policy owns the accepted reviewer provider/model contract | `OperationStarted`, then one canonical ProjectPolicy commit on a fixed control branch/worktree | Operation ID + exact default head + explicit reviewer policy digest | Re-read exact base, fixed branch/marker/path, and both ProjectPolicy records; retry accepts only the same replacement, and CI proves every field except `plan_review` is unchanged | `proposal_prepared` or `no_change`; acceptance requires exact-head CI, CODEOWNER review, and protected merge |
 
 Task mutations are manager control proposals. An agent may suggest a Task through
 a StatusUpdate decision request, but cannot call a manager method merely by
@@ -120,6 +121,9 @@ incremented, so an Agent cannot act on a stale route.
 
 | Command | Actor and authority | First durable write | Idempotency key | Observe and recover | Terminal result |
 |---|---|---|---|---|---|
+| `researchctl plan lint PLAN.yaml` | Assigned Agent or manager; read-only validation of accepted Task/policy intent | None | None | Load strict Plan, accepted Task, and Project policy; compare every decision field, source digest, required input, and canonical Plan digest | `passed`, `needs_input`, or `invalid`; no Run or reviewer side effect |
+| `researchctl plan review PLAN.yaml` | Assigned Agent or manager invokes a distinct read-only reviewer; local journal owns the invocation observation | `OperationStarted` before provider execution; terminal event binds exact PlanReview digest | Operation ID + Plan/Task/policy digests + explicit reviewer policy | A terminal operation replays the same Review; timeout/error stays explicit, secrets are stripped, and drafter/reviewer identity equality fails | `passed`, `needs_input`, or `invalid`; never human acceptance |
+| `researchctl plan compile PLAN.yaml --review-file REVIEW.yaml` | Assigned Agent or manager; read-only deterministic compiler | None | None | Rerun lint, Review binding/outcome/receipt checks, then reproduce the exact RunSpec digest | One exact RunSpec or a typed failure; no Run ref/process |
 | `researchctl run start` | Assigned agent, manager, or runner; immutable Git RunSpec, local RunAttempt journal, controller allocation | `OperationStarted` before snapshot/ref, preflight, allocation, SSH, tmux, or process mutation | Run ID + canonical RunSpec digest | Validate frozen source write scope, then observe every named ref, target preflight, allocation, lock, tmux/process, attempt sequence, and artifact; continue only the first incomplete step | Attempt `succeeded`, `failed`, `canceled`, or `lost`; successful attempts may auto-collect |
 | `researchctl run retry RUN_ID` | Assigned agent or manager; new RunAttempt under the same frozen RunSpec | New `OperationStarted` and Attempt ID linked by `retry_of` | Run ID + new Attempt ID + prior terminal Attempt ID | Revalidate frozen source scope; require prior Attempt terminal and no final RunResult; observe allocation/process by new identities | New Attempt `succeeded`, `failed`, `canceled`, or `lost` |
 | `researchctl run collect RUN_ID` | Deterministic collector, runner, or manager; RunResult on the run branch | `OperationStarted` before remote reads or artifact transfer | Run ID + RunSpec digest + selected terminal Attempt IDs | Observe process terminal facts, artifact source and destination digests, then existing RunResult digest before write/push | `collected`, `already_collected`, `incomplete`, or `collection_failed` |

@@ -13,7 +13,8 @@ from researchctl.adapters._subprocess import (
     SubprocessCommandRunner,
 )
 from researchctl.adapters.git_ci import GitCIObjectReader
-from researchctl.domain.models import TaskRecord
+from researchctl.constants import PROJECT_POLICY_PATH
+from researchctl.domain.models import ProjectPolicy, TaskRecord
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml, load_yaml
 
@@ -241,6 +242,43 @@ class GitWriteScopeValidator:
                 context={"commit": commit, "path": path},
             )
         return task
+
+    def load_protected_policy(
+        self,
+        *,
+        repository_root: Path,
+        protected_commit: str,
+    ) -> ProjectPolicy:
+        """Load canonical Project policy from one exact protected commit."""
+
+        commit = self._require_object_id(protected_commit, "protected_commit")
+        content = self._objects.read_blob_at(
+            repository_root,
+            commit=commit,
+            path=PROJECT_POLICY_PATH,
+            required=False,
+        )
+        if content is None:
+            raise RCPError(
+                code="write_scope_policy_missing",
+                message="Canonical Project policy is missing from the protected branch.",
+                context={"commit": commit, "path": PROJECT_POLICY_PATH},
+            )
+        try:
+            policy = ProjectPolicy.model_validate(load_yaml(content.decode("utf-8")))
+        except (UnicodeError, TypeError, ValueError) as error:
+            raise RCPError(
+                code="write_scope_policy_invalid",
+                message="Protected default branch contains a malformed Project policy.",
+                context={"commit": commit, "path": PROJECT_POLICY_PATH},
+            ) from error
+        if dump_yaml(policy).encode("utf-8") != content:
+            raise RCPError(
+                code="write_scope_policy_not_canonical",
+                message="Protected Project policy must use canonical protocol YAML.",
+                context={"commit": commit, "path": PROJECT_POLICY_PATH},
+            )
+        return policy
 
     def validate_source(
         self,

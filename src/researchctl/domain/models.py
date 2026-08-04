@@ -23,6 +23,10 @@ from researchctl.domain.enums import (
     FailureClass,
     ImpactDisposition,
     InputKind,
+    PlanFindingKind,
+    PlanMetricDirection,
+    PlanReviewOutcome,
+    PlanValueSourceKind,
     Priority,
     ProjectState,
     ReportApplicability,
@@ -45,6 +49,8 @@ from researchctl.domain.types import (
     LinearUuid,
     NonEmptyStr,
     OperationId,
+    PlanId,
+    PlanReviewId,
     ProjectId,
     ReportId,
     RepositoryPath,
@@ -146,11 +152,20 @@ class ExecutionDomainPolicy(StrictModel):
         return self
 
 
+class PlanReviewPolicy(StrictModel):
+    provider: Literal["codex", "claude"]
+    model: ShortText
+    policy_version: ShortText
+    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3600)]
+
+
 class ProjectPolicy(ProtocolRecord):
     agent: AgentPolicy
     impact: ImpactPolicy = Field(default_factory=ImpactPolicy)
     security: SecurityPolicy = Field(default_factory=SecurityPolicy)
     execution_domains: tuple[ExecutionDomainPolicy, ...] = ()
+    plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
+    plan_review: PlanReviewPolicy | None = None
 
     @model_validator(mode="after")
     def require_unique_execution_domains(self) -> ProjectPolicy:
@@ -220,6 +235,7 @@ class TaskRecord(ProtocolRecord):
     execution: ExecutionPreferences = Field(default_factory=ExecutionPreferences)
     waiting_on: ShortText | None = None
     next_decision: NonEmptyStr | None = None
+    plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
     created_at: UtcDateTime
     updated_at: UtcDateTime
     linear_issue_id: LinearUuid | None = None
@@ -279,6 +295,238 @@ class ArtifactRef(StrictModel):
     verification: ArtifactVerification = ArtifactVerification.DECLARED
 
 
+class PlanMetric(StrictModel):
+    name: HumanKey
+    direction: PlanMetricDirection
+    target: JsonValue | None = None
+
+    @model_validator(mode="after")
+    def require_target_consistency(self) -> PlanMetric:
+        if (self.direction is PlanMetricDirection.TARGET) != (self.target is not None):
+            raise ValueError("target metrics require a target and other directions forbid it")
+        return self
+
+
+class PlanValueSource(StrictModel):
+    field_path: ShortText
+    source_kind: PlanValueSourceKind
+    source_digest: Sha256Digest
+
+
+_PLAN_DECISION_FIELDS = frozenset(
+    {
+        "argv",
+        "artifact_declarations",
+        "comparison",
+        "config",
+        "environment",
+        "failure_conditions",
+        "hypothesis",
+        "inputs",
+        "metrics",
+        "repetitions",
+        "requested_host",
+        "resources",
+        "seeds",
+        "stop_conditions",
+        "working_directory",
+    }
+)
+
+
+class ExperimentPlan(ProtocolRecord):
+    plan_id: PlanId
+    task_id: TaskId
+    session_id: SessionId
+    draft_invocation_id: ShortText
+    task_digest: Sha256Digest
+    policy_digest: Sha256Digest
+    run_id: RunId
+    operation_id: OperationId
+    source_commit: GitObjectId
+    source_tree: GitObjectId
+    baseline_commit: GitObjectId | None
+    hypothesis: NonEmptyStr
+    comparison: NonEmptyStr
+    argv: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    working_directory: RepositoryPath
+    environment: InputIdentity
+    config: InputIdentity | None
+    inputs: tuple[InputIdentity, ...]
+    metrics: Annotated[tuple[PlanMetric, ...], Field(min_length=1)]
+    repetitions: Annotated[StrictInt, Field(ge=1, le=1000000)] | None
+    seeds: tuple[Annotated[StrictInt, Field(ge=0)], ...]
+    resources: ResourceRequirement
+    requested_host: HumanKey | None
+    stop_conditions: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    failure_conditions: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    artifact_declarations: tuple[ArtifactDeclaration, ...]
+    value_sources: Annotated[tuple[PlanValueSource, ...], Field(min_length=1)]
+    created_at: UtcDateTime
+    plan_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_canonical_plan(self) -> ExperimentPlan:
+        if (self.repetitions is not None) == bool(self.seeds):
+            raise ValueError("plan requires exactly one of repetitions or non-empty seeds")
+        if self.seeds != tuple(sorted(self.seeds)) or len(self.seeds) != len(
+            set(self.seeds)
+        ):
+            raise ValueError("plan seeds must be unique and sorted")
+        metric_names = tuple(item.name for item in self.metrics)
+        if len(metric_names) != len(set(metric_names)):
+            raise ValueError("plan metric names must be unique")
+        identities = [self.environment]
+        if self.config is not None:
+            identities.append(self.config)
+        identities.extend(self.inputs)
+        identity_keys = [(item.kind, item.logical_id) for item in identities]
+        if len(identity_keys) != len(set(identity_keys)):
+            raise ValueError("plan input identity keys must be unique")
+        artifact_names = tuple(item.name for item in self.artifact_declarations)
+        artifact_paths = tuple(item.path for item in self.artifact_declarations)
+        if len(artifact_names) != len(set(artifact_names)):
+            raise ValueError("plan artifact names must be unique")
+        if len(artifact_paths) != len(set(artifact_paths)):
+            raise ValueError("plan artifact paths must be unique")
+        source_paths = tuple(item.field_path for item in self.value_sources)
+        if source_paths != tuple(sorted(source_paths)):
+            raise ValueError("plan value_sources must be sorted by field_path")
+        if len(source_paths) != len(set(source_paths)):
+            raise ValueError("plan value_sources must be unique by field_path")
+        if set(source_paths) != _PLAN_DECISION_FIELDS:
+            raise ValueError(
+                "plan value_sources must cover every decision-bearing field exactly"
+            )
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"plan_digest"},
+            exclude_none=False,
+        )
+        if self.plan_digest != canonical_digest(content):
+            raise ValueError("plan_digest does not match canonical ExperimentPlan content")
+        return self
+
+
+class PlanReviewFinding(StrictModel):
+    kind: PlanFindingKind
+    code: HumanKey
+    field_path: ShortText | None = None
+    message: NonEmptyStr
+
+
+class PlanReview(ProtocolRecord):
+    review_id: PlanReviewId
+    review_operation_id: OperationId
+    plan_id: PlanId
+    plan_digest: Sha256Digest
+    task_id: TaskId
+    task_digest: Sha256Digest
+    policy_digest: Sha256Digest
+    review_policy_version: ShortText
+    drafter_invocation_id: ShortText
+    reviewer_invocation_id: ShortText
+    reviewer_provider: HumanKey
+    reviewer_model: ShortText
+    outcome: PlanReviewOutcome
+    findings: tuple[PlanReviewFinding, ...] = ()
+    reviewer_output_digest: Sha256Digest
+    completed_at: UtcDateTime
+    completion_receipt_digest: Sha256Digest
+    review_digest: Sha256Digest
+
+    @staticmethod
+    def calculate_completion_receipt(
+        *,
+        review_operation_id: str,
+        plan_digest: str,
+        task_digest: str,
+        policy_digest: str,
+        review_policy_version: str,
+        reviewer_invocation_id: str,
+        reviewer_provider: str,
+        reviewer_model: str,
+        outcome: str,
+        findings: tuple[PlanReviewFinding, ...],
+        reviewer_output_digest: str,
+    ) -> str:
+        from researchctl.serialization import canonical_digest
+
+        return canonical_digest(
+            {
+                "review_operation_id": review_operation_id,
+                "plan_digest": plan_digest,
+                "task_digest": task_digest,
+                "policy_digest": policy_digest,
+                "review_policy_version": review_policy_version,
+                "reviewer_invocation_id": reviewer_invocation_id,
+                "reviewer_provider": reviewer_provider,
+                "reviewer_model": reviewer_model,
+                "outcome": outcome,
+                "findings": [
+                    item.model_dump(mode="json", exclude_none=True) for item in findings
+                ],
+                "reviewer_output_digest": reviewer_output_digest,
+            }
+        )
+
+    @model_validator(mode="after")
+    def require_canonical_review(self) -> PlanReview:
+        if self.reviewer_invocation_id == self.drafter_invocation_id:
+            raise ValueError("PlanReview invocation must differ from the Plan drafter")
+        finding_keys = tuple(
+            (item.field_path or "", item.code, item.kind.value, item.message)
+            for item in self.findings
+        )
+        if finding_keys != tuple(sorted(finding_keys)) or len(finding_keys) != len(
+            set(finding_keys)
+        ):
+            raise ValueError("PlanReview findings must be unique and sorted")
+        kinds = {item.kind for item in self.findings}
+        if self.outcome is PlanReviewOutcome.PASSED and kinds & {
+            PlanFindingKind.NEEDS_INPUT,
+            PlanFindingKind.INVALID,
+        }:
+            raise ValueError("passed PlanReview cannot contain blocking findings")
+        if self.outcome is PlanReviewOutcome.NEEDS_INPUT and (
+            PlanFindingKind.NEEDS_INPUT not in kinds
+            or PlanFindingKind.INVALID in kinds
+        ):
+            raise ValueError("needs_input PlanReview requires only needs-input blockers")
+        if (
+            self.outcome is PlanReviewOutcome.INVALID
+            and PlanFindingKind.INVALID not in kinds
+        ):
+            raise ValueError("invalid PlanReview requires an invalid finding")
+        expected_receipt = self.calculate_completion_receipt(
+            review_operation_id=self.review_operation_id,
+            plan_digest=self.plan_digest,
+            task_digest=self.task_digest,
+            policy_digest=self.policy_digest,
+            review_policy_version=self.review_policy_version,
+            reviewer_invocation_id=self.reviewer_invocation_id,
+            reviewer_provider=self.reviewer_provider,
+            reviewer_model=self.reviewer_model,
+            outcome=self.outcome.value,
+            findings=self.findings,
+            reviewer_output_digest=self.reviewer_output_digest,
+        )
+        if self.completion_receipt_digest != expected_receipt:
+            raise ValueError("PlanReview completion receipt does not match review evidence")
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"review_digest"},
+            exclude_none=True,
+        )
+        if self.review_digest != canonical_digest(content):
+            raise ValueError("review_digest does not match canonical PlanReview content")
+        return self
+
+
 class RunSpec(ProtocolRecord):
     run_id: RunId
     task_id: TaskId
@@ -295,6 +543,8 @@ class RunSpec(ProtocolRecord):
     resources: ResourceRequirement = Field(default_factory=ResourceRequirement)
     requested_host: HumanKey | None = None
     artifact_declarations: tuple[ArtifactDeclaration, ...] = ()
+    experiment_plan: ExperimentPlan | None = None
+    plan_review: PlanReview | None = None
     created_at: UtcDateTime
     spec_digest: Sha256Digest
 
@@ -316,6 +566,64 @@ class RunSpec(ProtocolRecord):
         artifact_paths = [item.path for item in self.artifact_declarations]
         if len(artifact_paths) != len(set(artifact_paths)):
             raise ValueError("run artifact paths must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def require_plan_consistency(self) -> RunSpec:
+        if (self.experiment_plan is None) != (self.plan_review is None):
+            raise ValueError("RunSpec requires both ExperimentPlan and PlanReview or neither")
+        plan = self.experiment_plan
+        review = self.plan_review
+        if plan is None or review is None:
+            return self
+        expected = (
+            plan.run_id,
+            plan.task_id,
+            plan.session_id,
+            plan.operation_id,
+            plan.source_commit,
+            plan.source_tree,
+            plan.baseline_commit,
+            plan.argv,
+            plan.working_directory,
+            plan.environment,
+            plan.config,
+            plan.inputs,
+            plan.resources,
+            plan.requested_host,
+            plan.artifact_declarations,
+            plan.created_at,
+        )
+        observed = (
+            self.run_id,
+            self.task_id,
+            self.session_id,
+            self.operation_id,
+            self.source_commit,
+            self.source_tree,
+            self.baseline_commit,
+            self.argv,
+            self.working_directory,
+            self.environment,
+            self.config,
+            self.inputs,
+            self.resources,
+            self.requested_host,
+            self.artifact_declarations,
+            self.created_at,
+        )
+        if observed != expected:
+            raise ValueError("RunSpec execution fields drift from its ExperimentPlan")
+        if (
+            review.outcome is not PlanReviewOutcome.PASSED
+            or review.plan_id != plan.plan_id
+            or review.plan_digest != plan.plan_digest
+            or review.task_id != plan.task_id
+            or review.task_digest != plan.task_digest
+            or review.policy_digest != plan.policy_digest
+            or review.drafter_invocation_id != plan.draft_invocation_id
+        ):
+            raise ValueError("RunSpec PlanReview does not pass and bind its ExperimentPlan")
         return self
 
     @model_validator(mode="after")

@@ -15,6 +15,7 @@ from researchctl.domain.models import (
     GeneratedOutputDigest,
     LinearProjectionDisabled,
     LinearProjectionPolicy,
+    PlanReviewPolicy,
     ProjectPolicy,
     ProjectRecord,
     ReportRecord,
@@ -43,6 +44,9 @@ from researchctl.services.ci_validation import (
 )
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
+from researchctl.services.control_plan_review_policy import (
+    ControlPlanReviewPolicyRepository,
+)
 from researchctl.services.control_tasks import ControlTaskRecordRepository
 from researchctl.services.impact_workflow import ImpactWorkflowService
 from researchctl.services.impact_decision_workflow import (
@@ -61,6 +65,7 @@ PROPOSAL_OPERATION_ID = "operation_20260803T120000Z_" + "c" * 24
 ACCEPT_OPERATION_ID = "operation_20260803T120001Z_" + "d" * 24
 TASK_OPERATION_ID = "operation_20260803T120002Z_" + "e" * 24
 LINEAR_OPERATION_ID = "operation_20260803T120003Z_" + "f" * 24
+PLAN_REVIEW_OPERATION_ID = "operation_20260803T120003Z_" + "0" * 24
 GENERATED_AT = "2026-08-03T12:00:00Z"
 IMPACT_ID = "impact_20260803T120004Z_" + "1" * 24
 IMPACT_OPERATION_ID = "operation_20260803T120004Z_" + "2" * 24
@@ -264,6 +269,82 @@ def test_generated_linear_policy_control_is_validated_without_network(
         "pr_type_dispatch",
         "trusted_base",
     }
+
+
+def test_generated_plan_review_policy_control_is_exactly_scoped(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
+    worktrees.mkdir(parents=True)
+    control = ControlPlanReviewPolicyRepository(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+        operation_id=PLAN_REVIEW_OPERATION_ID,
+        expected_default_head=base,
+    )
+    written = control.configure(
+        PlanReviewPolicy(
+            provider="codex",
+            model="gpt-test-reviewer",
+            policy_version="plan-review-v1",
+            timeout_seconds=60,
+        )
+    )
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=base,
+            head=written.proposal.commit,
+            head_ref=control.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "plan_review_policy_control"
+    assert result.attestation.applicability == "validated"
+    assert {item.name for item in result.attestation.checks} == {
+        "plan_review_policy",
+        "project_policy_transition",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+
+
+def test_plan_review_policy_control_rejects_other_project_policy_changes(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    branch = f"research/control/{PLAN_REVIEW_OPERATION_ID}"
+    _git(initialized_repository, "checkout", "-b", branch)
+    path = initialized_repository / ".research" / "policies" / "default.yaml"
+    policy = load_model(path, ProjectPolicy)
+    replacement = policy.model_copy(
+        update={
+            "plan_review": PlanReviewPolicy(
+                provider="codex",
+                model="gpt-test-reviewer",
+                policy_version="plan-review-v1",
+                timeout_seconds=60,
+            ),
+            "plan_choices": {"undeclared_default": True},
+        }
+    )
+    path.write_text(dump_yaml(replacement), encoding="utf-8")
+    head = _commit(
+        initialized_repository,
+        f"researchctl: plan.configure-review {PLAN_REVIEW_OPERATION_ID}",
+        ".research/policies/default.yaml",
+    )
+
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(base=base, head=head, head_ref=branch),
+        )
+
+    assert raised.value.code == "ci_plan_review_policy_scope_invalid"
 
 
 @pytest.mark.parametrize(

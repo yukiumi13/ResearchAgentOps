@@ -27,6 +27,7 @@ _WORKFLOW_HEADING = re.compile(r"^### (WF-\d{2}) - .+$", re.MULTILINE)
 
 EXPECTED_WORKFLOW_STATUSES = {
     "verified_local": {
+        "US-002",
         "US-003",
         "US-008",
         "US-014",
@@ -37,7 +38,6 @@ EXPECTED_WORKFLOW_STATUSES = {
     },
     "partial": {
         "US-001",
-        "US-002",
         "US-011",
         "US-012",
         "US-013",

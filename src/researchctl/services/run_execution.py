@@ -20,6 +20,7 @@ from researchctl.services.local_run import (
     LocalRunExecutor,
     RunEventCallback,
 )
+from researchctl.services.experiment_plan import require_passing_plan_review
 from researchctl.services.run_preflight import LocalRunPreflight, RunPreflightReceipt
 from researchctl.services.run_records import (
     CollectedRunReceipt,
@@ -182,6 +183,17 @@ class LocalRunCoordinator:
             baseline_commit=spec.baseline_commit,
             source_commit=spec.source_commit,
         )
+        if spec.experiment_plan is not None and spec.plan_review is not None:
+            protected_policy = self.write_scope.load_protected_policy(
+                repository_root=self.repository_root,
+                protected_commit=trusted_base,
+            )
+            require_passing_plan_review(
+                spec.experiment_plan,
+                spec.plan_review,
+                protected_task,
+                protected_policy,
+            )
         records = GitRunRecordRepository(
             repository_root=self.repository_root,
             worktrees_directory=self.worktrees_directory,

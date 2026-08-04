@@ -14,8 +14,11 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     DependencySet,
+    ExperimentPlan,
     LinearProjectionPolicy,
     ReportProposal,
+    PlanReview,
+    PlanReviewPolicy,
     ResearchSubmission,
     RunSpec,
     SessionNotificationOrigin,
@@ -33,6 +36,7 @@ from researchctl.domain.types import (
     NotificationId,
     NotificationReplyId,
     OperationId,
+    PlanReviewId,
     ReportId,
     RunAttemptId,
     RunId,
@@ -70,6 +74,11 @@ class BootstrapProposalRequest(MutationRequest):
 class LinearConfigureRequest(MutationRequest):
     expected_default_head: GitObjectId
     policy: LinearProjectionPolicy
+
+
+class PlanReviewConfigureRequest(MutationRequest):
+    expected_default_head: GitObjectId
+    review_policy: PlanReviewPolicy
 
 
 LinearDeliveryTopic = Literal[
@@ -241,6 +250,20 @@ class RunStartRequest(MutationRequest):
         if len(self.assigned_gpu_uuids) != len(set(self.assigned_gpu_uuids)):
             raise ValueError("assigned_gpu_uuids must be unique")
         return self
+
+
+class PlanLintRequest(StrictModel):
+    plan: ExperimentPlan
+
+
+class PlanReviewCreateRequest(MutationRequest):
+    review_id: PlanReviewId
+    plan: ExperimentPlan
+
+
+class PlanCompileRequest(StrictModel):
+    plan: ExperimentPlan
+    review: PlanReview
 
 
 class RunRetryRequest(MutationRequest):

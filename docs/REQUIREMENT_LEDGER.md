@@ -1,7 +1,7 @@
 # Post-export Requirement Ledger
 
 Status: normative implementation input
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 `USER_SCENARIOS.md` preserves anonymous anchors for all 77 prompts in the
 private historical research. This ledger gives stable identities to later
@@ -83,10 +83,15 @@ requirements so traceability does not silently stop at that boundary.
   with generated schema and deterministic RunSpec compilation. Local lint and
   exact-head Submission CI reject missing semantic choices, unknown fields,
   implicit provider/CLI/library defaults, and values without an authenticated
-  user, accepted Task, or explicit Project-policy source. An independent typed
+  manager-authenticated accepted Task or explicit Project-policy source. An independent typed
   PlanReview is bound to the exact Plan/Task digests; it may run as a read-only
   background subagent without another persistent Session, but it has a distinct
   invocation identity and can only pass, request input, or report invalidity.
+- Implementation: locally implemented and focused-test covered across generated
+  schemas, deterministic lint/compile, explicit manager-owned reviewer policy,
+  ephemeral Codex/Claude adapters, Run receipt gates, separate Submission
+  evidence, and protected-base replay. Live provider/model and installed
+  protected-repository canaries remain deployment pending.
 
 ## REQ-20260803-009 - Main merges create at most one reviewed Impact batch
 

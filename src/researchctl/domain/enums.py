@@ -130,6 +130,29 @@ class InputKind(StrEnum):
     OTHER = "other"
 
 
+class PlanMetricDirection(StrEnum):
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
+    TARGET = "target"
+
+
+class PlanReviewOutcome(StrEnum):
+    PASSED = "passed"
+    NEEDS_INPUT = "needs_input"
+    INVALID = "invalid"
+
+
+class PlanFindingKind(StrEnum):
+    WARNING = "warning"
+    NEEDS_INPUT = "needs_input"
+    INVALID = "invalid"
+
+
+class PlanValueSourceKind(StrEnum):
+    ACCEPTED_TASK = "accepted_task"
+    PROJECT_POLICY = "project_policy"
+
+
 class ArtifactVerification(StrEnum):
     DECLARED = "declared"
     PRODUCER_VERIFIED = "producer_verified"

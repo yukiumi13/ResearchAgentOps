@@ -23,6 +23,10 @@ HTTP service, broker, custom web UI, or always-on Agent daemon.
 
 ```text
 Agent work in a Session branch/worktree
+  -> strict ExperimentPlan with accepted Task/policy value provenance
+  -> deterministic no-fallback lint
+  -> independent ephemeral read-only PlanReview
+  -> deterministic reviewed RunSpec
   -> immutable research-run/<run_id> evidence
   -> ResearchSubmission
   -> manager review accept creates a candidate Decision + Report
@@ -84,12 +88,55 @@ no governed RCP protocol path changed. It is not a source test, and cannot
 replace `researchctl/source-tests`.
 
 The protected-base dispatcher currently recognizes Submission, generated Task
-control, Report Impact, explicit ImpactDecision, bootstrap proposal/acceptance,
-and manager-owned Linear policy control changes. Unknown or mixed protocol
-mutations fail closed. Review the installed
+control, manager-owned Plan reviewer policy control, Report Impact, explicit
+ImpactDecision, bootstrap proposal/acceptance, and manager-owned Linear policy
+control changes. Unknown or mixed protocol mutations fail closed. Review the installed
 single-maintainer CODEOWNERS baseline, require both checks, dismiss stale
 approvals, and restrict protected-branch updates before treating merge as an
 acceptance boundary.
+
+## Plans Before Runs
+
+`PLAN.yaml` is a strict generated-schema protocol record. Every field that can
+change experiment semantics must cite the digest of an accepted Task or Project
+policy containing that exact value. A drafting Agent cannot make a choice
+authoritative by labeling its own YAML `user`; missing accepted intent becomes
+`needs_input` rather than a provider, CLI, library, or environment fallback.
+
+The manager first proposes an explicit reviewer provider/model policy. The
+command changes only `plan_review` in the protected Project policy on a fixed
+control branch; exact-head CI replays that field-level scope before merge:
+
+```bash
+researchctl plan configure-review \
+  --provider codex \
+  --model EXPLICIT_MODEL_ID \
+  --policy-version plan-review-v1 \
+  --timeout-seconds 60 \
+  --expected-default-head FULL_DEFAULT_BRANCH_SHA
+```
+
+After the relevant Task choices and reviewer policy are accepted, the Agent
+runs the deterministic and semantic gates before any Run side effect:
+
+```bash
+researchctl plan lint PLAN.yaml
+researchctl plan review PLAN.yaml --output-file plan-review.yaml
+researchctl plan compile PLAN.yaml \
+  --review-file plan-review.yaml --output-file run-spec.yaml
+researchctl run start --spec-file run-spec.yaml
+```
+
+The reviewer is a fresh attributed invocation with read-only access and no
+second persistent RCP Session. Codex runs ephemerally; Claude runs in
+bare non-persistent print/plan mode with tools, slash commands, and ambient MCP
+configuration disabled. Reviewer credentials are
+deployment inputs, not Plan fields. The environment strips GitHub, Linear,
+Session-capability, and SSH-agent credentials. Self-review, reviewer-policy
+drift, missing local review receipt, Plan/Task/policy digest drift, or a
+non-passing opinion blocks compilation or execution. Plan-backed Submissions
+carry separate `plan.yaml` and `plan-review.yaml` evidence, and protected CI
+reruns deterministic validation from the protected Task and Project policy.
 
 ## Session Addressing
 
@@ -182,6 +229,10 @@ Implemented and tested locally:
   grouped exception inbox, notification inbox, and terminal fallback;
 - frozen local Runs, preflight, attempts/retries, immutable provenance,
   collection, and read-only reconciliation;
+- strict ExperimentPlan and PlanReview schemas, accepted-value provenance,
+  no-fallback lint, explicit manager-owned reviewer policy control, independent
+  ephemeral review, deterministic RunSpec compilation, Run gating, separate
+  Submission evidence, and protected-CI replay;
 - Submission, Decision, deterministic Report rendering, manager acceptance,
   constrained Agent-authored GitHub PR delivery, protected-base dispatch,
   exact-head validation, and source tests;
@@ -200,6 +251,8 @@ Still gated deployment or later-phase work:
 - branch rules and reviewer-policy verification for the installed CODEOWNERS
   baseline, GitHub Submission/post-merge credential installation, a live PR
   pilot, and trusted scheduling;
+- live Codex/Claude Plan-review invocation and credential/configuration canary
+  against the explicitly selected deployment models;
 - real Linear transport under the deployment credential and a measured shadow
   then allowlisted canary pilot;
 - SSH fleet execution and cross-host artifact staging;

@@ -15,6 +15,7 @@ from researchctl.phase2_cli import (
     bootstrap_app,
     inbox_app,
     linear_app,
+    plan_app,
     run_app,
     session_app,
     status_app,
@@ -45,6 +46,7 @@ app.add_typer(session_app, name="session")
 app.add_typer(status_app, name="status")
 app.add_typer(inbox_app, name="inbox")
 app.add_typer(run_app, name="run")
+app.add_typer(plan_app, name="plan")
 app.add_typer(linear_app, name="linear")
 app.add_typer(review_app, name="review")
 app.add_typer(report_app, name="report")

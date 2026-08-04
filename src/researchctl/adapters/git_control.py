@@ -11,13 +11,26 @@ from researchctl.adapters._subprocess import (
     CommandRunner,
     SubprocessCommandRunner,
 )
-from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH
+from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH, PROJECT_POLICY_PATH
 from researchctl.errors import RCPError
 
 
 _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _CONTROL_COMMANDS = frozenset({"task.create", "task.update", "task.cancel"})
 _LINEAR_COMMAND = "linear.configure"
+_PLAN_REVIEW_COMMAND = "plan.configure-review"
+_POLICY_CONTROLS = {
+    _LINEAR_COMMAND: (
+        LINEAR_PROJECTION_POLICY_PATH,
+        "Linear policy",
+        "control_linear",
+    ),
+    _PLAN_REVIEW_COMMAND: (
+        PROJECT_POLICY_PATH,
+        "Plan review policy",
+        "control_plan_review",
+    ),
+}
 _TASK_PATH = re.compile(
     r"^\.research/tasks/task_\d{8}T\d{6}Z_[0-9a-f]{24}\.yaml$"
 )
@@ -87,18 +100,46 @@ class GitControlCommitAdapter:
 
     @staticmethod
     def validate_linear_identity(*, operation_id: str, branch: str) -> None:
+        GitControlCommitAdapter.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=_LINEAR_COMMAND,
+        )
+
+    @staticmethod
+    def validate_plan_review_identity(*, operation_id: str, branch: str) -> None:
+        GitControlCommitAdapter.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    @staticmethod
+    def validate_policy_identity(
+        *,
+        operation_id: str,
+        branch: str,
+        command: str,
+    ) -> None:
+        if command not in _POLICY_CONTROLS:
+            raise RCPError(
+                code="control_policy_command_invalid",
+                message="Policy control requires a supported command.",
+            )
         if not isinstance(operation_id, str) or not _OPERATION_ID.fullmatch(
             operation_id
         ):
+            label = _POLICY_CONTROLS[command][1]
             raise RCPError(
                 code="control_operation_id_invalid",
-                message="Linear policy control requires a canonical Operation ID.",
+                message=f"{label} control requires a canonical Operation ID.",
             )
         expected_branch = f"research/control/{operation_id}"
         if branch != expected_branch:
+            label = _POLICY_CONTROLS[command][1]
             raise RCPError(
                 code="control_branch_invalid",
-                message="Linear policy branch does not match its Operation ID.",
+                message=f"{label} branch does not match its Operation ID.",
                 context={"expected_branch": expected_branch},
             )
 
@@ -169,11 +210,49 @@ class GitControlCommitAdapter:
         operation_id: str,
         expected_base_commit: str,
     ) -> ControlCommitReceipt:
-        self.validate_linear_identity(operation_id=operation_id, branch=branch)
+        return self.commit_policy_or_observe(
+            worktree=worktree,
+            branch=branch,
+            operation_id=operation_id,
+            expected_base_commit=expected_base_commit,
+            command=_LINEAR_COMMAND,
+        )
+
+    def commit_plan_review_policy_or_observe(
+        self,
+        *,
+        worktree: Path,
+        branch: str,
+        operation_id: str,
+        expected_base_commit: str,
+    ) -> ControlCommitReceipt:
+        return self.commit_policy_or_observe(
+            worktree=worktree,
+            branch=branch,
+            operation_id=operation_id,
+            expected_base_commit=expected_base_commit,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    def commit_policy_or_observe(
+        self,
+        *,
+        worktree: Path,
+        branch: str,
+        operation_id: str,
+        expected_base_commit: str,
+        command: str,
+    ) -> ControlCommitReceipt:
+        self.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=command,
+        )
+        relative, label, error_prefix = _POLICY_CONTROLS[command]
         if not _GIT_OBJECT_ID.fullmatch(expected_base_commit):
             raise RCPError(
-                code="control_linear_base_invalid",
-                message="Linear policy control requires an exact base commit.",
+                code=f"{error_prefix}_base_invalid",
+                message=f"{label} control requires an exact base commit.",
             )
         root = Path(os.path.abspath(os.fspath(worktree)))
         if root.is_symlink() or not root.is_dir():
@@ -181,29 +260,29 @@ class GitControlCommitAdapter:
                 code="control_worktree_invalid",
                 message="Control worktree must be an existing non-symlink directory.",
             )
-        policy_path = root / LINEAR_PROJECTION_POLICY_PATH
+        policy_path = root / relative
         current = root
-        for part in PurePosixPath(LINEAR_PROJECTION_POLICY_PATH).parts:
+        for part in PurePosixPath(relative).parts:
             current = current / part
             if current.is_symlink():
                 raise RCPError(
-                    code="control_linear_policy_path_invalid",
-                    message="Linear policy path must not traverse a symbolic link.",
+                    code=f"{error_prefix}_policy_path_invalid",
+                    message=f"{label} path must not traverse a symbolic link.",
                 )
         if not policy_path.is_file():
             raise RCPError(
-                code="control_linear_policy_path_invalid",
-                message="Linear policy must be an existing regular file.",
+                code=f"{error_prefix}_policy_path_invalid",
+                message=f"{label} must be an existing regular file.",
             )
         return self._commit_path_or_observe(
             root=root,
             branch=branch,
-            relative=LINEAR_PROJECTION_POLICY_PATH,
+            relative=relative,
             working_path=policy_path,
             operation_id=operation_id,
-            command=_LINEAR_COMMAND,
-            path_error_code="control_linear_policy_path_invalid",
-            record_label="Linear policy",
+            command=command,
+            path_error_code=f"{error_prefix}_policy_path_invalid",
+            record_label=label,
             expected_base_commit=expected_base_commit,
         )
 
@@ -215,17 +294,55 @@ class GitControlCommitAdapter:
         operation_id: str,
         expected_base_commit: str,
     ) -> bool:
-        """Accept only the exact base or this operation's one-commit proposal."""
+        return self.validate_policy_operation_head(
+            repository_root=repository_root,
+            commit=commit,
+            operation_id=operation_id,
+            expected_base_commit=expected_base_commit,
+            command=_LINEAR_COMMAND,
+        )
+
+    def validate_plan_review_operation_head(
+        self,
+        *,
+        repository_root: Path,
+        commit: str,
+        operation_id: str,
+        expected_base_commit: str,
+    ) -> bool:
+        return self.validate_policy_operation_head(
+            repository_root=repository_root,
+            commit=commit,
+            operation_id=operation_id,
+            expected_base_commit=expected_base_commit,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    def validate_policy_operation_head(
+        self,
+        *,
+        repository_root: Path,
+        commit: str,
+        operation_id: str,
+        expected_base_commit: str,
+        command: str,
+    ) -> bool:
+        """Accept only the exact base or one fixed-path policy proposal."""
 
         branch = f"research/control/{operation_id}"
-        self.validate_linear_identity(operation_id=operation_id, branch=branch)
+        self.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=command,
+        )
+        relative, label, error_prefix = _POLICY_CONTROLS[command]
         if not all(
             _GIT_OBJECT_ID.fullmatch(value)
             for value in (commit, expected_base_commit)
         ):
             raise RCPError(
-                code="control_linear_base_invalid",
-                message="Linear policy control requires exact commit identities.",
+                code=f"{error_prefix}_base_invalid",
+                message=f"{label} control requires exact commit identities.",
             )
         root = Path(os.path.abspath(os.fspath(repository_root)))
         if root.is_symlink() or not root.is_dir():
@@ -236,7 +353,7 @@ class GitControlCommitAdapter:
         if commit == expected_base_commit:
             return False
         message = self._git(root, "show", "-s", "--format=%B", commit)
-        expected_message = f"researchctl: {_LINEAR_COMMAND} {operation_id}"
+        expected_message = f"researchctl: {command} {operation_id}"
         parents = self._git(root, "show", "-s", "--format=%P", commit)
         paths = self._git(
             root,
@@ -254,21 +371,21 @@ class GitControlCommitAdapter:
             "-z",
             commit,
             "--",
-            LINEAR_PROJECTION_POLICY_PATH,
+            relative,
         )
         entry_prefix = "100644 blob "
-        entry_suffix = f"\t{LINEAR_PROJECTION_POLICY_PATH}\x00"
+        entry_suffix = f"\t{relative}\x00"
         if (
             message.stdout.rstrip("\n") != expected_message
             or tuple(parents.stdout.strip().split()) != (expected_base_commit,)
-            or paths.stdout != f"{LINEAR_PROJECTION_POLICY_PATH}\x00"
+            or paths.stdout != f"{relative}\x00"
             or not entry.stdout.startswith(entry_prefix)
             or not entry.stdout.endswith(entry_suffix)
         ):
             raise RCPError(
-                code="control_linear_commit_invalid",
+                code=f"{error_prefix}_commit_invalid",
                 message=(
-                    "Existing Linear policy branch is not this operation's "
+                    f"Existing {label} branch is not this operation's "
                     "single-file commit over the requested base."
                 ),
             )
@@ -280,10 +397,41 @@ class GitControlCommitAdapter:
         repository_root: Path,
         commit: str,
     ) -> bytes | None:
+        return self.policy_content_at(
+            repository_root=repository_root,
+            commit=commit,
+            command=_LINEAR_COMMAND,
+        )
+
+    def project_policy_content_at(
+        self,
+        *,
+        repository_root: Path,
+        commit: str,
+    ) -> bytes | None:
+        return self.policy_content_at(
+            repository_root=repository_root,
+            commit=commit,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    def policy_content_at(
+        self,
+        *,
+        repository_root: Path,
+        commit: str,
+        command: str,
+    ) -> bytes | None:
+        if command not in _POLICY_CONTROLS:
+            raise RCPError(
+                code="control_policy_command_invalid",
+                message="Policy read requires a supported control command.",
+            )
+        relative, label, error_prefix = _POLICY_CONTROLS[command]
         if not _GIT_OBJECT_ID.fullmatch(commit):
             raise RCPError(
-                code="control_linear_base_invalid",
-                message="Linear policy read requires an exact base commit.",
+                code=f"{error_prefix}_base_invalid",
+                message=f"{label} read requires an exact base commit.",
             )
         root = Path(os.path.abspath(os.fspath(repository_root)))
         if root.is_symlink() or not root.is_dir():
@@ -297,21 +445,21 @@ class GitControlCommitAdapter:
             "-z",
             commit,
             "--",
-            LINEAR_PROJECTION_POLICY_PATH,
+            relative,
         )
         if not entry.stdout:
             return None
         prefix = "100644 blob "
-        suffix = f"\t{LINEAR_PROJECTION_POLICY_PATH}\x00"
+        suffix = f"\t{relative}\x00"
         if not entry.stdout.startswith(prefix) or not entry.stdout.endswith(suffix):
             raise RCPError(
-                code="control_linear_base_invalid",
-                message="Accepted Linear policy is not a regular non-executable file.",
+                code=f"{error_prefix}_base_invalid",
+                message=f"Accepted {label} is not a regular non-executable file.",
             )
         content = self._git(
             root,
             "show",
-            f"{commit}:{LINEAR_PROJECTION_POLICY_PATH}",
+            f"{commit}:{relative}",
         )
         return content.stdout.encode("utf-8")
 
@@ -324,11 +472,53 @@ class GitControlCommitAdapter:
         expected_head: str,
         operation_id: str,
     ) -> None:
-        self.validate_linear_identity(operation_id=operation_id, branch=branch)
+        self.attach_existing_policy_branch(
+            repository_root=repository_root,
+            worktree=worktree,
+            branch=branch,
+            expected_head=expected_head,
+            operation_id=operation_id,
+            command=_LINEAR_COMMAND,
+        )
+
+    def attach_existing_plan_review_branch(
+        self,
+        *,
+        repository_root: Path,
+        worktree: Path,
+        branch: str,
+        expected_head: str,
+        operation_id: str,
+    ) -> None:
+        self.attach_existing_policy_branch(
+            repository_root=repository_root,
+            worktree=worktree,
+            branch=branch,
+            expected_head=expected_head,
+            operation_id=operation_id,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    def attach_existing_policy_branch(
+        self,
+        *,
+        repository_root: Path,
+        worktree: Path,
+        branch: str,
+        expected_head: str,
+        operation_id: str,
+        command: str,
+    ) -> None:
+        self.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=command,
+        )
+        _relative, label, error_prefix = _POLICY_CONTROLS[command]
         if not _GIT_OBJECT_ID.fullmatch(expected_head):
             raise RCPError(
-                code="control_linear_base_invalid",
-                message="Linear policy recovery requires an exact branch head.",
+                code=f"{error_prefix}_base_invalid",
+                message=f"{label} recovery requires an exact branch head.",
             )
         repository = Path(os.path.abspath(os.fspath(repository_root)))
         target = Path(os.path.abspath(os.fspath(worktree)))
@@ -345,7 +535,7 @@ class GitControlCommitAdapter:
         ):
             raise RCPError(
                 code="control_worktree_invalid",
-                message="Recovered Linear policy worktree path is not safely absent.",
+                message=f"Recovered {label} worktree path is not safely absent.",
             )
         observed = self._git(
             repository,
@@ -357,15 +547,15 @@ class GitControlCommitAdapter:
         )
         if observed.returncode != 0 or observed.stdout.strip() != expected_head:
             raise RCPError(
-                code="control_linear_branch_mismatch",
-                message="Recovered Linear policy branch changed unexpectedly.",
+                code=f"{error_prefix}_branch_mismatch",
+                message=f"Recovered {label} branch changed unexpectedly.",
             )
         self._git(repository, "worktree", "add", "--", str(target), branch)
         recovered = self._git(target, "rev-parse", "--verify", "HEAD^{commit}")
         if recovered.stdout.strip() != expected_head:
             raise RCPError(
-                code="control_linear_branch_mismatch",
-                message="Recovered Linear policy worktree has the wrong HEAD.",
+                code=f"{error_prefix}_branch_mismatch",
+                message=f"Recovered {label} worktree has the wrong HEAD.",
             )
 
     def require_linear_worktree_scope(
@@ -375,7 +565,41 @@ class GitControlCommitAdapter:
         branch: str,
         operation_id: str,
     ) -> None:
-        self.validate_linear_identity(operation_id=operation_id, branch=branch)
+        self.require_policy_worktree_scope(
+            worktree=worktree,
+            branch=branch,
+            operation_id=operation_id,
+            command=_LINEAR_COMMAND,
+        )
+
+    def require_plan_review_worktree_scope(
+        self,
+        *,
+        worktree: Path,
+        branch: str,
+        operation_id: str,
+    ) -> None:
+        self.require_policy_worktree_scope(
+            worktree=worktree,
+            branch=branch,
+            operation_id=operation_id,
+            command=_PLAN_REVIEW_COMMAND,
+        )
+
+    def require_policy_worktree_scope(
+        self,
+        *,
+        worktree: Path,
+        branch: str,
+        operation_id: str,
+        command: str,
+    ) -> None:
+        self.validate_policy_identity(
+            operation_id=operation_id,
+            branch=branch,
+            command=command,
+        )
+        relative, label, _error_prefix = _POLICY_CONTROLS[command]
         root = Path(os.path.abspath(os.fspath(worktree)))
         if root.is_symlink() or not root.is_dir():
             raise RCPError(
@@ -401,14 +625,14 @@ class GitControlCommitAdapter:
             or observed_branch.stdout.removesuffix("\n") != branch
             or any(
                 len(line) < 4
-                or line[3:] != LINEAR_PROJECTION_POLICY_PATH
+                or line[3:] != relative
                 for line in status.stdout.splitlines()
             )
         ):
             raise RCPError(
                 code="control_worktree_dirty",
                 message=(
-                    "Linear policy worktree is on the wrong branch or contains "
+                    f"{label} worktree is on the wrong branch or contains "
                     "a change outside its fixed policy path."
                 ),
             )
@@ -506,17 +730,19 @@ class GitControlCommitAdapter:
             record_label=record_label,
         )
         if expected_base_commit is not None:
+            _relative, _label, error_prefix = _POLICY_CONTROLS[command]
             if effect_applied:
-                self.validate_linear_operation_head(
+                self.validate_policy_operation_head(
                     repository_root=root,
                     commit=commit,
                     operation_id=operation_id,
                     expected_base_commit=expected_base_commit,
+                    command=command,
                 )
             elif commit != expected_base_commit:
                 raise RCPError(
-                    code="control_linear_commit_invalid",
-                    message="Linear policy branch does not match its requested base.",
+                    code=f"{error_prefix}_commit_invalid",
+                    message="Policy branch does not match its requested base.",
                 )
         if commit_created and not effect_applied:
             raise RCPError(

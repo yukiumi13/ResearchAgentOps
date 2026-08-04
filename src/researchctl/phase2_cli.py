@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -12,26 +14,29 @@ from typing import Annotated, Any, TypeVar
 
 import typer
 from click import Choice
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from researchctl.domain.enums import InputKind, Priority, SessionState, StatusKind
 from researchctl.domain.ids import new_id
 from researchctl.domain.models import (
     DecisionRequest,
+    ExperimentPlan,
     ExecutionPreferences,
     InputIdentity,
     LinearProjectionPolicy,
+    PlanReview,
+    PlanReviewPolicy,
     RunSpec,
     StatusEvidence,
     StatusUpdate,
     TaskRecord,
 )
-from researchctl.domain.types import utc_now
+from researchctl.domain.types import RepositoryPath, utc_now
 from researchctl.errors import RCPError
 from researchctl.output import dump_envelope, envelope
 from researchctl.request_io import read_json_request
 from researchctl.runtime import SessionNotification
-from researchctl.serialization import load_model
+from researchctl.serialization import dump_yaml, load_model
 from researchctl.services.application import ServiceResult
 from researchctl.services.requests import (
     AgentKind,
@@ -45,6 +50,10 @@ from researchctl.services.requests import (
     LinearDeliveryListRequest,
     LinearDeliveryShowRequest,
     MutationRequest,
+    PlanCompileRequest,
+    PlanLintRequest,
+    PlanReviewConfigureRequest,
+    PlanReviewCreateRequest,
     RunCollectRequest,
     RunRetryRequest,
     RunStartRequest,
@@ -71,6 +80,10 @@ session_app = typer.Typer(help="Start and inspect Agent Sessions.", no_args_is_h
 status_app = typer.Typer(help="Publish structured Agent status.", no_args_is_help=True)
 inbox_app = typer.Typer(help="Review exception-oriented attention.", no_args_is_help=True)
 run_app = typer.Typer(help="Execute immutable governed Runs.", no_args_is_help=True)
+plan_app = typer.Typer(
+    help="Lint, independently review, and compile ExperimentPlans.",
+    no_args_is_help=True,
+)
 linear_app = typer.Typer(
     help="Configure the governed Linear projection policy.",
     no_args_is_help=True,
@@ -103,6 +116,8 @@ _TASK_COMMANDS = frozenset({"task.create", "task.update", "task.cancel"})
 _BOOTSTRAP_COMMANDS = frozenset({"bootstrap.accept", "bootstrap.propose"})
 _RUN_COMMANDS = frozenset({"run.start", "run.retry", "run.collect"})
 _LINEAR_COMMANDS = frozenset({"linear.configure"})
+_PLAN_CONTROL_COMMANDS = frozenset({"plan.configure-review"})
+_REPOSITORY_PATH = TypeAdapter(RepositoryPath)
 
 
 def _input_error(message: str, *, option: str | None = None) -> RCPError:
@@ -312,6 +327,23 @@ def _render_result(data: dict[str, Any]) -> None:
     linear_policy = data.get("linear_policy")
     if isinstance(linear_policy, dict):
         typer.echo(f"Linear workspace: {linear_policy.get('workspace_id')}")
+        typer.echo(f"Policy digest: {data.get('policy_digest')}")
+        proposal = data.get("proposal")
+        if isinstance(proposal, dict):
+            typer.echo(f"Proposal branch: {proposal.get('branch')}")
+            typer.echo(f"Proposal commit: {proposal.get('commit')}")
+            typer.echo(f"Proposal worktree: {proposal.get('worktree')}")
+            if proposal.get("effect_applied"):
+                typer.echo(
+                    "Next: push the proposal branch and open a reviewed PR "
+                    "against the accepted branch."
+                )
+    plan_review_policy = data.get("plan_review_policy")
+    if isinstance(plan_review_policy, dict):
+        typer.echo(
+            "Plan reviewer: "
+            f"{plan_review_policy.get('provider')}/{plan_review_policy.get('model')}"
+        )
         typer.echo(f"Policy digest: {data.get('policy_digest')}")
         proposal = data.get("proposal")
         if isinstance(proposal, dict):
@@ -712,6 +744,13 @@ def _run_command(
                 "linear_operation_id": request.operation_id,
                 "linear_expected_default_head": request.expected_default_head,
             }
+        elif command in _PLAN_CONTROL_COMMANDS:
+            if not isinstance(request, PlanReviewConfigureRequest):
+                raise TypeError("Plan control requires a strict configure request")
+            factory_options = {
+                "plan_review_operation_id": request.operation_id,
+                "plan_review_expected_default_head": request.expected_default_head,
+            }
         elif command in _RUN_COMMANDS:
             if not isinstance(
                 request,
@@ -754,6 +793,62 @@ def _run_command(
                 exit_code=error.exit_code,
             )
         _abort(error, command=command, json_output=json_input)
+
+
+@plan_app.command("configure-review")
+def plan_configure_review_command(
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    provider: Annotated[
+        str | None,
+        typer.Option("--provider", click_type=Choice(("codex", "claude"))),
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    policy_version: Annotated[
+        str | None,
+        typer.Option("--policy-version"),
+    ] = None,
+    timeout_seconds: Annotated[
+        int | None,
+        typer.Option("--timeout-seconds", min=1, max=3600),
+    ] = None,
+    expected_default_head: Annotated[
+        str | None,
+        typer.Option("--expected-default-head", help="Exact default-branch base."),
+    ] = None,
+    operation_id: Annotated[str | None, typer.Option("--operation-id")] = None,
+    idempotency_key: Annotated[str | None, typer.Option("--idempotency-key")] = None,
+) -> None:
+    """Prepare a manager-owned independent Plan reviewer policy proposal."""
+
+    def human_request() -> PlanReviewConfigureRequest:
+        if timeout_seconds is None:
+            raise _input_error(
+                "Human mode requires --timeout-seconds.",
+                option="--timeout-seconds",
+            )
+        return PlanReviewConfigureRequest(
+            **_operation_fields(operation_id, idempotency_key),
+            expected_default_head=_required(
+                expected_default_head,
+                "--expected-default-head",
+            ),
+            review_policy=PlanReviewPolicy(
+                provider=_required(provider, "--provider"),
+                model=_required(model, "--model"),
+                policy_version=_required(policy_version, "--policy-version"),
+                timeout_seconds=timeout_seconds,
+            ),
+        )
+
+    _run_command(
+        command="plan.configure-review",
+        method_name="plan_review_configure",
+        project=project,
+        json_input=json_input,
+        request_model=PlanReviewConfigureRequest,
+        human_builder=human_request,
+    )
 
 
 @linear_app.command("configure")
@@ -918,6 +1013,218 @@ def _run_spec_file(path: Path | None) -> RunSpec:
             option="--spec-file",
         )
     return load_model(path, RunSpec)
+
+
+def _plan_file(path: Path | None) -> ExperimentPlan:
+    if path is None:
+        raise _input_error(
+            "Human mode requires PLAN.yaml.",
+            option="PLAN.yaml",
+        )
+    return load_model(path, ExperimentPlan)
+
+
+def _plan_review_file(path: Path | None) -> PlanReview:
+    if path is None:
+        raise _input_error(
+            "Human mode requires --review-file.",
+            option="--review-file",
+        )
+    return load_model(path, PlanReview)
+
+
+def _write_generated_model(
+    *,
+    project: Path,
+    output_file: Path | None,
+    value: BaseModel,
+) -> Path:
+    if output_file is None:
+        raise _input_error(
+            "Human mode requires --output-file.",
+            option="--output-file",
+        )
+    relative = _REPOSITORY_PATH.validate_python(output_file.as_posix())
+    if relative == ".":
+        raise _input_error(
+            "--output-file must identify a file.",
+            option="--output-file",
+        )
+    from researchctl.services.project_runtime import ProjectRuntimeService
+
+    root = ProjectRuntimeService().discover(project).repository_root
+    destination = root / relative
+    parent = destination.parent
+    try:
+        resolved_parent = parent.resolve(strict=True)
+        resolved_parent.relative_to(root)
+    except (OSError, ValueError) as error:
+        raise RCPError(
+            code="plan_output_path_invalid",
+            message="Plan output must remain inside an existing Project directory.",
+            context={"path": relative},
+        ) from error
+    if root.is_symlink() or not root.is_dir() or parent.is_symlink():
+        raise RCPError(
+            code="plan_output_path_invalid",
+            message="Plan output must use a non-symlink Project directory.",
+            context={"path": relative},
+        )
+    content = dump_yaml(value).encode("utf-8")
+    if destination.exists() or destination.is_symlink():
+        if (
+            destination.is_file()
+            and not destination.is_symlink()
+            and destination.read_bytes() == content
+        ):
+            return destination
+        raise RCPError(
+            code="plan_output_conflict",
+            message="Plan output path already contains different content.",
+            context={"path": relative},
+        )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.researchctl-",
+        dir=resolved_parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o644)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, destination, follow_symlinks=False)
+    except FileExistsError as error:
+        raise RCPError(
+            code="plan_output_conflict",
+            message="Plan output was created concurrently with different content.",
+            context={"path": relative},
+        ) from error
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
+def _render_plan_lint(data: dict[str, Any]) -> None:
+    typer.echo(f"Plan: {_terminal_text(data.get('plan_id'))}")
+    typer.echo(f"Outcome: {_terminal_text(data.get('terminal_result'))}")
+    typer.echo(f"Digest: {_terminal_text(data.get('plan_digest'))}")
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if isinstance(finding, dict):
+                typer.echo(
+                    "  "
+                    f"{_terminal_text(finding.get('kind'))}: "
+                    f"{_terminal_text(finding.get('field_path'))} "
+                    f"[{_terminal_text(finding.get('code'))}] "
+                    f"{_terminal_text(finding.get('message'))}"
+                )
+
+
+@plan_app.command("lint")
+def plan_lint_command(
+    plan_file: Annotated[
+        Path | None,
+        typer.Argument(help="Strict PLAN.yaml."),
+    ] = None,
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Validate Plan schema, provenance, Task binding, and policy binding."""
+
+    _run_command(
+        command="plan.lint",
+        method_name="plan_lint",
+        project=project,
+        json_input=json_input,
+        request_model=PlanLintRequest,
+        human_builder=lambda: PlanLintRequest(plan=_plan_file(plan_file)),
+        human_renderer=_render_plan_lint,
+    )
+
+
+@plan_app.command("review")
+def plan_review_command(
+    plan_file: Annotated[
+        Path | None,
+        typer.Argument(help="Linted PLAN.yaml."),
+    ] = None,
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    output_file: Annotated[Path | None, typer.Option("--output-file")] = None,
+    review_id: Annotated[str | None, typer.Option("--review-id")] = None,
+    operation_id: Annotated[str | None, typer.Option("--operation-id")] = None,
+    idempotency_key: Annotated[str | None, typer.Option("--idempotency-key")] = None,
+) -> None:
+    """Invoke one fresh read-only reviewer and record its attributed opinion."""
+
+    def render(data: dict[str, Any]) -> None:
+        _render_result(data)
+        review_data = data.get("review")
+        if not isinstance(review_data, dict):
+            raise TypeError("plan.review returned no PlanReview")
+        review = PlanReview.model_validate(review_data)
+        written = _write_generated_model(
+            project=project,
+            output_file=output_file,
+            value=review,
+        )
+        typer.echo(f"PlanReview: {review.review_id} ({review.outcome.value})")
+        typer.echo(f"Record: {written}")
+
+    _run_command(
+        command="plan.review",
+        method_name="plan_review",
+        project=project,
+        json_input=json_input,
+        request_model=PlanReviewCreateRequest,
+        human_builder=lambda: PlanReviewCreateRequest(
+            **_operation_fields(operation_id, idempotency_key),
+            review_id=review_id or new_id("plan_review"),
+            plan=_plan_file(plan_file),
+        ),
+        human_renderer=render,
+    )
+
+
+@plan_app.command("compile")
+def plan_compile_command(
+    plan_file: Annotated[
+        Path | None,
+        typer.Argument(help="Reviewed PLAN.yaml."),
+    ] = None,
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    review_file: Annotated[Path | None, typer.Option("--review-file")] = None,
+    output_file: Annotated[Path | None, typer.Option("--output-file")] = None,
+) -> None:
+    """Compile one passing reviewed Plan into an exact immutable RunSpec."""
+
+    def render(data: dict[str, Any]) -> None:
+        spec = RunSpec.model_validate(data)
+        written = _write_generated_model(
+            project=project,
+            output_file=output_file,
+            value=spec,
+        )
+        typer.echo(f"RunSpec: {spec.run_id}")
+        typer.echo(f"Digest: {spec.spec_digest}")
+        typer.echo(f"Record: {written}")
+
+    _run_command(
+        command="plan.compile",
+        method_name="plan_compile",
+        project=project,
+        json_input=json_input,
+        request_model=PlanCompileRequest,
+        human_builder=lambda: PlanCompileRequest(
+            plan=_plan_file(plan_file),
+            review=_plan_review_file(review_file),
+        ),
+        human_renderer=render,
+    )
 
 
 @run_app.command("start")

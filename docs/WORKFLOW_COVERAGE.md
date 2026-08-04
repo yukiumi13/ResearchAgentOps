@@ -1,7 +1,7 @@
 # Workflow and Use-Case Coverage
 
 Status: audited implementation checklist
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 The private chat export is design research, not an executable contract. Its 77
 prompt anchors are normalized into the 33 stable scenarios in
@@ -52,8 +52,13 @@ manager creates/updates Task -> accepted policy resolves domain/write scope
 -> deterministic RunSpec compilation or needs_input
 ```
 
-Task control and authority exist. ExperimentPlan, PlanReview, and provider-
-independent background reviewer invocation are designed but not implemented.
+This workflow is implemented locally. Every decision-bearing value must match
+an exact accepted Task or Project-policy `plan_choices` value; lint returns
+`needs_input` rather than accepting an Agent/provider default. A manager-only
+control proposal configures the explicit reviewer provider/model, a distinct
+ephemeral read-only invocation emits the digest-bound PlanReview, compilation is
+deterministic, and Run/Submission/protected CI repeat the gates. A live
+provider/model canary remains deployment pending.
 
 ### WF-03 - Session and Scoped Worktree
 
@@ -199,7 +204,7 @@ recorded measurements from an exact release commit.
 | Check | Scenario | Status | Primary workflow | Supporting workflows | Current proof | Open acceptance gap |
 |---|---|---|---|---|---|---|
 | [x] | `US-001` | `partial` | `WF-04` | `WF-14` | grouped 50-item inbox and preliminary benchmark | formal staleness and production SLO run |
-| [x] | `US-002` | `partial` | `WF-02` | `WF-00` | manager Task authority and Agent denials | accepted ExperimentPlan authority path |
+| [x] | `US-002` | `verified_local` | `WF-02` | `WF-00` | manager Task/reviewer-policy authority, Agent denial, accepted-value Plan provenance, and CI field-scope tests | protected-repository and live reviewer pilot |
 | [x] | `US-003` | `verified_local` | `WF-02` | `WF-00` | guided/non-interactive Task parity | novice pilot evidence |
 | [x] | `US-004` | `designed` | `WF-13` | `WF-04` | read-only projection contract | mobile adapter and drill-through |
 | [x] | `US-005` | `designed` | `WF-13` | `WF-10` | milestone projection contract | coalescing chat adapter |
@@ -214,7 +219,7 @@ recorded measurements from an exact release commit.
 | [x] | `US-014` | `verified_local` | `WF-00` | `WF-14` | Git/tmux/SQLite composition and CLI/JSON parity | observed pilot maintenance budget |
 | [x] | `US-015` | `verified_local` | `WF-05` | `WF-06` | protected paths and renderer-owned Markdown tests | cleanup pilot across long-lived repository |
 | [x] | `US-016` | `verified_local` | `WF-05` | `WF-06` | mismatch/failure evidence and submission checks | explicit failure-study policy workflow |
-| [x] | `US-017` | `partial` | `WF-06` | `WF-09`, `WF-10` | canonical Submission and deterministic renderers | ExperimentPlan/PlanReview and live PR pilot |
+| [x] | `US-017` | `partial` | `WF-06` | `WF-09`, `WF-10` | canonical Submission/renderers plus separate Plan/PlanReview evidence and deterministic CI replay | live PR and installed-rule pilot |
 | [x] | `US-018` | `partial` | `WF-06` | `WF-09` | fixed GitHub PR plus CLI/Git review artifacts | request-changes/reject/abandon end-to-end pilot |
 | [x] | `US-019` | `partial` | `WF-08` | `WF-01`, `WF-06` | Git-owned accepted records and immutable refs | reachability-aware cleanup and retention apply |
 | [x] | `US-020` | `partial` | `WF-07` | `WF-05` | batch, typed receipts, fail-closed unresolved classification, effective status and explicit decisions | live providers/replay and protected-repository pilot |
@@ -238,9 +243,11 @@ recorded measurements from an exact release commit.
    resources/environments from advancing validity, but no trusted live provider
    adapter or protected-base provider replay exists. Reports with those
    dependencies therefore remain unresolved under the default Git workflow.
-2. `High`: ExperimentPlan/no-fallback lint/independent PlanReview is required by
-   WF-02 and several scenarios but is still design-only. RunSpec alone cannot
-   prove that an Agent did not fill an omitted semantic choice from a default.
+2. `Medium`: WF-02 now closes the local no-fallback gap with accepted-value
+   provenance, strict schemas, independent attributed review, deterministic
+   compilation, Run receipts, Submission evidence, and CI replay. The remaining
+   risk is operational: no live selected Codex/Claude reviewer canary or
+   protected-repository policy PR has been observed.
 3. `Medium`: WF-07 now has effective `impact_pending` reads and explicit
    manager Decision PRs, but live CODEOWNER/branch-protection certification has
    not been observed. The recorded reviewer string alone is not identity proof.
@@ -267,7 +274,7 @@ accepted integration boundary and tool-by-tool comparison are in ADR 0013.
 The next implementation order derived from this review is:
 
 1. implement a trusted provider port and protected-base receipt replay;
-2. implement ExperimentPlan/no-fallback lint and independent PlanReview;
-3. implement preview-first Session baseline sync;
-4. run the protected GitHub plus real Linear shadow pilot before adding another
+2. implement preview-first Session baseline sync;
+3. run the protected GitHub, explicit Plan reviewer, and real Linear shadow
+   pilot before adding another
    service, scheduler, or UI.

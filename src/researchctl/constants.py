@@ -8,4 +8,5 @@ YAML_RENDERER_VERSION: Final = 1
 PROJECT_CONFIG_NAME: Final = ".researchctl.toml"
 PROJECT_DIR_NAME: Final = ".research"
 PROJECT_RECORD_PATH: Final = ".research/project.yaml"
+PROJECT_POLICY_PATH: Final = ".research/policies/default.yaml"
 LINEAR_PROJECTION_POLICY_PATH: Final = ".research/policies/linear.yaml"

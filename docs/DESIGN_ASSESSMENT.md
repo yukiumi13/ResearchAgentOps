@@ -1,7 +1,7 @@
 # Research Control Plane Design Assessment
 
 Status: implementation review
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 ## Conclusion
 
@@ -93,11 +93,19 @@ commit, wrong issue, cross-Session actor, or unreachable commit is rejected.
 This design guarantees durable addressing, not immediate injection into a live
 model transcript.
 
-### Wrong or stale experiment input
+### Wrong, stale, or defaulted experiment intent
+
+Before compilation, every decision-bearing ExperimentPlan field must match an
+exact value in the digest-bound accepted Task or Project policy. Missing values
+produce `needs_input`; provider/CLI/library defaults and Agent-authored source
+labels cannot establish intent. A distinct ephemeral read-only reviewer binds
+its opinion and invocation identity to the exact Plan, Task, policy, and review
+policy. Self-review or any digest drift fails closed.
 
 Before `run start` or `run retry` creates a Run ref, worktree, or process, it
 resolves the exact local protected head, loads the canonical Task directly from
-that commit, and validates the declared baseline/source lineage and write scope.
+that commit, validates the Plan/Review again when present, requires the local
+review operation receipt, and validates baseline/source lineage and write scope.
 A Session-side Task edit cannot widen its allowlist. Typed environment, config,
 dataset, checkpoint, source tree, and artifact declarations are then checked
 before launch where possible. A rejected source leaves no Run ref, Run
@@ -124,14 +132,15 @@ The current scenario-level status is intentionally conservative:
 
 | Status | Scenarios | Main qualification |
 |---|---|---|
-| Local behavior substantially implemented and tested | `US-003`, `US-008`, `US-014`-`US-016`, `US-023`, `US-025` | Supported local paths pass focused tests; write scope is mistake containment, not hostile same-user process isolation. |
-| Partial local implementation | `US-001`-`US-002`, `US-011`-`US-013`, `US-017`-`US-022`, `US-026`-`US-028`, `US-031` | Missing pieces include formal inbox staleness/SLO verification, cross-domain staging, a live GitHub PR pilot and protected-repository configuration, cleanup/retention, ExperimentPlan/PlanReview, live resource Impact providers/replay, glossary tests, the fixed SSH remote runner/fleet, and upgrade apply. |
+| Local behavior substantially implemented and tested | `US-002`-`US-003`, `US-008`, `US-014`-`US-016`, `US-023`, `US-025` | Supported local paths pass focused tests; write scope is mistake containment, not hostile same-user process isolation. |
+| Partial local implementation | `US-001`, `US-011`-`US-013`, `US-017`-`US-022`, `US-026`-`US-028`, `US-031` | Missing pieces include formal inbox staleness/SLO verification, cross-domain staging, a live GitHub/Plan-reviewer pilot and protected-repository configuration, cleanup/retention, live resource Impact providers/replay, glossary tests, the fixed SSH remote runner/fleet, and upgrade apply. |
 | Local core plus fake external ports; deployment pending | `US-006`, `US-009`, `US-010`, `US-030`, `US-033` | Authenticated ingress, accepted-result/reply delivery, receipts, replay, fallback, and same-thread follow-up execute with a fake Linear port; no real `@<app-handle>` deployment is claimed. |
 | Not implemented | `US-004`, `US-005`, `US-007`, `US-024`, `US-029`, `US-032` | Mobile/chat views, SSH fleet and worktree sync, on-prem-to-cloud execution, and shared GPU control remain gated work. |
 
 The exact-head workflow now uses a protected-base dispatcher for Submission,
 generated Task control, Report Impact, explicit ImpactDecision, bootstrap
-proposal/acceptance, and manager-owned Linear policy PRs. Ordinary source is
+proposal/acceptance, manager-owned Plan reviewer policy, and manager-owned
+Linear policy PRs. Ordinary source is
 explicitly `not_applicable` to that dispatcher
 and is tested by the separate exact-PR-source workflow; unknown or mixed
 protected changes fail closed. Standalone post-bootstrap schema, Project,
@@ -161,10 +170,13 @@ Repository implementation is complete for the previously open R0 items:
    CI, and frozen-source Run start/retry; `.research` is always denied.
 3. The protected-base multi-type dispatcher fails unknown and mixed protocol
    changes closed without executing PR code.
-4. Protocol fingerprints, the complete test suite, focused dispatcher/run/Linear
+4. ExperimentPlan schema/provenance/lint, independent PlanReview, compilation,
+   Run gating, Submission evidence, and CI replay form one local gated slice;
+   reviewer selection is a manager-only field-scoped policy proposal.
+5. Protocol fingerprints, the complete test suite, focused dispatcher/run/Linear
    suites, Python compilation, workflow syntax, and diff checks are the R0
    verification boundary.
-5. The authoritative spec, assessment, rollout plan, mutation contract, and
+6. The authoritative spec, assessment, rollout plan, mutation contract, and
    CI/Linear/Run ADRs describe the implemented boundary consistently.
 
 A release operator must review a tracked baseline, rerun the verification
@@ -188,7 +200,10 @@ the fake Linear port a live integration.
 3. Run at least 20 representative local Runs, deliberately inject duplicate
    webhooks, API timeout, worker crash-after-create, stale PR head, lost Session,
    and Linear outage, then reconcile every receipt.
-4. Record end-to-end inbox and CI latency separately from queue/execution time.
+4. Exercise both configured Codex and Claude Plan reviewer adapters with
+   explicit model IDs, including timeout, malformed output, and identity
+   separation failures; record invocation receipts without exposing secrets.
+5. Record end-to-end inbox and CI latency separately from queue/execution time.
 
 Exit: no duplicate projection, no lost Session notification, no Agent authority
 escalation, and observed latency meets the declared supported envelope.

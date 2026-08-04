@@ -20,6 +20,7 @@ from researchctl.config import ProjectConfig, dump_project_config
 from researchctl.constants import (
     LINEAR_PROJECTION_POLICY_PATH,
     PROJECT_CONFIG_NAME,
+    PROJECT_POLICY_PATH,
     PROTOCOL_VERSION,
     __version__,
 )
@@ -115,6 +116,10 @@ _LINEAR_POLICY_MARKER = re.compile(
     r"^researchctl: linear\.configure "
     r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
 )
+_PLAN_REVIEW_POLICY_MARKER = re.compile(
+    r"^researchctl: plan\.configure-review "
+    r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
+)
 _BOOTSTRAP_PROPOSAL_MARKER = re.compile(
     r"^researchctl: bootstrap proposal "
     r"(bootstrap_\d{8}T\d{6}Z_[0-9a-f]{24})\n\n"
@@ -135,6 +140,7 @@ PRType = Literal[
     "impact_decision",
     "task_control",
     "linear_policy_control",
+    "plan_review_policy_control",
     "bootstrap_proposal",
     "bootstrap_acceptance",
     "ordinary_source",
@@ -331,6 +337,9 @@ class ProtectedBasePRDispatcher:
             for path in changed_paths
             if path == LINEAR_PROJECTION_POLICY_PATH
         )
+        project_policy_paths = tuple(
+            path for path in changed_paths if path == PROJECT_POLICY_PATH
+        )
         protocol_paths = tuple(
             path for path in changed_paths if self._is_protocol_path(path)
         )
@@ -407,6 +416,21 @@ class ProtectedBasePRDispatcher:
                 changes=changes,
             )
             pr_type = "task_control"
+        elif (
+            project_policy_paths
+            and _PLAN_REVIEW_POLICY_MARKER.fullmatch(
+                head.message.rstrip("\n")
+            )
+            is not None
+        ):
+            evidence = self._validate_plan_review_policy_control(
+                root,
+                request=request,
+                base=base,
+                head=head,
+                changes=changes,
+            )
+            pr_type = "plan_review_policy_control"
         elif linear_policy_paths:
             evidence = self._validate_linear_policy_control(
                 root,
@@ -976,6 +1000,83 @@ class ProtectedBasePRDispatcher:
             "pr_type_dispatch": self._dispatch_digest(
                 changes,
                 pr_type="linear_policy_control",
+                identity=operation_id,
+            ),
+            "trusted_base": canonical_digest(
+                {
+                    "project_id": managed.project.project_id,
+                    "schema_manifest_digest": managed.config.schema_manifest_digest,
+                }
+            ),
+        }
+
+    def _validate_plan_review_policy_control(
+        self,
+        root: Path,
+        *,
+        request: CIPRDispatchRequest,
+        base: GitCommitData,
+        head: GitCommitData,
+        changes: tuple[GitTreeChange, ...],
+    ) -> dict[str, Sha256Digest]:
+        marker = _PLAN_REVIEW_POLICY_MARKER.fullmatch(
+            head.message.rstrip("\n")
+        )
+        if marker is None or head.parents != (base.object_id,):
+            self._invalid(
+                "ci_plan_review_policy_commit_invalid",
+                "Plan review policy control must be one marked commit over protected base.",
+            )
+        operation_id = marker.group(1)
+        self._require_branch(
+            request.head_ref,
+            f"research/control/{operation_id}",
+            kind="Plan review policy control",
+        )
+        self._require_exact_changes(
+            changes,
+            {PROJECT_POLICY_PATH: ("100644", "100644", "M")},
+            code="ci_plan_review_policy_scope_invalid",
+        )
+
+        managed = self._managed_base(
+            root,
+            commit=base.object_id,
+            base_ref=request.base_ref,
+        )
+        previous = self._record(
+            root,
+            commit=base.object_id,
+            path=PROJECT_POLICY_PATH,
+            model_type=ProjectPolicy,
+        )
+        replacement = self._record(
+            root,
+            commit=head.object_id,
+            path=PROJECT_POLICY_PATH,
+            model_type=ProjectPolicy,
+        )
+        if replacement.plan_review is None:
+            self._invalid(
+                "ci_plan_review_policy_missing",
+                "Plan review policy control must configure an explicit reviewer.",
+            )
+        if replacement.model_copy(update={"plan_review": previous.plan_review}) != previous:
+            self._invalid(
+                "ci_plan_review_policy_scope_invalid",
+                "Plan review policy control changed another Project policy field.",
+            )
+        return {
+            "plan_review_policy": canonical_digest(replacement.plan_review),
+            "project_policy_transition": canonical_digest(
+                {
+                    "previous_policy_digest": canonical_digest(previous),
+                    "policy_digest": canonical_digest(replacement),
+                }
+            ),
+            "pr_type_dispatch": self._dispatch_digest(
+                changes,
+                pr_type="plan_review_policy_control",
                 identity=operation_id,
             ),
             "trusted_base": canonical_digest(

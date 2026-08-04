@@ -1,7 +1,7 @@
 # Requirement Traceability Matrix
 
 Status: Phase 0 baseline
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 `docs/USER_SCENARIOS.md` is the scenario catalog. The contract column points to
 the current authoritative specification and ADRs. Phase 9 rows are deliberate
@@ -74,7 +74,7 @@ the stable `US-*` catalog.
 | `REQ-20260803-005` | `US-017`, `US-018`, `US-021`, `US-030`, `US-033` | Spec Sections 14 and 17; ADR 0010 |
 | `REQ-20260803-006` | `US-006`, `US-009`, `US-010`, `US-030`, `US-033` | Spec Sections 7.9 and 11.1; ADR 0012 |
 | `REQ-20260803-007` | `US-017`, `US-018`, `US-021`, `US-026` | Spec Section 14; Mutation Contracts Section 5; ADR 0003 |
-| `REQ-20260803-008` | `US-008`, `US-013`, `US-021`, `US-023`, `US-027` | Spec Sections 7.2, 12, and 17; Implementation Plan Phase 3 |
+| `REQ-20260803-008` | `US-008`, `US-013`, `US-021`, `US-023`, `US-027` | Spec Sections 7.2, 12, and 17; Mutation Contracts Sections 3 and 5; ExperimentPlan, reviewer-control, Run/Submission/CI tests |
 | `REQ-20260803-009` | `US-019`, `US-020`, `US-021`, `US-026` | Spec Section 15; Mutation Contracts Section 5; ADR 0005 |
 | `REQ-20260803-010` | `US-014`, `US-020`, `US-025`, `US-027` | Workflow Coverage; ADR 0013; traceability parser test |
 | `REQ-20260803-011` | `US-016`, `US-020`, `US-021` | Spec Section 15; ADRs 0005 and 0013; receipt/evaluator tests |

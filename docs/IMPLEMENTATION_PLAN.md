@@ -1,7 +1,7 @@
 # RCP Implementation Plan
 
 Status: Active
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 The authoritative behavior is in RESEARCH_CONTROL_PLANE_SPEC.md and accepted
 ADRs. This plan controls sequencing, not semantics.
@@ -24,7 +24,12 @@ ADRs. This plan controls sequencing, not semantics.
   not hostile same-user process isolation.
 - Phase 3 is implemented for local execution: immutable Run refs, preflight,
   attempt/retry lineage, local process execution, collection, evidence reads,
-  and crash/uncertainty handling. SSH transport remains Phase 5.
+  and crash/uncertainty handling. The complete local ExperimentPlan slice is
+  also implemented: frozen schemas, accepted Task/policy value provenance,
+  no-fallback lint, manager-owned reviewer configuration, distinct ephemeral
+  read-only review, deterministic RunSpec compilation, Run receipt gating,
+  separate Submission evidence, and protected-CI replay. Live selected-provider
+  invocation remains a deployment canary. SSH transport remains Phase 5.
 - Phase 4 is implemented in repository code: deterministic Submission,
   Decision, Report YAML and accepted Report Markdown; manager acceptance
   preparation; protected-base multi-type `ci dispatch`; conditional nested
@@ -34,10 +39,11 @@ ADRs. This plan controls sequencing, not semantics.
   adapter with observe-before-mutate recovery; and a reusable inert template. Supported
   protocol PRs validate, unknown or mixed control changes fail closed, and an
   ordinary source PR is `not_applicable` only to exact-head protocol validation
-  while the source workflow tests its exact head. Branch rules, reviewer-policy
+  while the source workflow tests its exact head. The dispatcher also validates
+  that `plan.configure-review` changes only the ProjectPolicy `plan_review`
+  field. Branch rules, reviewer-policy
   verification, GitHub credential installation, and a live PR pilot remain
-  deployment work. ExperimentPlan lint and independent PlanReview are designed
-  below but are not implemented.
+  deployment work.
 - Phase 8's durable repository core is implemented and fake-port tested:
   credential-free preview, accepted-result and Session-reply delivery, Session
   inbox/outbox, fixed ingress grammar, verified receipts, claim/lease/retry/dead
@@ -164,7 +170,7 @@ Deliverables:
 - a strict ExperimentPlan schema, canonical Plan digest, deterministic
   Plan-to-RunSpec compiler, no-fallback lint, and typed independent PlanReview;
 - a short-lived read-only reviewer invocation that may use a provider subagent
-  without requiring a second persistent Session, plus an isolated fallback
+  without requiring a second persistent Session, plus an isolated ephemeral
   adapter that fails closed when review capability is unavailable;
 - run branches and immutable tags;
 - strict Task-required input, environment/config/input identity, explicit-host,

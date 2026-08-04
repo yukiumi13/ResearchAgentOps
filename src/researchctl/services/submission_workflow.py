@@ -21,6 +21,7 @@ from researchctl.adapters.git_worktree import GitWorktreeAdapter
 from researchctl.domain.models import (
     ReportProposal,
     ReportRecord,
+    ProjectPolicy,
     ResearchSubmission,
     RunResult,
     RunSpec,
@@ -146,6 +147,7 @@ class SubmissionWorkflowService:
         delivery: SubmissionDeliveryPort | None = None,
         runner: CommandRunner | None = None,
         timeout_seconds: float = 10.0,
+        policy: ProjectPolicy | None = None,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.worktrees_directory = worktrees_directory.resolve()
@@ -165,6 +167,7 @@ class SubmissionWorkflowService:
             runner=self._runner,
             timeout_seconds=timeout_seconds,
         )
+        self.policy = policy
 
     def propose(
         self,
@@ -268,6 +271,7 @@ class SubmissionWorkflowService:
             evidence=tuple(
                 SubmissionEvidence(item.spec, item.result) for item in observed
             ),
+            policy=self.policy,
         )
         source_scopes = tuple(
             {
@@ -359,6 +363,7 @@ class SubmissionWorkflowService:
             claim_scope=request.claim_scope,
             code_disposition=request.code_disposition,
             accepted_base_tree=base_tree,
+            policy=self.policy,
         )
         committed = self.records.write_acceptance(
             operation_id=request.operation_id,
@@ -409,6 +414,7 @@ class SubmissionWorkflowService:
             submission=submission,
             proposal=proposal,
             evidence=tuple(evidence),
+            policy=self.policy,
         )
         expected = {item.path: item.content for item in bundle.files}
         if set(entries) != set(expected):

@@ -14,12 +14,14 @@ from researchctl.cli import app
 from researchctl.domain.models import (
     InputIdentity,
     LinearProjectionPolicy,
+    PlanReviewPolicy,
     RunSpec,
     StatusUpdate,
     TaskRecord,
 )
 from researchctl.errors import RCPError
 from researchctl.output import envelope
+from researchctl.phase2_cli import _write_generated_model
 from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services.application import ServiceResult
 from researchctl.services.requests import (
@@ -32,6 +34,7 @@ from researchctl.services.requests import (
     LinearConfigureRequest,
     LinearDeliveryListRequest,
     LinearDeliveryShowRequest,
+    PlanReviewConfigureRequest,
     RunCollectRequest,
     RunRetryRequest,
     RunStartRequest,
@@ -121,6 +124,7 @@ class _SpyService:
                 "inbox_snooze": "inbox.snooze",
                 "inbox_resolve": "inbox.resolve",
                 "linear_configure": "linear.configure",
+                "plan_review_configure": "plan.configure-review",
                 "run_collect": "run.collect",
                 "run_retry": "run.retry",
                 "run_start": "run.start",
@@ -174,6 +178,21 @@ class _SpyService:
                         "branch": f"research/control/{request.operation_id}",
                         "commit": "c" * 40,
                         "worktree": "/runtime/linear-control-worktree",
+                        "effect_applied": True,
+                        "delivery": "local_control_change",
+                    },
+                }
+            elif method == "plan_review_configure":
+                data = {
+                    "plan_review_policy": request.review_policy.model_dump(
+                        mode="json",
+                        exclude_none=True,
+                    ),
+                    "policy_digest": canonical_digest(request.review_policy),
+                    "proposal": {
+                        "branch": f"research/control/{request.operation_id}",
+                        "commit": "d" * 40,
+                        "worktree": "/runtime/plan-review-control-worktree",
                         "effect_applied": True,
                         "delivery": "local_control_change",
                     },
@@ -1135,6 +1154,94 @@ def test_linear_configure_human_and_json_share_one_secretless_request_path(
     assert "api-key" not in lowered
     assert "token" not in lowered
     assert "secret" not in lowered
+
+
+def test_plan_review_configure_has_one_explicit_manager_request_path(
+    tmp_path: Path,
+    cli_spy,
+) -> None:
+    service, actor, opens, _subprocess_calls = cli_spy
+    operation_id = _id("operation", "e")
+    review_policy = PlanReviewPolicy(
+        provider="codex",
+        model="gpt-test-reviewer",
+        policy_version="plan-review-v1",
+        timeout_seconds=60,
+    )
+    request = PlanReviewConfigureRequest(
+        operation_id=operation_id,
+        idempotency_key="plan-review-configure",
+        expected_default_head="a" * 40,
+        review_policy=review_policy,
+    )
+    runner = CliRunner()
+
+    human = runner.invoke(
+        app,
+        [
+            "plan",
+            "configure-review",
+            "--project",
+            str(tmp_path),
+            "--provider",
+            "codex",
+            "--model",
+            "gpt-test-reviewer",
+            "--policy-version",
+            "plan-review-v1",
+            "--timeout-seconds",
+            "60",
+            "--expected-default-head",
+            "a" * 40,
+            "--operation-id",
+            operation_id,
+            "--idempotency-key",
+            "plan-review-configure",
+        ],
+    )
+    machine = runner.invoke(
+        app,
+        ["plan", "configure-review", "--json", "--project", str(tmp_path)],
+        input=_payload(request),
+    )
+
+    assert human.exit_code == 0, human.output
+    assert machine.exit_code == 0, machine.output
+    assert service.calls[-2].method == "plan_review_configure"
+    assert service.calls[-2].request == request
+    assert service.calls[-2].actor is actor
+    assert service.calls[-1].request == request
+    expected_options = {
+        "plan_review_operation_id": operation_id,
+        "plan_review_expected_default_head": "a" * 40,
+    }
+    assert opens == [(tmp_path, expected_options), (tmp_path, expected_options)]
+    assert "Proposal branch: research/control/" in human.output
+    assert json.loads(machine.output)["command"] == "plan.configure-review"
+
+
+def test_plan_generated_output_is_relative_to_discovered_project_root(
+    initialized_repository: Path,
+) -> None:
+    nested = initialized_repository / "src" / "nested"
+    nested.mkdir(parents=True)
+    output_parent = initialized_repository / "generated"
+    output_parent.mkdir()
+    value = PlanReviewPolicy(
+        provider="codex",
+        model="gpt-test-reviewer",
+        policy_version="plan-review-v1",
+        timeout_seconds=60,
+    )
+
+    written = _write_generated_model(
+        project=nested,
+        output_file=Path("generated/review-policy.yaml"),
+        value=value,
+    )
+
+    assert written == output_parent / "review-policy.yaml"
+    assert written.read_text(encoding="utf-8") == dump_yaml(value)
 
 
 def test_linear_configure_json_cannot_spoof_actor_identity(cli_spy) -> None:

@@ -26,9 +26,19 @@ def declared_input_identities(spec: RunSpec) -> tuple[InputIdentity, ...]:
 
 
 def validate_task_required_inputs(spec: RunSpec, task: TaskRecord) -> None:
+    validate_task_required_input_identities(
+        declared_input_identities(spec),
+        task,
+    )
+
+
+def validate_task_required_input_identities(
+    identities: tuple[InputIdentity, ...],
+    task: TaskRecord,
+) -> None:
     declared = {
         (identity.kind, identity.logical_id): identity
-        for identity in declared_input_identities(spec)
+        for identity in identities
     }
     for required in task.required_inputs:
         key = (required.kind, required.logical_id)
