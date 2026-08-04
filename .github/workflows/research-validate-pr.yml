@@ -21,7 +21,6 @@ jobs:
     env:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONUTF8: "1"
-      RCP_ARTIFACT: ${{ runner.temp }}/researchctl-ci-attestation.yaml
       RCP_BASE_REF: ${{ github.event.pull_request.base.ref }}
       RCP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       RCP_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -73,6 +72,8 @@ jobs:
 
       - name: Validate exact head
         shell: bash
+        env:
+          RCP_ARTIFACT: ${{ runner.temp }}/researchctl-ci-attestation.yaml
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/researchctl-validator/bin/researchctl" ci dispatch \
