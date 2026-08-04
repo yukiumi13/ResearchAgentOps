@@ -1,6 +1,7 @@
 from researchctl.runtime.models import (
     AttentionItem,
     LinearDeliveryClaim,
+    LinearDeliveryRecord,
     LinearDeliveryReceiptRecord,
     OperationEvent,
     OperationRecord,
@@ -21,6 +22,7 @@ from researchctl.runtime.store import (
 __all__ = [
     "AttentionItem",
     "LinearDeliveryClaim",
+    "LinearDeliveryRecord",
     "LinearDeliveryReceiptRecord",
     "OperationEvent",
     "OperationRecord",

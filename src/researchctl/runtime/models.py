@@ -162,6 +162,23 @@ class LinearDeliveryReceiptRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class LinearDeliveryRecord:
+    project_id: str
+    topic: str
+    outbox_id: str
+    aggregate_id: str
+    state: str
+    created_at: datetime
+    status_updated_at: datetime | None
+    attempt_count: int
+    last_error_code: str | None
+    last_claim_id: str | None
+    active_claim: LinearDeliveryClaim | None
+    receipt: LinearDeliveryReceiptRecord | None
+    lineage: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class VerifiedLinearIngressReceipt:
     receipt_id: str
     project_id: str

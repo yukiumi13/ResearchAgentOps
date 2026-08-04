@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from researchctl.config import load_project_config
 from researchctl.constants import PROJECT_CONFIG_NAME, PROJECT_DIR_NAME, PROTOCOL_VERSION
 from researchctl.domain.models import (
+    ImpactDecision,
     ProjectPolicy,
     ProjectRecord,
     ReportProposal,
@@ -25,7 +26,7 @@ from researchctl.repository import (
     status_porcelain,
 )
 from researchctl.schema import generate_schema_files, schema_manifest_digest
-from researchctl.serialization import SerializationError, load_model
+from researchctl.serialization import SerializationError, load_model, load_yaml
 
 CheckStatus = Literal["pass", "warn", "error"]
 
@@ -472,10 +473,19 @@ def _decision_record_checks(root: Path, checks: list[DoctorCheck]) -> None:
                 )
             )
             continue
+        try:
+            decision_payload = load_yaml(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, SerializationError):
+            decision_payload = {}
+        decision_model = (
+            ImpactDecision
+            if "impact_id" in decision_payload
+            else ReviewDecision
+        )
         _record_check(
             root,
             relative,
-            ReviewDecision,
+            decision_model,
             checks,
             canonical_relative=lambda record: (
                 f"{relative_directory}/{record.decision_id}.yaml"

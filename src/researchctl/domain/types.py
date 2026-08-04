@@ -111,6 +111,14 @@ RunResultId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("result")),
 ]
+PlanId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("plan")),
+]
+PlanReviewId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("plan_review")),
+]
 SubmissionId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("submission")),
@@ -122,6 +130,14 @@ DecisionId = Annotated[
 ReportId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("report")),
+]
+ImpactId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("impact")),
+]
+DependencyReceiptId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("receipt")),
 ]
 StatusUpdateId = Annotated[
     str,

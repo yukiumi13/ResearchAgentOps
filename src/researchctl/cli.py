@@ -15,12 +15,18 @@ from researchctl.phase2_cli import (
     bootstrap_app,
     inbox_app,
     linear_app,
+    plan_app,
     run_app,
     session_app,
     status_app,
     task_app,
 )
-from researchctl.phase4_cli import review_app, submit_command
+from researchctl.phase4_cli import (
+    impact_command,
+    report_app,
+    review_app,
+    submit_command,
+)
 from researchctl.reconcile_cli import reconcile_command
 from researchctl.serialization import SerializationError
 from researchctl.services.doctor import doctor
@@ -40,11 +46,14 @@ app.add_typer(session_app, name="session")
 app.add_typer(status_app, name="status")
 app.add_typer(inbox_app, name="inbox")
 app.add_typer(run_app, name="run")
+app.add_typer(plan_app, name="plan")
 app.add_typer(linear_app, name="linear")
 app.add_typer(review_app, name="review")
+app.add_typer(report_app, name="report")
 app.add_typer(notification_app, name="notification")
 app.add_typer(ci_app, name="ci")
 app.command("submit")(submit_command)
+app.command("impact")(impact_command)
 app.command("reconcile")(reconcile_command)
 
 

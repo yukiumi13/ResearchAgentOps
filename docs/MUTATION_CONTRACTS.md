@@ -2,7 +2,7 @@
 
 Status: Normative Phase 0 addendum
 Scope: v0.1 command and application-service mutations
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 This document makes the mutation boundary in
 `RESEARCH_CONTROL_PLANE_SPEC.md` executable. Where earlier text is ambiguous,
@@ -78,6 +78,7 @@ journal is operational evidence, not a second authority.
 | `researchctl task create` | Manager; Task record on protected default branch | `OperationStarted`, then control-branch commit and PR | Task ID + canonical create-request digest | Observe Task ID, branch, commit, and PR; duplicate key with different Task ID is a conflict | `proposal_open`, `accepted` after merge, or `canceled` |
 | `researchctl task update TASK_ID` | Manager; Task record on protected default branch | `OperationStarted`, then control-branch commit based on expected Task digest | Task ID + expected revision/digest + patch digest | Compare current Task digest before continuing; regenerate on stale base, never silently rebase intent | `proposal_open`, `accepted` after merge, `stale`, or `canceled` |
 | `researchctl task cancel TASK_ID` | Manager; Task state on protected default branch | `OperationStarted`, then control-branch cancellation commit | Task ID + expected revision + reason digest | Observe accepted Task and proposal PR; cancellation does not kill Sessions or Runs implicitly | `proposal_open`, `canceled` after merge, or `stale` |
+| `researchctl plan configure-review` | Manager only; protected Project policy owns the accepted reviewer provider/model contract | `OperationStarted`, then one canonical ProjectPolicy commit on a fixed control branch/worktree | Operation ID + exact default head + explicit reviewer policy digest | Re-read exact base, fixed branch/marker/path, and both ProjectPolicy records; retry accepts only the same replacement, and CI proves every field except `plan_review` is unchanged | `proposal_prepared` or `no_change`; acceptance requires exact-head CI, CODEOWNER review, and protected merge |
 
 Task mutations are manager control proposals. An agent may suggest a Task through
 a StatusUpdate decision request, but cannot call a manager method merely by
@@ -120,13 +121,26 @@ incremented, so an Agent cannot act on a stale route.
 
 | Command | Actor and authority | First durable write | Idempotency key | Observe and recover | Terminal result |
 |---|---|---|---|---|---|
+| `researchctl plan lint PLAN.yaml` | Assigned Agent or manager; read-only validation of accepted Task/policy intent | None | None | Load strict Plan, accepted Task, and Project policy; compare every decision field, source digest, required input, and canonical Plan digest | `passed`, `needs_input`, or `invalid`; no Run or reviewer side effect |
+| `researchctl plan review PLAN.yaml` | Assigned Agent or manager invokes a distinct read-only reviewer; local journal owns the invocation observation | `OperationStarted` before provider execution; terminal event binds exact PlanReview digest | Operation ID + Plan/Task/policy digests + explicit reviewer policy | A terminal operation replays the same Review; timeout/error stays explicit, secrets are stripped, and drafter/reviewer identity equality fails | `passed`, `needs_input`, or `invalid`; never human acceptance |
+| `researchctl plan compile PLAN.yaml --review-file REVIEW.yaml` | Assigned Agent or manager; read-only deterministic compiler | None | None | Rerun lint, Review binding/outcome/receipt checks, then reproduce the exact RunSpec digest | One exact RunSpec or a typed failure; no Run ref/process |
 | `researchctl run start` | Assigned agent, manager, or runner; immutable Git RunSpec, local RunAttempt journal, controller allocation | `OperationStarted` before snapshot/ref, preflight, allocation, SSH, tmux, or process mutation | Run ID + canonical RunSpec digest | Validate frozen source write scope, then observe every named ref, target preflight, allocation, lock, tmux/process, attempt sequence, and artifact; continue only the first incomplete step | Attempt `succeeded`, `failed`, `canceled`, or `lost`; successful attempts may auto-collect |
 | `researchctl run retry RUN_ID` | Assigned agent or manager; new RunAttempt under the same frozen RunSpec | New `OperationStarted` and Attempt ID linked by `retry_of` | Run ID + new Attempt ID + prior terminal Attempt ID | Revalidate frozen source scope; require prior Attempt terminal and no final RunResult; observe allocation/process by new identities | New Attempt `succeeded`, `failed`, `canceled`, or `lost` |
 | `researchctl run collect RUN_ID` | Deterministic collector, runner, or manager; RunResult on the run branch | `OperationStarted` before remote reads or artifact transfer | Run ID + RunSpec digest + selected terminal Attempt IDs | Observe process terminal facts, artifact source and destination digests, then existing RunResult digest before write/push | `collected`, `already_collected`, `incomplete`, or `collection_failed` |
 | `researchctl submit RUN_ID...` | Assigned agent or manager proposes; submission branch/PR owns proposal | `OperationStarted`, then submission branch commit before PR creation | Submission ID + base SHA + ordered RunResult digests + claim digest | Observe branch, deterministic bundle, push, and PR; size/digest failures occur before push | `proposal_open`, `withdrawn`, `failed`, or `canceled`; never `accepted` |
 | `researchctl review accept SUBMISSION_ID` | Manager prepares; protected default branch owns Decision and Report only after merge | `OperationStarted`, then Decision and Report commit on expected PR head/revision | Submission ID + expected PR head + expected Report revision + decision digest | Re-read head, content digests, checks, exact-head approval, and merge; any head/revision drift is `stale` | `acceptance_prepared`, `accepted` after certified merge, `stale`, or `rejected` |
 | `researchctl impact REPORT_ID` | Trusted automation or manager proposes; impact branch/PR owns proposal | `OperationStarted`, then impact record/branch based on expected Report revision | Report ID + expected revision + basis tree + target main tree | Recompute declared dependency comparison; re-read latest main and Report revision before push/merge | `proposal_open`, `no_change`, `stale`, `failed`, or `canceled` |
+| `researchctl ci impact --before B --after H` | Trusted main-push automation proposes; protected review and merge own applicability changes | `OperationStarted`, then one batch branch only when one or more Report revisions are proposed | Before commit + target commit + deterministic timestamp-derived Impact/Operation IDs | Rescan every Report from its own basis; regenerate exact batch bytes; reproduce commit SHA; observe fixed remote branch and PR | `proposal_open`, `no_change`, `failed`, or `canceled`; never launches a Run |
+| `researchctl review impact IMPACT_ID REPORT_ID` | Manager only; accepted Impact is evidence, protected merge owns the Decision and next Report revision | `OperationStarted`, then one derived decision branch/commit before GitHub delivery | Decision ID + accepted Impact digest + expected Report revision + exact main target | Reload accepted single/batch Impact and current Report, validate optional rerun Task, regenerate three exact files, then observe the derived branch/PR | `proposal_open`, `stale`, `failed`, or `canceled`; never starts, retries, or collects a Run |
 | `researchctl sync SESSION_ID --baseline COMMIT` | Assigned session owner or manager; Session branch/worktree | `OperationStarted` before fetch or merge/rebase operation | Session ID + expected Session head + target baseline commit + strategy | Observe ref and worktree first; dirty, live-unsafe, or unknown state returns `update_pending` without mutation | `synced`, `no_change`, `update_pending`, `conflict`, `failed`, or `canceled` |
+
+Submission delivery journals `submission_proposal_prepared`,
+`submission_branch_pushed`, and `submission_pr_created` or
+`submission_pr_observed` before `operation_finished(proposal_open)`. The Agent
+cannot supply the repository, remote, head, base, PR title, or PR body. Push and
+create timeouts leave the operation running until the exact remote ref and PR
+are observed; a wrong ref, multiple matching PRs, a closed PR, or metadata drift
+fails closed without copying remote diagnostics into the error.
 
 For every RunAttempt state, both explicit cancel and operational failure have an
 exit. The complete v0.1 rule is:
@@ -144,10 +158,34 @@ retry always creates a new Attempt. Terminal Attempt events remain evidence.
 the Run; until then a failed/lost Attempt may be retried. Once RunResult exists,
 another experiment requires a new Run ID.
 
-Impact never treats non-overlap as proof. It can propose `current`, `stale`,
-`snapshot_only`, or `needs_rerun`, but only a protected manager control merge
-changes an accepted Report. `sync` never updates a dirty or ambiguously live
-worktree automatically.
+Impact never treats non-overlap as proof. It can propose `current` or `stale`,
+but only a protected Impact merge changes an accepted Report. Snapshot Reports
+are not impact candidates; rerun, waiver, and invalidation are separate manager
+decisions rather than applicability values. The current analyzer is explicitly
+Git code-path scoped and cannot infer external resource changes. `sync` never
+updates a dirty or ambiguously live worktree automatically.
+
+Impact delivery journals `impact_proposal_prepared`, `impact_branch_pushed`,
+and `impact_pr_created` or `impact_pr_observed` before
+`operation_finished(proposal_open)`. Its branch, base, title, body, changed path
+set, and Report revision are derived rather than caller-selected. Agent
+authority is denied before Git or GitHub calls, and an Impact hit never launches
+a Run.
+
+`report status` is a read, not a stored-state mutation. For a baseline Report,
+it compares the validation-basis tree with the requested target tree while
+excluding `.research/**` from governed source changes. This prevents the Report
+or Decision commit from immediately invalidating itself. A real source change
+produces effective `impact_pending`; an unavailable basis also produces
+`impact_pending` rather than a default-current fallback.
+
+Impact decisions journal `impact_decision_prepared`,
+`impact_decision_branch_pushed`, and exactly one of
+`impact_decision_pr_created`/`impact_decision_pr_observed`. The request cannot
+select a repository, remote, branch, base, title, body, Report bytes, reviewer
+string, or decision timestamp. The authenticated manager actor and operation
+clock supply the latter two. A dedicated review Agent may recommend a
+disposition, but ordinary Agent credentials cannot call this mutation.
 
 ## 6. Certified manager acceptance
 
@@ -201,6 +239,7 @@ to `suspect` then `quarantined`; elapsed time alone never frees the GPU.
 | Command | Actor and authority | First durable write | Idempotency key | Observe and recover | Terminal result |
 |---|---|---|---|---|---|
 | `researchctl linear configure` | Manager only; protected Git owns the accepted non-secret Linear policy | `OperationStarted`, then a canonical policy commit on a fixed control branch/worktree | Operation ID + exact default head + canonical policy digest | Re-read the exact default head, fixed branch/marker/path, canonical bytes, and proposal commit; replay observes the same proposal and never contacts Linear | `proposal_prepared` or `no_change`; acceptance still requires exact-head CI, CODEOWNER approval, and protected merge |
+| `researchctl-github-post-merge` | Dedicated trusted GitHub automation; authenticated GitHub observations authorize only one post-merge enqueue | Outbox write occurs only after exact merged PR, workflow, check-run, artifact, and accepted-Git revalidation | Repository + PR + workflow/check/artifact IDs; the resulting accepted event ID is stable | Repeat all authenticated observations, then observe the stable accepted-result outbox event; local artifact helpers remain shadow-only | `queued`, `already_queued`, `disabled`, or rejected before outbox mutation |
 | `ApplicationService.linear_enqueue_accepted(...)` | Dedicated trusted automation; accepted Git records remain authoritative and SQLite owns the delivery event | `linear.accepted-result.v1` outbox row after protected-merge and exact-head attestation revalidation | Project + Task + Report ID + Report revision | Re-read the protected merge and existing stable event; neither Agent input nor CI selects a target, body, or credential | `queued`, `already_queued`, or `disabled` |
 | `ApplicationService.linear_delivery_run_once(...)` | Dedicated configured-app worker; Linear comment is a projection and receipt is local operational evidence | Claim/lease row before any remote read or mutation | Topic + stable outbox ID; a claim ID resumes one in-flight attempt | Preflight exact UUID relationships, observe marker, create only if absent, then atomically finish status and receipt; an API timeout is retried by observation | `idle`, `delivered`, `retryable`, or `dead_letter` |
 | `researchctl reconcile` | Any authorized reader; read-only observation | None | Plan digest is derived from observations | Compare Git, local DB, worktrees, tmux/processes, remotes, artifacts, controller, and projection markers under a deadline | `clean`, `plan_ready`, or `partial_observation` |
@@ -212,9 +251,11 @@ optional project and issue UUID; renderer ID/version; and payload digest. The
 event ID is stable over retries. Repeated trusted worker invocations use the
 same `ApplicationService` delivery method. Credential-free accepted-merge
 validation is available through `researchctl-linear-host shadow`; no live
-enqueue/delivery replay operator CLI is registered at R0. An Agent is not
-authorized to call the mutation and never supplies the target, template,
-free-form body, or credential.
+delivery replay operator CLI is registered at R0. R1 adds the dedicated
+`researchctl-github-post-merge` enqueue host, which accepts only repository and
+PR identity and derives provenance from authenticated GitHub observations. An
+Agent is not authorized to call the mutation and never supplies the target,
+template, free-form body, or credential.
 
 The worker validates the immutable issue UUID against the configured workspace
 and team or project before writing. A mismatch never falls back to title search

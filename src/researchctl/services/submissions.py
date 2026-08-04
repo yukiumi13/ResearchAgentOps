@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 from researchctl.domain.enums import RunOutcome, SubmissionCategory, SubmissionState
 from researchctl.domain.models import (
     ReportProposal,
+    ProjectPolicy,
     ResearchSubmission,
     RunResult,
     RunSpec,
@@ -19,6 +20,7 @@ from researchctl.services.report_renderer import (
     render_submission_review,
 )
 from researchctl.services.run_preflight import validate_task_required_inputs
+from researchctl.services.experiment_plan import require_passing_plan_review
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,12 +70,14 @@ class SubmissionBundleBuilder:
         submission: ResearchSubmission,
         proposal: ReportProposal,
         evidence: tuple[SubmissionEvidence, ...],
+        policy: ProjectPolicy | None = None,
     ) -> SubmissionBundle:
         ordered = self._validate_and_order(
             task=task,
             submission=submission,
             proposal=proposal,
             evidence=evidence,
+            policy=policy,
         )
         source_digest = canonical_digest(
             {
@@ -84,6 +88,15 @@ class SubmissionBundleBuilder:
                     {
                         "run_spec_digest": item.spec.spec_digest,
                         "run_result_digest": canonical_digest(item.result),
+                        **(
+                            {
+                                "plan_digest": item.spec.experiment_plan.plan_digest,
+                                "plan_review_digest": item.spec.plan_review.review_digest,
+                            }
+                            if item.spec.experiment_plan is not None
+                            and item.spec.plan_review is not None
+                            else {}
+                        ),
                     }
                     for item in ordered
                 ],
@@ -102,6 +115,20 @@ class SubmissionBundleBuilder:
         ]
         for item in ordered:
             evidence_root = f"{root}/evidence/{item.spec.run_id}"
+            if item.spec.experiment_plan is not None:
+                assert item.spec.plan_review is not None
+                files.extend(
+                    (
+                        RenderedSubmissionFile(
+                            f"{evidence_root}/plan-review.yaml",
+                            dump_yaml(item.spec.plan_review).encode("utf-8"),
+                        ),
+                        RenderedSubmissionFile(
+                            f"{evidence_root}/plan.yaml",
+                            dump_yaml(item.spec.experiment_plan).encode("utf-8"),
+                        ),
+                    )
+                )
             files.extend(
                 (
                     RenderedSubmissionFile(
@@ -160,6 +187,7 @@ class SubmissionBundleBuilder:
         submission: ResearchSubmission,
         proposal: ReportProposal,
         evidence: tuple[SubmissionEvidence, ...],
+        policy: ProjectPolicy | None = None,
     ) -> tuple[SubmissionEvidence, ...]:
         if submission.state is not SubmissionState.OPEN:
             raise RCPError(
@@ -204,6 +232,32 @@ class SubmissionBundleBuilder:
                     message="RunSpec and RunResult linkage does not match the Submission.",
                 )
             validate_task_required_inputs(item.spec, task)
+            if item.spec.experiment_plan is not None:
+                if policy is None or item.spec.plan_review is None:
+                    raise RCPError(
+                        code="submission_plan_policy_missing",
+                        message="Plan-backed evidence requires the accepted Project policy.",
+                    )
+                require_passing_plan_review(
+                    item.spec.experiment_plan,
+                    item.spec.plan_review,
+                    task,
+                    policy,
+                )
+                if submission.category is not SubmissionCategory.FAILURE_RECORD:
+                    expected_metrics = {
+                        metric.name for metric in item.spec.experiment_plan.metrics
+                    }
+                    missing_metrics = sorted(expected_metrics - set(submission.metrics))
+                    if missing_metrics:
+                        raise RCPError(
+                            code="submission_plan_metrics_missing",
+                            message=(
+                                "Submission metrics do not cover the reviewed "
+                                "ExperimentPlan."
+                            ),
+                            context={"missing_metrics": missing_metrics},
+                        )
             if item.spec.source_tree != proposal.evidence_tree:
                 raise RCPError(
                     code="submission_evidence_tree_mismatch",

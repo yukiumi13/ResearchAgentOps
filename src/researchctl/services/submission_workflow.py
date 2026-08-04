@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 
@@ -20,6 +21,7 @@ from researchctl.adapters.git_worktree import GitWorktreeAdapter
 from researchctl.domain.models import (
     ReportProposal,
     ReportRecord,
+    ProjectPolicy,
     ResearchSubmission,
     RunResult,
     RunSpec,
@@ -36,6 +38,12 @@ from researchctl.services.review_acceptance import (
     ReviewAcceptanceBuilder,
 )
 from researchctl.services.submission_records import SubmissionRecordRepository
+from researchctl.services.submission_delivery import (
+    SubmissionBranchDelivery,
+    SubmissionDeliveryPort,
+    SubmissionPullRequestReceipt,
+    render_submission_pull_request,
+)
 from researchctl.services.submissions import (
     SubmissionBundle,
     SubmissionBundleBuilder,
@@ -53,11 +61,34 @@ _MAX_RECORD_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
-class SubmissionProposalReceipt:
+class PreparedSubmissionProposal:
     bundle: SubmissionBundle
     commit: SubmissionCommitReceipt
     evidence_commits: tuple[dict[str, str], ...]
     source_scopes: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionProposalReceipt:
+    prepared: PreparedSubmissionProposal
+    branch_delivery: SubmissionBranchDelivery
+    pull_request: SubmissionPullRequestReceipt
+
+    @property
+    def bundle(self) -> SubmissionBundle:
+        return self.prepared.bundle
+
+    @property
+    def commit(self) -> SubmissionCommitReceipt:
+        return self.prepared.commit
+
+    @property
+    def evidence_commits(self) -> tuple[dict[str, str], ...]:
+        return self.prepared.evidence_commits
+
+    @property
+    def source_scopes(self) -> tuple[dict[str, object], ...]:
+        return self.prepared.source_scopes
 
     @property
     def terminal_result(self) -> str:
@@ -68,6 +99,10 @@ class SubmissionProposalReceipt:
             "terminal_result": self.terminal_result,
             "bundle": self.bundle.as_dict(),
             "proposal": self.commit.as_dict(),
+            "delivery": {
+                "branch": self.branch_delivery.as_dict(),
+                "pull_request": self.pull_request.as_dict(),
+            },
             "evidence_commits": list(self.evidence_commits),
             "source_scopes": list(self.source_scopes),
             "accepted": False,
@@ -109,8 +144,10 @@ class SubmissionWorkflowService:
         acceptance: ReviewAcceptanceBuilder | None = None,
         git: GitWorktreeAdapter | None = None,
         write_scope: GitWriteScopeValidator | None = None,
+        delivery: SubmissionDeliveryPort | None = None,
         runner: CommandRunner | None = None,
         timeout_seconds: float = 10.0,
+        policy: ProjectPolicy | None = None,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.worktrees_directory = worktrees_directory.resolve()
@@ -123,18 +160,93 @@ class SubmissionWorkflowService:
         self.submissions = submissions or SubmissionBundleBuilder()
         self.acceptance = acceptance or ReviewAcceptanceBuilder(self.submissions)
         self.git = git or GitWorktreeAdapter()
+        self.delivery = delivery
         self._runner = runner or SubprocessCommandRunner()
         self._timeout_seconds = timeout_seconds
         self.write_scope = write_scope or GitWriteScopeValidator(
             runner=self._runner,
             timeout_seconds=timeout_seconds,
         )
+        self.policy = policy
 
     def propose(
         self,
         request: SubmissionCreateRequest,
         task: TaskRecord,
+        *,
+        event_callback: Callable[[str, dict[str, object]], None] | None = None,
     ) -> SubmissionProposalReceipt:
+        if self.delivery is None:
+            raise RCPError(
+                code="submission_delivery_not_configured",
+                message="Submission GitHub delivery is not configured.",
+            )
+        prepared = self.prepare_proposal(request, task)
+        self._event(
+            event_callback,
+            "submission_proposal_prepared",
+            {
+                "submission_id": request.submission.submission_id,
+                "base_commit": request.base_commit,
+                "proposal_commit": prepared.commit.commit,
+            },
+        )
+        branch = self.delivery.push_exact(
+            repository_root=self.repository_root,
+            branch=prepared.commit.branch,
+            commit=prepared.commit.commit,
+        )
+        self._event(
+            event_callback,
+            "submission_branch_pushed",
+            {
+                "submission_id": request.submission.submission_id,
+                "branch": branch.branch,
+                "proposal_commit": branch.commit,
+                "effect_applied": branch.pushed,
+            },
+        )
+        title, body = render_submission_pull_request(
+            task=task,
+            submission=request.submission,
+            proposal=request.report_proposal,
+            bundle=prepared.bundle,
+            proposal_commit=prepared.commit.commit,
+        )
+        pull_request = self.delivery.open_or_observe(
+            submission_id=request.submission.submission_id,
+            branch=branch,
+            base_branch=self.default_branch,
+            title=title,
+            body=body,
+        )
+        self._event(
+            event_callback,
+            (
+                "submission_pr_created"
+                if pull_request.created
+                else "submission_pr_observed"
+            ),
+            {
+                "submission_id": request.submission.submission_id,
+                "repository": pull_request.repository,
+                "pull_request_number": pull_request.number,
+                "base_branch": pull_request.base_branch,
+                "head_branch": pull_request.head_branch,
+                "proposal_commit": pull_request.head_commit,
+            },
+        )
+        return SubmissionProposalReceipt(
+            prepared=prepared,
+            branch_delivery=branch,
+            pull_request=pull_request,
+        )
+
+    def prepare_proposal(
+        self,
+        request: SubmissionCreateRequest,
+        task: TaskRecord,
+    ) -> PreparedSubmissionProposal:
         default_head = self.git.resolve_commit(
             self.repository_root,
             f"refs/heads/{self.default_branch}",
@@ -159,6 +271,7 @@ class SubmissionWorkflowService:
             evidence=tuple(
                 SubmissionEvidence(item.spec, item.result) for item in observed
             ),
+            policy=self.policy,
         )
         source_scopes = tuple(
             {
@@ -186,12 +299,21 @@ class SubmissionWorkflowService:
             }
             for item in observed
         )
-        return SubmissionProposalReceipt(
+        return PreparedSubmissionProposal(
             bundle=bundle,
             commit=committed,
             evidence_commits=evidence_commits,
             source_scopes=source_scopes,
         )
+
+    @staticmethod
+    def _event(
+        callback: Callable[[str, dict[str, object]], None] | None,
+        kind: str,
+        payload: dict[str, object],
+    ) -> None:
+        if callback is not None:
+            callback(kind, payload)
 
     def prepare_acceptance(
         self,
@@ -241,6 +363,7 @@ class SubmissionWorkflowService:
             claim_scope=request.claim_scope,
             code_disposition=request.code_disposition,
             accepted_base_tree=base_tree,
+            policy=self.policy,
         )
         committed = self.records.write_acceptance(
             operation_id=request.operation_id,
@@ -291,6 +414,7 @@ class SubmissionWorkflowService:
             submission=submission,
             proposal=proposal,
             evidence=tuple(evidence),
+            policy=self.policy,
         )
         expected = {item.path: item.content for item in bundle.files}
         if set(entries) != set(expected):

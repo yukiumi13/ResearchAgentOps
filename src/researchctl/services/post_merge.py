@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Never
 
@@ -45,6 +46,7 @@ PostMergeState = Literal[
     "disabled",
 ]
 _MAX_POST_MERGE_ARTIFACT_BYTES = 8 * 1024 * 1024
+_GITHUB_RESOURCE_ID = re.compile(r"^[1-9][0-9]*$")
 
 
 class PostMergeRequest(StrictModel):
@@ -70,10 +72,18 @@ class PostMergeRequest(StrictModel):
         )
         if self.provenance == "github_authenticated" and not all(github_ids):
             raise ValueError("authenticated GitHub provenance requires run/check/artifact IDs")
+        if self.provenance == "github_authenticated" and not all(
+            _GITHUB_RESOURCE_ID.fullmatch(value)
+            for value in github_ids
+            if value is not None
+        ):
+            raise ValueError("authenticated GitHub provenance IDs must be positive integers")
         if self.provenance == "local_shadow" and any(github_ids):
             raise ValueError("local shadow provenance cannot assert GitHub IDs")
         if self.mode == "enqueue" and self.provenance != "github_authenticated":
             raise ValueError("live enqueue requires authenticated GitHub provenance")
+        if self.mode == "shadow" and self.provenance != "local_shadow":
+            raise ValueError("shadow validation requires local shadow provenance")
         if self.pull_request_number < 1:
             raise ValueError("pull_request_number must be positive")
         return self
@@ -169,6 +179,16 @@ class TrustedPostMergeService:
                 event=None,
                 outbox_state=None,
             )
+        if request.provenance == "github_authenticated":
+            assert request.workflow_run_id is not None
+            assert request.check_run_id is not None
+            assert request.artifact_id is not None
+            event = replace(
+                event,
+                workflow_run_id=request.workflow_run_id,
+                check_run_id=request.check_run_id,
+                artifact_id=request.artifact_id,
+            )
         if request.mode == "shadow":
             return PostMergeResult(
                 state="shadow_validated",
@@ -240,7 +260,7 @@ def post_merge_request_from_artifact(
     artifact_id: str | None = None,
 ) -> PostMergeRequest:
     artifact = load_ci_dispatch_artifact(dispatch_artifact)
-    return PostMergeRequest(
+    request = PostMergeRequest(
         mode=mode,
         provenance=provenance,
         merge_commit=merge_commit,
@@ -254,6 +274,12 @@ def post_merge_request_from_artifact(
         check_run_id=check_run_id,
         artifact_id=artifact_id,
     )
+    if request.mode != "shadow" or request.provenance != "local_shadow":
+        raise ValueError(
+            "artifact-derived requests are shadow-only; authenticated enqueue "
+            "must use the GitHub post-merge bridge"
+        )
+    return request
 
 
 def write_post_merge_artifact(
@@ -330,6 +356,9 @@ def _event_observation(event: LinearAcceptedResultEvent) -> dict[str, object]:
         "ci_attestation_id": event.ci_attestation_id,
         "workflow_id": event.workflow_id,
         "check_identity": event.check_identity,
+        "workflow_run_id": event.workflow_run_id,
+        "check_run_id": event.check_run_id,
+        "artifact_id": event.artifact_id,
         "record_digests": {
             "task": event.task_digest,
             "submission": event.submission_digest,

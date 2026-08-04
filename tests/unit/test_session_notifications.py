@@ -151,6 +151,7 @@ def _service(
                     ".research/decisions/**",
                     ".research/policies/**",
                     ".research/project.yaml",
+                    ".research/impacts/**",
                     ".research/reports/**",
                     ".research/tasks/**",
                 )

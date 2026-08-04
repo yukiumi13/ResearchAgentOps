@@ -5,7 +5,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Never
+from typing import Literal, Never
 
 from researchctl.adapters._subprocess import (
     CommandResult,
@@ -126,6 +126,23 @@ class GitCIObjectReader:
             parents=tuple(parents),
             message=message,
         )
+
+    def object_type(
+        self,
+        repository_root: Path,
+        object_id: str,
+    ) -> Literal["blob", "commit", "tag", "tree"] | None:
+        """Return the immutable Git object type without resolving a revision."""
+
+        root = self._directory(repository_root)
+        self._require_object_id(object_id)
+        result = self._git(root, "cat-file", "-t", object_id, check=False)
+        if result.returncode != 0:
+            return None
+        observed = result.stdout.removesuffix("\n")
+        if observed not in {"blob", "commit", "tag", "tree"}:
+            self._invalid_output("Git returned an invalid object type.")
+        return observed  # type: ignore[return-value]
 
     def read_blob_at(
         self,

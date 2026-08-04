@@ -11,14 +11,32 @@ EXPECTED_FILE_SHA256 = {
     "ci-validation-attestation.schema.json": (
         "28545c955f8732f6f07b0ace2655888c410a64bb6745d078de0fc8bf57165100"
     ),
+    "dependency-change-receipt.schema.json": (
+        "9c84ab2efb3a14e72194aea7dc724d733492f44a111ed9da648c09ea9259517a"
+    ),
+    "experiment-plan.schema.json": (
+        "ea9a9e6605cfeed351cb603ade19dab4c2a2e0050fad77742e1fa1c14e1eabd5"
+    ),
+    "impact-decision.schema.json": (
+        "c4b0de7410fdd75e3e14fbec15199cfab7b6e5940dce08d8687bf4e36ec4d311"
+    ),
     "linear-projection-policy.schema.json": (
         "1fe26641a13487c156e897b61dc57e728ecdb3e9ea933e96f6084710d11b2646"
     ),
-    "policy.schema.json": "62cf93fe513fdf886d079ea0ea879ad7843c197bb940cae867a45d0759ea3761",
-    "manifest.json": "529195b4b22db8db8e61ffbc12c348b4ffa4e22e51063c6502f3f4ccc0520048",
+    "plan-review.schema.json": (
+        "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
+    ),
+    "policy.schema.json": "9f50cdae7e15d3ff7ad43269a45d72ee1070064ed9e482e51c84602613c23c69",
+    "manifest.json": "4025543d5e1205375aef5dbb361bacef99cee4074e61aa82ac676714952737e0",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "report-proposal.schema.json": (
         "4208f055cfc0429fb10f6d33b9b82d5b9bd6716eeae712974023bb8c52be75c6"
+    ),
+    "report-impact.schema.json": (
+        "5372761260e39a0897ebb2ec4b9999d5a0a3c6b5e71bfeca2599fc689cd72250"
+    ),
+    "report-impact-batch.schema.json": (
+        "50e2fe243da5cbb24ec3a49578afccc9974edfdd880e16428be4a84d0e4b6d16"
     ),
     "report.schema.json": "6c2ba291f310a5c0e4f17683b41ebc4337b8ad40c61852e016717f4e7fdf62ae",
     "research-submission.schema.json": (
@@ -34,12 +52,12 @@ EXPECTED_FILE_SHA256 = {
         "c4bda290dc1eba38d8b4fdd72829743b7d4a247b7b02743dc21d1c43c51269ed"
     ),
     "run-spec.schema.json": (
-        "5ecd11a7f780a94a78e24efbc819c0583ded4d2cbef1b1a8fbdbd0669a0107cc"
+        "51cf40b156c485ed4c0dea1c2f6eca7a4e1ff3de6d32f70b78c5e2a2e5cbfa4b"
     ),
     "status-update.schema.json": (
         "17401b3348a639ae1fb86502653a4ec74aa87c07b740ca325ce8ba6c636e5251"
     ),
-    "task.schema.json": "533818ceccd8b05fb6f645e55c3a01a49ceead27c24b1edb8a59201fb5c25394",
+    "task.schema.json": "87da25858db35847cb250d63a344d58170da1d66c010b4ab716a3b0b26148ef2",
 }
 
 

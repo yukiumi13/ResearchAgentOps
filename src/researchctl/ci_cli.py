@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import TypeAdapter
 
 from researchctl.domain.ids import new_id
-from researchctl.domain.types import utc_now
+from researchctl.domain.types import UtcDateTime, utc_now
 from researchctl.phase2_cli import (
     _input_error,
     _machine_or_human_request,
     _required,
+    _render_result,
+    _result_data,
 )
 from researchctl.services.ci_dispatch import (
     CIPRDispatchRequest,
@@ -22,12 +27,118 @@ from researchctl.services.ci_validation import (
     ExactHeadCIValidator,
     write_ci_validation_artifact,
 )
+from researchctl.services.requests import ImpactBatchCreateRequest
 
 
 ci_app = typer.Typer(
     help="Validate an untrusted PR head as Git data.",
     no_args_is_help=True,
 )
+
+_UTC_DATETIME_ADAPTER = TypeAdapter(UtcDateTime)
+
+
+def _impact_automation_id(
+    kind: str,
+    *,
+    generated_at: object,
+    before_commit: str,
+    target_commit: str,
+) -> str:
+    timestamp = _UTC_DATETIME_ADAPTER.validate_python(generated_at).astimezone(UTC)
+    suffix = hashlib.sha256(
+        f"researchctl:{kind}:{before_commit}:{target_commit}".encode("ascii")
+    ).hexdigest()[:24]
+    return f"{kind}_{timestamp.strftime('%Y%m%dT%H%M%SZ')}_{suffix}"
+
+
+@ci_app.command("impact")
+def ci_impact_command(
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    json_input: Annotated[bool, typer.Option("--json")] = False,
+    before_commit: Annotated[str | None, typer.Option("--before")] = None,
+    target_commit: Annotated[str | None, typer.Option("--after")] = None,
+    generated_at: Annotated[str | None, typer.Option("--generated-at")] = None,
+    impact_id: Annotated[str | None, typer.Option("--impact-id")] = None,
+    operation_id: Annotated[str | None, typer.Option("--operation-id")] = None,
+    idempotency_key: Annotated[str | None, typer.Option("--idempotency-key")] = None,
+) -> None:
+    """Scan all baseline Reports and open at most one reviewed Impact PR."""
+
+    command = "ci.impact"
+
+    def human_request() -> ImpactBatchCreateRequest:
+        before = _required(before_commit, "--before")
+        target = _required(target_commit, "--after")
+        generated = _required(generated_at, "--generated-at")
+        selected_impact_id = impact_id or _impact_automation_id(
+            "impact",
+            generated_at=generated,
+            before_commit=before,
+            target_commit=target,
+        )
+        selected_operation_id = operation_id or _impact_automation_id(
+            "operation",
+            generated_at=generated,
+            before_commit=before,
+            target_commit=target,
+        )
+        return ImpactBatchCreateRequest(
+            operation_id=selected_operation_id,
+            idempotency_key=(
+                idempotency_key
+                or f"ci-impact:{before}:{target}"
+            ),
+            impact_id=selected_impact_id,
+            before_commit=before,
+            target_commit=target,
+            generated_at=generated,
+        )
+
+    request: ImpactBatchCreateRequest | None = None
+    try:
+        request = _machine_or_human_request(
+            json_input,
+            ImpactBatchCreateRequest,
+            human_request,
+        )
+        from researchctl.services.factory import (
+            open_impact_automation_application,
+        )
+
+        with open_impact_automation_application(project) as handle:
+            result = handle.service.impact_batch_create(request, handle.actor)
+        data = _result_data(result)
+        if json_input:
+            from researchctl.output import dump_envelope, envelope
+
+            typer.echo(
+                dump_envelope(envelope(command=command, success=True, data=data))
+            )
+            return
+        _render_result(data)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        from researchctl.cli import _abort, _known_error
+
+        error = _known_error(exc)
+        if error is None:
+            raise
+        if request is not None and "operation_id" not in error.context:
+            from researchctl.errors import RCPError
+
+            error = RCPError(
+                code=error.code,
+                message=error.message,
+                remediation=error.remediation,
+                context={
+                    **error.context,
+                    "operation_id": request.operation_id,
+                },
+                exit_code=error.exit_code,
+            )
+        _abort(error, command=command, json_output=json_input)
 
 
 @ci_app.command("dispatch")

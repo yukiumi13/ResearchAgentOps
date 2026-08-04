@@ -176,6 +176,9 @@ class LinearAcceptedResultEvent:
     renderer_payload: bytes
     marker: str
     transport_body: bytes
+    workflow_run_id: str | None = None
+    check_run_id: str | None = None
+    artifact_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +209,9 @@ class LinearProjectionReceipt:
     transport_digest: str
     marker: str
     source_marker: SessionNotificationSourceMarker
+    workflow_run_id: str | None = None
+    check_run_id: str | None = None
+    artifact_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +240,9 @@ def linear_event_payload(event: LinearAcceptedResultEvent) -> dict[str, object]:
         "ci_attestation_id": event.ci_attestation_id,
         "workflow_id": event.workflow_id,
         "check_identity": event.check_identity,
+        "workflow_run_id": event.workflow_run_id,
+        "check_run_id": event.check_run_id,
+        "artifact_id": event.artifact_id,
         "task_digest": event.task_digest,
         "submission_digest": event.submission_digest,
         "decision_digest": event.decision_digest,
@@ -271,6 +280,9 @@ def linear_event_from_payload(payload: dict[str, object]) -> LinearAcceptedResul
         "ci_attestation_id",
         "workflow_id",
         "check_identity",
+        "workflow_run_id",
+        "check_run_id",
+        "artifact_id",
         "task_digest",
         "submission_digest",
         "decision_digest",
@@ -291,6 +303,23 @@ def linear_event_from_payload(payload: dict[str, object]) -> LinearAcceptedResul
         )
     target = payload.get("target")
     projection = payload.get("ci_projection")
+    github_ids = (
+        payload.get("workflow_run_id"),
+        payload.get("check_run_id"),
+        payload.get("artifact_id"),
+    )
+    if not all(value is None or isinstance(value, str) for value in github_ids):
+        raise RCPError(
+            code="linear_delivery_event_invalid",
+            message="Durable Linear event has invalid GitHub provenance IDs.",
+        )
+    if any(value is None for value in github_ids) and any(
+        value is not None for value in github_ids
+    ):
+        raise RCPError(
+            code="linear_delivery_event_invalid",
+            message="Durable Linear event has incomplete GitHub provenance.",
+        )
     if not isinstance(target, dict) or set(target) != {
         "workspace_id",
         "team_id",
@@ -338,6 +367,21 @@ def linear_event_from_payload(payload: dict[str, object]) -> LinearAcceptedResul
             renderer_payload=str(payload["renderer_payload"]).encode("utf-8"),
             marker=str(payload["marker"]),
             transport_body=str(payload["transport_body"]).encode("utf-8"),
+            workflow_run_id=(
+                str(payload["workflow_run_id"])
+                if payload["workflow_run_id"] is not None
+                else None
+            ),
+            check_run_id=(
+                str(payload["check_run_id"])
+                if payload["check_run_id"] is not None
+                else None
+            ),
+            artifact_id=(
+                str(payload["artifact_id"])
+                if payload["artifact_id"] is not None
+                else None
+            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise RCPError(
@@ -362,6 +406,9 @@ def linear_receipt_payload(receipt: LinearProjectionReceipt) -> dict[str, object
         "ci_attestation_id": receipt.ci_attestation_id,
         "workflow_id": receipt.workflow_id,
         "check_identity": receipt.check_identity,
+        "workflow_run_id": receipt.workflow_run_id,
+        "check_run_id": receipt.check_run_id,
+        "artifact_id": receipt.artifact_id,
         "task_digest": receipt.task_digest,
         "submission_digest": receipt.submission_digest,
         "decision_digest": receipt.decision_digest,
@@ -726,6 +773,21 @@ class LinearAcceptedResultDeliveryService:
             return "linear_event_lineage_invalid"
         if not event.ci_attestation_id or not event.workflow_id or not event.check_identity:
             return "linear_event_lineage_invalid"
+        github_ids = (
+            event.workflow_run_id,
+            event.check_run_id,
+            event.artifact_id,
+        )
+        if any(value is None for value in github_ids) and any(
+            value is not None for value in github_ids
+        ):
+            return "linear_event_lineage_invalid"
+        if all(value is not None for value in github_ids) and not all(
+            value.isascii() and value.isdigit() and not value.startswith("0")
+            for value in github_ids
+            if value is not None
+        ):
+            return "linear_event_lineage_invalid"
         if not all(
             _SHA256_DIGEST.fullmatch(value)
             for value in (
@@ -897,6 +959,9 @@ class LinearAcceptedResultDeliveryService:
                 "accepted_merge_commit": event.accepted_merge_commit,
                 "ci_subject_head": event.ci_subject_head,
                 "ci_attestation_id": event.ci_attestation_id,
+                "workflow_run_id": event.workflow_run_id,
+                "check_run_id": event.check_run_id,
+                "artifact_id": event.artifact_id,
             }
         )
         source_marker = SessionNotificationSourceMarker(
@@ -943,6 +1008,9 @@ class LinearAcceptedResultDeliveryService:
             ),
             marker=event.marker,
             source_marker=source_marker,
+            workflow_run_id=event.workflow_run_id,
+            check_run_id=event.check_run_id,
+            artifact_id=event.artifact_id,
         )
         return LinearDeliveryOutcome(
             state="delivered",

@@ -8,15 +8,17 @@ import pytest
 from typer.testing import CliRunner
 
 from researchctl.cli import app
-from researchctl.domain.enums import ProjectState
+from researchctl.domain.enums import ImpactDisposition, ProjectState
 from researchctl.domain.models import (
     CIValidationAttestation,
     CIValidationCheck,
     GeneratedOutputDigest,
     LinearProjectionDisabled,
     LinearProjectionPolicy,
+    PlanReviewPolicy,
     ProjectPolicy,
     ProjectRecord,
+    ReportRecord,
     TaskRecord,
 )
 from researchctl.errors import RCPError
@@ -42,7 +44,19 @@ from researchctl.services.ci_validation import (
 )
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
+from researchctl.services.control_plan_review_policy import (
+    ControlPlanReviewPolicyRepository,
+)
 from researchctl.services.control_tasks import ControlTaskRecordRepository
+from researchctl.services.impact_workflow import ImpactWorkflowService
+from researchctl.services.impact_decision_workflow import (
+    ImpactDecisionWorkflowService,
+)
+from researchctl.services.requests import (
+    ImpactBatchCreateRequest,
+    ImpactCreateRequest,
+    ImpactDecisionCreateRequest,
+)
 
 
 ATTESTATION_ID = "attestation_20260803T120000Z_" + "a" * 24
@@ -51,7 +65,12 @@ PROPOSAL_OPERATION_ID = "operation_20260803T120000Z_" + "c" * 24
 ACCEPT_OPERATION_ID = "operation_20260803T120001Z_" + "d" * 24
 TASK_OPERATION_ID = "operation_20260803T120002Z_" + "e" * 24
 LINEAR_OPERATION_ID = "operation_20260803T120003Z_" + "f" * 24
+PLAN_REVIEW_OPERATION_ID = "operation_20260803T120003Z_" + "0" * 24
 GENERATED_AT = "2026-08-03T12:00:00Z"
+IMPACT_ID = "impact_20260803T120004Z_" + "1" * 24
+IMPACT_OPERATION_ID = "operation_20260803T120004Z_" + "2" * 24
+IMPACT_DECISION_ID = "decision_20260803T120005Z_" + "3" * 24
+IMPACT_DECISION_OPERATION_ID = "operation_20260803T120005Z_" + "4" * 24
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -252,6 +271,82 @@ def test_generated_linear_policy_control_is_validated_without_network(
     }
 
 
+def test_generated_plan_review_policy_control_is_exactly_scoped(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
+    worktrees.mkdir(parents=True)
+    control = ControlPlanReviewPolicyRepository(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+        operation_id=PLAN_REVIEW_OPERATION_ID,
+        expected_default_head=base,
+    )
+    written = control.configure(
+        PlanReviewPolicy(
+            provider="codex",
+            model="gpt-test-reviewer",
+            policy_version="plan-review-v1",
+            timeout_seconds=60,
+        )
+    )
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=base,
+            head=written.proposal.commit,
+            head_ref=control.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "plan_review_policy_control"
+    assert result.attestation.applicability == "validated"
+    assert {item.name for item in result.attestation.checks} == {
+        "plan_review_policy",
+        "project_policy_transition",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+
+
+def test_plan_review_policy_control_rejects_other_project_policy_changes(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    branch = f"research/control/{PLAN_REVIEW_OPERATION_ID}"
+    _git(initialized_repository, "checkout", "-b", branch)
+    path = initialized_repository / ".research" / "policies" / "default.yaml"
+    policy = load_model(path, ProjectPolicy)
+    replacement = policy.model_copy(
+        update={
+            "plan_review": PlanReviewPolicy(
+                provider="codex",
+                model="gpt-test-reviewer",
+                policy_version="plan-review-v1",
+                timeout_seconds=60,
+            ),
+            "plan_choices": {"undeclared_default": True},
+        }
+    )
+    path.write_text(dump_yaml(replacement), encoding="utf-8")
+    head = _commit(
+        initialized_repository,
+        f"researchctl: plan.configure-review {PLAN_REVIEW_OPERATION_ID}",
+        ".research/policies/default.yaml",
+    )
+
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(base=base, head=head, head_ref=branch),
+        )
+
+    assert raised.value.code == "ci_plan_review_policy_scope_invalid"
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_code"),
     [
@@ -304,6 +399,371 @@ def test_linear_policy_control_rejects_unsafe_or_malformed_changes(
         )
 
     assert raised.value.code == expected_code
+
+
+def test_generated_impact_is_rebuilt_from_protected_base_and_report_basis(
+    initialized_repository: Path,
+    report_payload,
+) -> None:
+    _promote_test_project(initialized_repository)
+    evaluator = initialized_repository / "src" / "evaluator" / "score.py"
+    evaluator.parent.mkdir(parents=True)
+    evaluator.write_text("SCORE = 1\n", encoding="utf-8")
+    basis_commit = _commit(
+        initialized_repository,
+        "accepted evaluator basis",
+        "src/evaluator/score.py",
+    )
+    basis_tree = _git(
+        initialized_repository,
+        "rev-parse",
+        f"{basis_commit}^{{tree}}",
+    ).strip()
+    report = ReportRecord.model_validate(
+        report_payload(
+            accepted_at_main_tree=basis_tree,
+            validation_basis={
+                "main_tree": basis_tree,
+                "assessed_at": GENERATED_AT,
+            },
+            dependencies={
+                "paths": ["src/evaluator/**"],
+                "resources": [],
+                "environments": [],
+            },
+        )
+    )
+    report_root = initialized_repository / ".research/reports" / report.report_id
+    report_root.mkdir(parents=True)
+    (report_root / "1.yaml").write_text(dump_yaml(report), encoding="utf-8")
+    (report_root / "1.md").write_text("# Accepted report\n", encoding="utf-8")
+    _commit(
+        initialized_repository,
+        "accept baseline report",
+        f".research/reports/{report.report_id}/1.yaml",
+        f".research/reports/{report.report_id}/1.md",
+    )
+    evaluator.write_text("SCORE = 2\n", encoding="utf-8")
+    target = _commit(
+        initialized_repository,
+        "fix evaluator",
+        "src/evaluator/score.py",
+    )
+    request = ImpactCreateRequest(
+        operation_id=IMPACT_OPERATION_ID,
+        idempotency_key="impact-evaluator-fix",
+        impact_id=IMPACT_ID,
+        report_id=report.report_id,
+        expected_report_revision=1,
+        target_commit=target,
+    )
+    worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
+    worktrees.mkdir(parents=True)
+    prepared = ImpactWorkflowService(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+    ).prepare_proposal(request, generated_at=GENERATED_AT)
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=target,
+            head=prepared.commit.commit,
+            head_ref=prepared.commit.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "impact"
+    assert result.attestation.applicability == "validated"
+    assert {item.name for item in result.attestation.checks} == {
+        "impact_record",
+        "impact_regeneration",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+    assert prepared.bundle.impact.outcome == "overlap"
+    assert prepared.bundle.proposed_report.applicability.value == "stale"
+
+    markdown_path = next(
+        item.path for item in prepared.bundle.files if item.path.endswith(".md")
+    )
+    markdown = prepared.commit.worktree / markdown_path
+    markdown.write_text(
+        markdown.read_text(encoding="utf-8") + "Unreviewed claim.\n",
+        encoding="utf-8",
+    )
+    _git(prepared.commit.worktree, "add", "--", markdown_path)
+    _git(
+        prepared.commit.worktree,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--amend",
+        "--no-edit",
+        "--no-gpg-sign",
+    )
+    tampered_head = _git(prepared.commit.worktree, "rev-parse", "HEAD").strip()
+
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(
+                base=target,
+                head=tampered_head,
+                head_ref=prepared.commit.branch,
+            ),
+        )
+
+    assert raised.value.code == "ci_impact_generated_output_mismatch"
+
+
+def test_generated_impact_batch_is_regenerated_as_one_exact_head(
+    initialized_repository: Path,
+    report_payload,
+) -> None:
+    _promote_test_project(initialized_repository)
+    evaluator = initialized_repository / "src/evaluator/score.py"
+    evaluator.parent.mkdir(parents=True)
+    evaluator.write_text("SCORE = 1\n", encoding="utf-8")
+    basis_commit = _commit(
+        initialized_repository,
+        "batch report basis",
+        "src/evaluator/score.py",
+    )
+    basis_tree = _git(
+        initialized_repository,
+        "rev-parse",
+        f"{basis_commit}^{{tree}}",
+    ).strip()
+    reports = (
+        ReportRecord.model_validate(
+            report_payload(
+                report_id="report_20260803T120000Z_" + "d" * 24,
+                validation_basis={
+                    "main_tree": basis_tree,
+                    "assessed_at": GENERATED_AT,
+                },
+                dependencies={
+                    "paths": ["README.md"],
+                    "resources": [],
+                    "environments": [],
+                },
+            )
+        ),
+        ReportRecord.model_validate(
+            report_payload(
+                report_id="report_20260803T120000Z_" + "e" * 24,
+                validation_basis={
+                    "main_tree": basis_tree,
+                    "assessed_at": GENERATED_AT,
+                },
+                dependencies={
+                    "paths": ["src/evaluator/**"],
+                    "resources": [],
+                    "environments": [],
+                },
+            )
+        ),
+    )
+    report_paths: list[str] = []
+    for report in reports:
+        root = initialized_repository / ".research/reports" / report.report_id
+        root.mkdir(parents=True)
+        (root / "1.yaml").write_text(dump_yaml(report), encoding="utf-8")
+        (root / "1.md").write_text("# Accepted report\n", encoding="utf-8")
+        report_paths.extend(
+            (
+                f".research/reports/{report.report_id}/1.yaml",
+                f".research/reports/{report.report_id}/1.md",
+            )
+        )
+    before = _commit(initialized_repository, "accept batch reports", *report_paths)
+    evaluator.write_text("SCORE = 2\n", encoding="utf-8")
+    target = _commit(
+        initialized_repository,
+        "fix evaluator for batch",
+        "src/evaluator/score.py",
+    )
+    request = ImpactBatchCreateRequest(
+        operation_id=IMPACT_OPERATION_ID,
+        idempotency_key="impact-batch-evaluator-fix",
+        impact_id=IMPACT_ID,
+        before_commit=before,
+        target_commit=target,
+        generated_at=GENERATED_AT,
+    )
+    worktrees = initialized_repository / ".git/researchctl/worktrees"
+    worktrees.mkdir(parents=True)
+    prepared = ImpactWorkflowService(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+    ).prepare_batch(request)
+    assert prepared.bundle is not None
+    assert prepared.commit is not None
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=target,
+            head=prepared.commit.commit,
+            head_ref=prepared.commit.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "impact"
+    assert prepared.commit.command == "impact.batch"
+    assert len(prepared.bundle.report_bundles) == 2
+    assert [
+        item.impact.outcome for item in prepared.bundle.report_bundles
+    ] == ["no_overlap", "overlap"]
+    assert tuple(prepared.commit.paths) == tuple(
+        item.path for item in prepared.bundle.files
+    )
+
+
+def test_impact_decision_is_regenerated_from_accepted_impact_and_report(
+    initialized_repository: Path,
+    report_payload,
+) -> None:
+    _promote_test_project(initialized_repository)
+    evaluator = initialized_repository / "src/evaluator/score.py"
+    evaluator.parent.mkdir(parents=True)
+    evaluator.write_text("SCORE = 1\n", encoding="utf-8")
+    basis_commit = _commit(
+        initialized_repository,
+        "decision report basis",
+        "src/evaluator/score.py",
+    )
+    basis_tree = _git(
+        initialized_repository,
+        "rev-parse",
+        f"{basis_commit}^{{tree}}",
+    ).strip()
+    report = ReportRecord.model_validate(
+        report_payload(
+            validation_basis={
+                "main_tree": basis_tree,
+                "assessed_at": GENERATED_AT,
+            },
+            dependencies={
+                "paths": ["src/evaluator/**"],
+                "resources": [],
+                "environments": [],
+            },
+        )
+    )
+    report_root = initialized_repository / ".research/reports" / report.report_id
+    report_root.mkdir(parents=True)
+    (report_root / "1.yaml").write_text(dump_yaml(report), encoding="utf-8")
+    (report_root / "1.md").write_text("# Accepted report\n", encoding="utf-8")
+    _commit(
+        initialized_repository,
+        "accept decision report",
+        f".research/reports/{report.report_id}/1.yaml",
+        f".research/reports/{report.report_id}/1.md",
+    )
+    evaluator.write_text("SCORE = 2\n", encoding="utf-8")
+    target = _commit(
+        initialized_repository,
+        "change evaluator for decision",
+        "src/evaluator/score.py",
+    )
+    worktrees = initialized_repository / ".git/researchctl/worktrees"
+    worktrees.mkdir(parents=True, exist_ok=True)
+    impact = ImpactWorkflowService(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+    ).prepare_proposal(
+        ImpactCreateRequest(
+            operation_id=IMPACT_OPERATION_ID,
+            idempotency_key="prepare-impact-for-decision",
+            impact_id=IMPACT_ID,
+            report_id=report.report_id,
+            expected_report_revision=1,
+            target_commit=target,
+        ),
+        generated_at=GENERATED_AT,
+    )
+    _git(initialized_repository, "merge", "--ff-only", impact.commit.commit)
+    accepted_impact = _git(initialized_repository, "rev-parse", "HEAD").strip()
+    decision = ImpactDecisionWorkflowService(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+    ).prepare(
+        ImpactDecisionCreateRequest(
+            operation_id=IMPACT_DECISION_OPERATION_ID,
+            idempotency_key="keep-reviewed-impact-stale",
+            decision_id=IMPACT_DECISION_ID,
+            impact_id=IMPACT_ID,
+            report_id=report.report_id,
+            expected_report_revision=2,
+            expected_impact_digest=impact.bundle.impact.impact_digest,
+            target_commit=accepted_impact,
+            disposition=ImpactDisposition.KEEP_STALE,
+            reason="A rerun plan is still under review.",
+        ),
+        reviewer_actor="manager@example.invalid",
+        decided_at="2026-08-03T12:05:00Z",
+    )
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=accepted_impact,
+            head=decision.commit.commit,
+            head_ref=decision.commit.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "impact_decision"
+    assert {item.name for item in result.attestation.checks} == {
+        "impact_decision_record",
+        "impact_decision_regeneration",
+        "impact_decision_task",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+    assert decision.bundle.report.revision == 3
+    assert decision.bundle.as_dict()["automatically_runs_experiments"] is False
+
+    markdown_path = next(
+        item.path for item in decision.bundle.files if item.path.endswith(".md")
+    )
+    markdown = decision.commit.worktree / markdown_path
+    markdown.write_text(
+        markdown.read_text(encoding="utf-8") + "Unreviewed text.\n",
+        encoding="utf-8",
+    )
+    _git(decision.commit.worktree, "add", "--", markdown_path)
+    _git(
+        decision.commit.worktree,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--amend",
+        "--no-edit",
+        "--no-gpg-sign",
+    )
+    tampered = _git(decision.commit.worktree, "rev-parse", "HEAD").strip()
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(
+                base=accepted_impact,
+                head=tampered,
+                head_ref=decision.commit.branch,
+            ),
+        )
+
+    assert raised.value.code == "ci_impact_decision_output_mismatch"
 
 
 def test_task_control_with_source_change_fails_as_mixed_protocol_change(

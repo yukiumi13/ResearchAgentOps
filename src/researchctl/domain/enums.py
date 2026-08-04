@@ -114,12 +114,43 @@ class ReportApplicability(StrEnum):
     SUPERSEDED = "superseded"
 
 
+class ImpactDisposition(StrEnum):
+    RERUN = "rerun"
+    WAIVE = "waive"
+    KEEP_STALE = "keep_stale"
+    INVALIDATE = "invalidate"
+    DEPENDENCY_FIX = "dependency_fix"
+
+
 class InputKind(StrEnum):
     CONFIG = "config"
     DATASET = "dataset"
     CHECKPOINT = "checkpoint"
     ENVIRONMENT = "environment"
     OTHER = "other"
+
+
+class PlanMetricDirection(StrEnum):
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
+    TARGET = "target"
+
+
+class PlanReviewOutcome(StrEnum):
+    PASSED = "passed"
+    NEEDS_INPUT = "needs_input"
+    INVALID = "invalid"
+
+
+class PlanFindingKind(StrEnum):
+    WARNING = "warning"
+    NEEDS_INPUT = "needs_input"
+    INVALID = "invalid"
+
+
+class PlanValueSourceKind(StrEnum):
+    ACCEPTED_TASK = "accepted_task"
+    PROJECT_POLICY = "project_policy"
 
 
 class ArtifactVerification(StrEnum):

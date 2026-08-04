@@ -20,6 +20,7 @@ from researchctl.config import ProjectConfig, dump_project_config
 from researchctl.constants import (
     LINEAR_PROJECTION_POLICY_PATH,
     PROJECT_CONFIG_NAME,
+    PROJECT_POLICY_PATH,
     PROTOCOL_VERSION,
     __version__,
 )
@@ -27,9 +28,12 @@ from researchctl.domain.enums import ProjectState, TaskState
 from researchctl.domain.models import (
     CIValidationAttestation,
     CIValidationCheck,
+    ImpactDecision,
     LinearProjectionPolicy,
     ProjectPolicy,
     ProjectRecord,
+    ReportImpact,
+    ReportImpactBatch,
     StrictModel,
     TaskRecord,
 )
@@ -55,6 +59,8 @@ from researchctl.services.ci_validation import (
     CIValidationResult,
     ExactHeadCIValidator,
 )
+from researchctl.services.git_report_impact import GitReportImpactAnalyzer
+from researchctl.services.impact_decision import ImpactDecisionBuilder
 from researchctl.services.task_policy import task_transition_allowed
 
 
@@ -70,6 +76,7 @@ _MANAGED_DIRECTORIES = (
     "submissions",
     "decisions",
     "reports",
+    "impacts",
 )
 _SUBMISSION_RECORD = re.compile(
     r"^\.research/submissions/"
@@ -78,12 +85,39 @@ _SUBMISSION_RECORD = re.compile(
 _TASK_RECORD = re.compile(
     r"^\.research/tasks/(task_\d{8}T\d{6}Z_[0-9a-f]{24})\.yaml$"
 )
+_IMPACT_RECORD = re.compile(
+    r"^\.research/impacts/"
+    r"(impact_\d{8}T\d{6}Z_[0-9a-f]{24})/impact\.yaml$"
+)
+_IMPACT_BATCH_RECORD = re.compile(
+    r"^\.research/impacts/"
+    r"(impact_\d{8}T\d{6}Z_[0-9a-f]{24})/impact-batch\.yaml$"
+)
+_IMPACT_DECISION_BRANCH = re.compile(
+    r"^research/impact-decision/"
+    r"(decision_\d{8}T\d{6}Z_[0-9a-f]{24})$"
+)
+_IMPACT_DECISION_MARKER = re.compile(
+    r"^researchctl: impact\.decide "
+    r"(decision_\d{8}T\d{6}Z_[0-9a-f]{24}) "
+    r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
+)
+_IMPACT_MARKER = re.compile(
+    r"^researchctl: impact\.(create|batch) "
+    r"(impact_\d{8}T\d{6}Z_[0-9a-f]{24}) "
+    r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})\n\n"
+    r"manifest-digest: (sha256:[0-9a-f]{64})$"
+)
 _TASK_MARKER = re.compile(
     r"^researchctl: (task\.(?:create|update|cancel)) "
     r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
 )
 _LINEAR_POLICY_MARKER = re.compile(
     r"^researchctl: linear\.configure "
+    r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
+)
+_PLAN_REVIEW_POLICY_MARKER = re.compile(
+    r"^researchctl: plan\.configure-review "
     r"(operation_\d{8}T\d{6}Z_[0-9a-f]{24})$"
 )
 _BOOTSTRAP_PROPOSAL_MARKER = re.compile(
@@ -102,8 +136,11 @@ _MAX_DISPATCH_ARTIFACT_BYTES = 8 * 1024 * 1024
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 PRType = Literal[
     "submission",
+    "impact",
+    "impact_decision",
     "task_control",
     "linear_policy_control",
+    "plan_review_policy_control",
     "bootstrap_proposal",
     "bootstrap_acceptance",
     "ordinary_source",
@@ -243,9 +280,12 @@ class ProtectedBasePRDispatcher:
         *,
         git: GitCIObjectReader | None = None,
         submissions: ExactHeadCIValidator | None = None,
+        impacts: GitReportImpactAnalyzer | None = None,
     ) -> None:
         self.git = git or GitCIObjectReader()
         self.submissions = submissions or ExactHeadCIValidator()
+        self.impacts = impacts or GitReportImpactAnalyzer(git=self.git)
+        self.impact_decisions = ImpactDecisionBuilder()
 
     def validate(
         self,
@@ -278,6 +318,17 @@ class ProtectedBasePRDispatcher:
             for path in changed_paths
             if (matched := _SUBMISSION_RECORD.fullmatch(path)) is not None
         }
+        impact_ids = {
+            matched.group(1)
+            for path in changed_paths
+            if (
+                matched := (
+                    _IMPACT_RECORD.fullmatch(path)
+                    or _IMPACT_BATCH_RECORD.fullmatch(path)
+                )
+            )
+            is not None
+        }
         task_paths = tuple(
             path for path in changed_paths if _TASK_RECORD.fullmatch(path)
         )
@@ -286,12 +337,45 @@ class ProtectedBasePRDispatcher:
             for path in changed_paths
             if path == LINEAR_PROJECTION_POLICY_PATH
         )
+        project_policy_paths = tuple(
+            path for path in changed_paths if path == PROJECT_POLICY_PATH
+        )
         protocol_paths = tuple(
             path for path in changed_paths if self._is_protocol_path(path)
         )
+        decision_branch = _IMPACT_DECISION_BRANCH.fullmatch(request.head_ref)
 
         exact_result: CIValidationResult | None = None
-        if submission_ids:
+        if impact_ids:
+            if len(impact_ids) != 1:
+                self._unknown_protocol_change(changed_paths)
+            impact_id = next(iter(impact_ids))
+            self._require_branch(
+                request.head_ref,
+                f"research/impact/{impact_id}",
+                kind="Impact",
+            )
+            evidence = self._validate_impact(
+                root,
+                request=request,
+                base=base,
+                head=head,
+                changes=changes,
+                impact_id=impact_id,
+            )
+            pr_type: PRType = "impact"
+        elif decision_branch is not None:
+            decision_id = decision_branch.group(1)
+            evidence = self._validate_impact_decision(
+                root,
+                request=request,
+                base=base,
+                head=head,
+                changes=changes,
+                decision_id=decision_id,
+            )
+            pr_type = "impact_decision"
+        elif submission_ids:
             if len(submission_ids) != 1:
                 self._unknown_protocol_change(changed_paths)
             submission_id = next(iter(submission_ids))
@@ -332,6 +416,21 @@ class ProtectedBasePRDispatcher:
                 changes=changes,
             )
             pr_type = "task_control"
+        elif (
+            project_policy_paths
+            and _PLAN_REVIEW_POLICY_MARKER.fullmatch(
+                head.message.rstrip("\n")
+            )
+            is not None
+        ):
+            evidence = self._validate_plan_review_policy_control(
+                root,
+                request=request,
+                base=base,
+                head=head,
+                changes=changes,
+            )
+            pr_type = "plan_review_policy_control"
         elif linear_policy_paths:
             evidence = self._validate_linear_policy_control(
                 root,
@@ -406,6 +505,276 @@ class ProtectedBasePRDispatcher:
             attestation=attestation,
             exact_result=exact_result,
         )
+
+    def _validate_impact(
+        self,
+        root: Path,
+        *,
+        request: CIPRDispatchRequest,
+        base: GitCommitData,
+        head: GitCommitData,
+        changes: tuple[GitTreeChange, ...],
+        impact_id: str,
+    ) -> dict[str, Sha256Digest]:
+        marker = _IMPACT_MARKER.fullmatch(head.message.rstrip("\n"))
+        if (
+            marker is None
+            or marker.group(2) != impact_id
+            or head.parents != (base.object_id,)
+        ):
+            self._invalid(
+                "ci_impact_commit_invalid",
+                "Impact proposal must be one marked commit over the exact protected base.",
+            )
+        impact_path = f".research/impacts/{impact_id}/impact.yaml"
+        batch_path = f".research/impacts/{impact_id}/impact-batch.yaml"
+        changed_paths = {item.path for item in changes}
+        has_single = impact_path in changed_paths
+        has_batch = batch_path in changed_paths
+        if has_single == has_batch:
+            self._invalid(
+                "ci_impact_scope_invalid",
+                "Impact proposal must contain exactly one canonical Impact record.",
+            )
+        if has_batch:
+            if marker.group(1) != "batch":
+                self._invalid(
+                    "ci_impact_commit_invalid",
+                    "Batched Impact output requires the impact.batch marker.",
+                )
+            batch = self._record(
+                root,
+                commit=head.object_id,
+                path=batch_path,
+                model_type=ReportImpactBatch,
+            )
+            if batch.impact_id != impact_id:
+                self._invalid(
+                    "ci_impact_identity_mismatch",
+                    "Impact identity does not match its canonical path.",
+                )
+            if (
+                batch.target_commit != base.object_id
+                or batch.target_tree != base.tree
+            ):
+                self._invalid(
+                    "ci_impact_target_mismatch",
+                    "Impact batch is not bound to the exact protected base commit and tree.",
+                )
+            analysis = self.impacts.scan(
+                root,
+                impact_id=batch.impact_id,
+                before_commit=batch.before_commit,
+                target_commit=base.object_id,
+                generated_at=batch.generated_at,
+            )
+            bundle = analysis.bundle
+            if bundle is None:
+                self._invalid(
+                    "ci_impact_batch_empty",
+                    "Impact batch does not regenerate any Report proposal.",
+                )
+            record_digest = batch.batch_digest
+        else:
+            if marker.group(1) != "create":
+                self._invalid(
+                    "ci_impact_commit_invalid",
+                    "Single-Report Impact output requires the impact.create marker.",
+                )
+            impact = self._record(
+                root,
+                commit=head.object_id,
+                path=impact_path,
+                model_type=ReportImpact,
+            )
+            if impact.impact_id != impact_id:
+                self._invalid(
+                    "ci_impact_identity_mismatch",
+                    "Impact identity does not match its canonical path.",
+                )
+            if (
+                impact.target_commit != base.object_id
+                or impact.target_tree != base.tree
+            ):
+                self._invalid(
+                    "ci_impact_target_mismatch",
+                    "Impact record is not bound to the exact protected base commit and tree.",
+                )
+            bundle = self.impacts.analyze(
+                root,
+                impact_id=impact.impact_id,
+                report_id=impact.report_id,
+                expected_report_revision=impact.expected_report_revision,
+                target_commit=base.object_id,
+                generated_at=impact.generated_at,
+            )
+            record_digest = impact.impact_digest
+        expected_paths = tuple(item.path for item in bundle.files)
+        self._require_exact_changes(
+            changes,
+            {path: ("000000", "100644", "A") for path in expected_paths},
+            code="ci_impact_scope_invalid",
+        )
+        for rendered in bundle.files:
+            if self._blob(
+                root,
+                commit=head.object_id,
+                path=rendered.path,
+            ) != rendered.content:
+                self._invalid(
+                    "ci_impact_generated_output_mismatch",
+                    "Impact proposal does not match protected-base regeneration.",
+                )
+        if marker.group(4) != bundle.manifest_digest:
+            self._invalid(
+                "ci_impact_manifest_mismatch",
+                "Impact commit marker does not match the regenerated manifest.",
+            )
+        managed = self._managed_base(
+            root,
+            commit=base.object_id,
+            base_ref=request.base_ref,
+        )
+        return {
+            "impact_record": record_digest,
+            "impact_regeneration": bundle.manifest_digest,
+            "pr_type_dispatch": self._dispatch_digest(
+                changes,
+                pr_type="impact",
+                identity=impact_id,
+            ),
+            "trusted_base": canonical_digest(
+                {
+                    "project_id": managed.project.project_id,
+                    "schema_manifest_digest": managed.config.schema_manifest_digest,
+                }
+            ),
+        }
+
+    def _validate_impact_decision(
+        self,
+        root: Path,
+        *,
+        request: CIPRDispatchRequest,
+        base: GitCommitData,
+        head: GitCommitData,
+        changes: tuple[GitTreeChange, ...],
+        decision_id: str,
+    ) -> dict[str, Sha256Digest]:
+        marker = _IMPACT_DECISION_MARKER.fullmatch(head.message.rstrip("\n"))
+        if (
+            marker is None
+            or marker.group(1) != decision_id
+            or head.parents != (base.object_id,)
+        ):
+            self._invalid(
+                "ci_impact_decision_commit_invalid",
+                "Impact decision must be one marked commit over protected main.",
+            )
+        decision_path = f".research/decisions/{decision_id}.yaml"
+        decision = self._record(
+            root,
+            commit=head.object_id,
+            path=decision_path,
+            model_type=ImpactDecision,
+        )
+        if decision.decision_id != decision_id:
+            self._invalid(
+                "ci_impact_decision_identity_mismatch",
+                "ImpactDecision identity does not match its canonical path.",
+            )
+        if (
+            decision.decision_base_commit != base.object_id
+            or decision.decision_base_tree != base.tree
+        ):
+            self._invalid(
+                "ci_impact_decision_base_mismatch",
+                "ImpactDecision does not bind the exact protected base.",
+            )
+        impact = self.impacts.load_impact(
+            root,
+            commit=base.object_id,
+            impact_id=decision.impact_id,
+            report_id=decision.report_id,
+        )
+        if (
+            decision.expected_impact_digest != impact.impact_digest
+            or decision.impact_target_commit != impact.target_commit
+            or decision.impact_target_tree != impact.target_tree
+        ):
+            self._invalid(
+                "ci_impact_decision_source_mismatch",
+                "ImpactDecision does not bind the accepted Impact identity.",
+            )
+        report = self.impacts.load_latest_report(
+            root,
+            commit=base.object_id,
+            report_id=decision.report_id,
+        )
+        bundle = self.impact_decisions.build(
+            impact=impact,
+            report=report,
+            decision_id=decision.decision_id,
+            expected_report_revision=decision.expected_report_revision,
+            decision_base_commit=base.object_id,
+            decision_base_tree=base.tree,
+            disposition=decision.disposition,
+            reviewer_actor=decision.reviewer_actor,
+            reason=decision.reason,
+            decided_at=decision.decided_at,
+            rerun_task_id=decision.rerun_task_id,
+            replacement_dependencies=decision.replacement_dependencies,
+        )
+        expected_paths = tuple(item.path for item in bundle.files)
+        self._require_exact_changes(
+            changes,
+            {path: ("000000", "100644", "A") for path in expected_paths},
+            code="ci_impact_decision_scope_invalid",
+        )
+        for rendered in bundle.files:
+            if self._blob(
+                root,
+                commit=head.object_id,
+                path=rendered.path,
+            ) != rendered.content:
+                self._invalid(
+                    "ci_impact_decision_output_mismatch",
+                    "ImpactDecision output differs from protected-base regeneration.",
+                )
+        task_binding: dict[str, object] = {"rerun_task_id": None}
+        if decision.rerun_task_id is not None:
+            tasks = self._task_records(root, commit=base.object_id)
+            task = tasks.get(decision.rerun_task_id)
+            if task is None or task.state not in {TaskState.PLANNED, TaskState.READY}:
+                self._invalid(
+                    "ci_impact_rerun_task_invalid",
+                    "Rerun decision must reference a planned or ready accepted Task.",
+                )
+            task_binding = {
+                "rerun_task_id": task.task_id,
+                "task_digest": canonical_digest(task),
+            }
+        managed = self._managed_base(
+            root,
+            commit=base.object_id,
+            base_ref=request.base_ref,
+        )
+        return {
+            "impact_decision_record": decision.decision_digest,
+            "impact_decision_regeneration": bundle.manifest_digest,
+            "impact_decision_task": canonical_digest(task_binding),
+            "pr_type_dispatch": self._dispatch_digest(
+                changes,
+                pr_type="impact_decision",
+                identity=decision_id,
+            ),
+            "trusted_base": canonical_digest(
+                {
+                    "project_id": managed.project.project_id,
+                    "schema_manifest_digest": managed.config.schema_manifest_digest,
+                }
+            ),
+        }
 
     def _validate_task_control(
         self,
@@ -631,6 +1000,83 @@ class ProtectedBasePRDispatcher:
             "pr_type_dispatch": self._dispatch_digest(
                 changes,
                 pr_type="linear_policy_control",
+                identity=operation_id,
+            ),
+            "trusted_base": canonical_digest(
+                {
+                    "project_id": managed.project.project_id,
+                    "schema_manifest_digest": managed.config.schema_manifest_digest,
+                }
+            ),
+        }
+
+    def _validate_plan_review_policy_control(
+        self,
+        root: Path,
+        *,
+        request: CIPRDispatchRequest,
+        base: GitCommitData,
+        head: GitCommitData,
+        changes: tuple[GitTreeChange, ...],
+    ) -> dict[str, Sha256Digest]:
+        marker = _PLAN_REVIEW_POLICY_MARKER.fullmatch(
+            head.message.rstrip("\n")
+        )
+        if marker is None or head.parents != (base.object_id,):
+            self._invalid(
+                "ci_plan_review_policy_commit_invalid",
+                "Plan review policy control must be one marked commit over protected base.",
+            )
+        operation_id = marker.group(1)
+        self._require_branch(
+            request.head_ref,
+            f"research/control/{operation_id}",
+            kind="Plan review policy control",
+        )
+        self._require_exact_changes(
+            changes,
+            {PROJECT_POLICY_PATH: ("100644", "100644", "M")},
+            code="ci_plan_review_policy_scope_invalid",
+        )
+
+        managed = self._managed_base(
+            root,
+            commit=base.object_id,
+            base_ref=request.base_ref,
+        )
+        previous = self._record(
+            root,
+            commit=base.object_id,
+            path=PROJECT_POLICY_PATH,
+            model_type=ProjectPolicy,
+        )
+        replacement = self._record(
+            root,
+            commit=head.object_id,
+            path=PROJECT_POLICY_PATH,
+            model_type=ProjectPolicy,
+        )
+        if replacement.plan_review is None:
+            self._invalid(
+                "ci_plan_review_policy_missing",
+                "Plan review policy control must configure an explicit reviewer.",
+            )
+        if replacement.model_copy(update={"plan_review": previous.plan_review}) != previous:
+            self._invalid(
+                "ci_plan_review_policy_scope_invalid",
+                "Plan review policy control changed another Project policy field.",
+            )
+        return {
+            "plan_review_policy": canonical_digest(replacement.plan_review),
+            "project_policy_transition": canonical_digest(
+                {
+                    "previous_policy_digest": canonical_digest(previous),
+                    "policy_digest": canonical_digest(replacement),
+                }
+            ),
+            "pr_type_dispatch": self._dispatch_digest(
+                changes,
+                pr_type="plan_review_policy_control",
                 identity=operation_id,
             ),
             "trusted_base": canonical_digest(
@@ -1269,7 +1715,7 @@ class ProtectedBasePRDispatcher:
             message="Protected protocol changes do not match one supported PR type.",
             remediation=(
                 "Use a generated Submission, Task control, Linear configure, or "
-                "bootstrap proposal; add a protected-base validator before enabling "
+                "Impact/bootstrap proposal; add a protected-base validator before enabling "
                 "another control PR type."
             ),
             context={"changed_paths": list(paths)},

@@ -43,6 +43,7 @@ _MANAGED_DIRS = (
     "submissions",
     "decisions",
     "reports",
+    "impacts",
 )
 
 
@@ -119,6 +120,7 @@ def _default_policy() -> bytes:
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )

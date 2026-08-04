@@ -1,0 +1,66 @@
+name: research-impact
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: research-impact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report-impact:
+    name: researchctl/report-impact
+    if: ${{ github.event.before != '0000000000000000000000000000000000000000' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+      RCP_AFTER: ${{ github.event.after }}
+      RCP_BEFORE: ${{ github.event.before }}
+      RCP_GENERATED_AT: ${{ github.event.head_commit.timestamp }}
+
+    steps:
+      - name: Check out exact accepted main commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ github.event.after }}
+
+      - name: Bind exact main event
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RCP_BEFORE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RCP_AFTER" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$RCP_GENERATED_AT" ]]
+          observed_head="$(git rev-parse --verify HEAD^{commit})"
+          if [[ "$observed_head" != "$RCP_AFTER" ]]; then
+            echo "::error::Checked-out main commit differs from the push event"
+            exit 2
+          fi
+          git update-ref refs/heads/main "$RCP_AFTER"
+
+      - name: Install accepted Impact automation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/researchctl-impact"
+          "$RUNNER_TEMP/researchctl-impact/bin/python" -m pip install .
+
+      - name: Scan all accepted Reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/researchctl-impact/bin/researchctl" ci impact \
+            --project "$GITHUB_WORKSPACE" \
+            --before "$RCP_BEFORE" \
+            --after "$RCP_AFTER" \
+            --generated-at "$RCP_GENERATED_AT"

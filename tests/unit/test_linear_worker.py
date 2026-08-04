@@ -857,6 +857,7 @@ def test_authenticated_ingress_agent_reply_and_contextual_followup_are_one_flow(
                 ".research/decisions/**",
                 ".research/policies/**",
                 ".research/project.yaml",
+                ".research/impacts/**",
                 ".research/reports/**",
                 ".research/tasks/**",
             )

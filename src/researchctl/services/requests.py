@@ -8,12 +8,17 @@ from pydantic import Field, StrictBool, StrictInt, field_validator, model_valida
 from researchctl.domain.enums import (
     ClaimScope,
     CodeDisposition,
+    ImpactDisposition,
     ReviewDisposition,
     SessionState,
 )
 from researchctl.domain.models import (
+    DependencySet,
+    ExperimentPlan,
     LinearProjectionPolicy,
     ReportProposal,
+    PlanReview,
+    PlanReviewPolicy,
     ResearchSubmission,
     RunSpec,
     SessionNotificationOrigin,
@@ -26,10 +31,13 @@ from researchctl.domain.types import (
     DecisionId,
     GitObjectId,
     HumanKey,
+    ImpactId,
     NonEmptyStr,
     NotificationId,
     NotificationReplyId,
     OperationId,
+    PlanReviewId,
+    ReportId,
     RunAttemptId,
     RunId,
     SubmissionId,
@@ -66,6 +74,29 @@ class BootstrapProposalRequest(MutationRequest):
 class LinearConfigureRequest(MutationRequest):
     expected_default_head: GitObjectId
     policy: LinearProjectionPolicy
+
+
+class PlanReviewConfigureRequest(MutationRequest):
+    expected_default_head: GitObjectId
+    review_policy: PlanReviewPolicy
+
+
+LinearDeliveryTopic = Literal[
+    "linear.accepted-result.v1",
+    "linear.session-reply.v1",
+]
+LinearDeliveryState = Literal["pending", "delivered", "dead_letter"]
+
+
+class LinearDeliveryListRequest(StrictModel):
+    topic: LinearDeliveryTopic | None = None
+    state: LinearDeliveryState | None = None
+    limit: Annotated[StrictInt, Field(ge=1, le=1000)] = 100
+
+
+class LinearDeliveryShowRequest(StrictModel):
+    topic: LinearDeliveryTopic
+    outbox_id: NonEmptyStr
 
 
 class TaskCreateRequest(MutationRequest):
@@ -221,6 +252,20 @@ class RunStartRequest(MutationRequest):
         return self
 
 
+class PlanLintRequest(StrictModel):
+    plan: ExperimentPlan
+
+
+class PlanReviewCreateRequest(MutationRequest):
+    review_id: PlanReviewId
+    plan: ExperimentPlan
+
+
+class PlanCompileRequest(StrictModel):
+    plan: ExperimentPlan
+    review: PlanReview
+
+
 class RunRetryRequest(MutationRequest):
     spec: RunSpec
     attempt_id: RunAttemptId
@@ -263,6 +308,58 @@ class SubmissionCreateRequest(MutationRequest):
             raise ValueError("Submission run_ids must be unique")
         if len(self.run_ids) != len(self.submission.run_result_ids):
             raise ValueError("Submission run_ids and run_result_ids must have equal length")
+        return self
+
+
+class ImpactCreateRequest(MutationRequest):
+    impact_id: ImpactId
+    report_id: ReportId
+    expected_report_revision: Annotated[StrictInt, Field(ge=1)]
+    target_commit: GitObjectId
+
+
+class ImpactBatchCreateRequest(MutationRequest):
+    impact_id: ImpactId
+    before_commit: GitObjectId
+    target_commit: GitObjectId
+    generated_at: UtcDateTime
+
+    @model_validator(mode="after")
+    def require_nonempty_trigger_range(self) -> ImpactBatchCreateRequest:
+        if self.before_commit == self.target_commit:
+            raise ValueError("Impact batch before and target commits must differ")
+        return self
+
+
+class ReportStatusRequest(StrictModel):
+    report_id: ReportId
+    target_commit: GitObjectId | None = None
+
+
+class ImpactDecisionCreateRequest(MutationRequest):
+    decision_id: DecisionId
+    impact_id: ImpactId
+    report_id: ReportId
+    expected_report_revision: Annotated[StrictInt, Field(ge=1)]
+    expected_impact_digest: Sha256Digest
+    target_commit: GitObjectId
+    disposition: ImpactDisposition
+    reason: NonEmptyStr
+    rerun_task_id: TaskId | None = None
+    replacement_dependencies: DependencySet | None = None
+
+    @model_validator(mode="after")
+    def require_disposition_inputs(self) -> ImpactDecisionCreateRequest:
+        if (self.disposition is ImpactDisposition.RERUN) != (
+            self.rerun_task_id is not None
+        ):
+            raise ValueError("rerun disposition requires only rerun_task_id")
+        if (self.disposition is ImpactDisposition.DEPENDENCY_FIX) != (
+            self.replacement_dependencies is not None
+        ):
+            raise ValueError(
+                "dependency_fix disposition requires replacement_dependencies"
+            )
         return self
 
 

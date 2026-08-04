@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Protocol
 
-from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH
+from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH, PROJECT_POLICY_PATH
 from researchctl.domain.enums import (
     NotificationRoute,
     NotificationState,
@@ -14,8 +14,11 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     CIValidationAttestation,
+    ExperimentPlan,
     LinearProjectionPolicy,
     ProjectPolicy,
+    PlanReview,
+    PlanReviewPolicy,
     RunAttemptEvent,
     RunSpec,
     TaskRecord,
@@ -32,6 +35,12 @@ from researchctl.runtime.store import RuntimeStore, attention_dedupe_key
 from researchctl.serialization import canonical_digest
 from researchctl.services.actor import ActorContext, ActorRole
 from researchctl.services.control_linear_policy import LinearPolicyWriteResult
+from researchctl.services.control_plan_review_policy import PlanReviewPolicyWriteResult
+from researchctl.services.linear_delivery_read import (
+    LinearDeliveryListResult,
+    LinearDeliveryShowResult,
+    linear_delivery_view,
+)
 from researchctl.services.requests import (
     BootstrapAcceptRequest,
     BootstrapProposalRequest,
@@ -39,13 +48,23 @@ from researchctl.services.requests import (
     InboxListRequest,
     InboxResolveRequest,
     InboxSnoozeRequest,
+    ImpactBatchCreateRequest,
+    ImpactCreateRequest,
+    ImpactDecisionCreateRequest,
     LinearConfigureRequest,
+    LinearDeliveryListRequest,
+    LinearDeliveryShowRequest,
     MutationRequest,
     NotificationAckRequest,
     NotificationListRequest,
     NotificationReplyRequest,
     NotificationSendRequest,
+    PlanCompileRequest,
+    PlanLintRequest,
+    PlanReviewConfigureRequest,
+    PlanReviewCreateRequest,
     ReviewAcceptRequest,
+    ReportStatusRequest,
     RunCollectRequest,
     RunRetryRequest,
     RunStartRequest,
@@ -64,6 +83,11 @@ from researchctl.services.requests import (
     linear_notification_request_digest,
 )
 from researchctl.services.post_merge import PostMergeRequest
+from researchctl.services.experiment_plan import (
+    compile_experiment_plan,
+    lint_experiment_plan,
+    require_passing_plan_review,
+)
 from researchctl.services.task_policy import task_transition_allowed
 from researchctl.services.task_records import TaskRecordRepository, TaskWriteResult
 
@@ -72,13 +96,61 @@ _UNRECORDED_OPERATION_ERRORS = frozenset(
     {
         "git_timeout",
         "idempotency_conflict",
+        "impact_branch_push_failed",
+        "impact_delivery_uncertain",
+        "impact_pr_create_failed",
+        "impact_pr_observation_failed",
+        "impact_remote_observation_failed",
         "operation_id_conflict",
         "runtime_store_busy",
         "run_execution_uncertain",
         "session_start_pending",
         "session_transition_pending",
+        "submission_branch_push_failed",
+        "submission_delivery_uncertain",
+        "submission_pr_create_failed",
+        "submission_pr_observation_failed",
+        "submission_remote_observation_failed",
         "tmux_timeout",
     }
+)
+_SUBMISSION_DELIVERY_EVENTS = frozenset(
+    {
+        "submission_proposal_prepared",
+        "submission_branch_pushed",
+        "submission_pr_created",
+        "submission_pr_observed",
+    }
+)
+_IMPACT_DELIVERY_EVENTS = frozenset(
+    {
+        "impact_proposal_prepared",
+        "impact_branch_pushed",
+        "impact_pr_created",
+        "impact_pr_observed",
+    }
+)
+_IMPACT_BATCH_DELIVERY_EVENTS = frozenset(
+    {
+        *_IMPACT_DELIVERY_EVENTS,
+        "impact_batch_no_change",
+        "impact_batch_unresolved",
+    }
+)
+_SUBMISSION_PR_EVENTS = frozenset(
+    {"submission_pr_created", "submission_pr_observed"}
+)
+_IMPACT_PR_EVENTS = frozenset({"impact_pr_created", "impact_pr_observed"})
+_IMPACT_DECISION_DELIVERY_EVENTS = frozenset(
+    {
+        "impact_decision_prepared",
+        "impact_decision_branch_pushed",
+        "impact_decision_pr_created",
+        "impact_decision_pr_observed",
+    }
+)
+_IMPACT_DECISION_PR_EVENTS = frozenset(
+    {"impact_decision_pr_created", "impact_decision_pr_observed"}
 )
 
 
@@ -195,6 +267,8 @@ class SubmissionWorkflow(Protocol):
         self,
         request: SubmissionCreateRequest,
         task: TaskRecord,
+        *,
+        event_callback: Callable[[str, dict[str, object]], None] | None = None,
     ) -> SubmissionWorkflowResult: ...
 
     def prepare_acceptance(
@@ -205,6 +279,49 @@ class SubmissionWorkflow(Protocol):
         reviewer_actor: str,
         decided_at: datetime,
     ) -> SubmissionWorkflowResult: ...
+
+
+class ImpactWorkflowResult(Protocol):
+    @property
+    def terminal_result(self) -> str: ...
+
+    def as_dict(self) -> dict[str, object]: ...
+
+
+class ImpactWorkflow(Protocol):
+    def propose(
+        self,
+        request: ImpactCreateRequest,
+        *,
+        generated_at: datetime,
+        event_callback: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> ImpactWorkflowResult: ...
+
+    def propose_batch(
+        self,
+        request: ImpactBatchCreateRequest,
+        *,
+        event_callback: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> ImpactWorkflowResult: ...
+
+
+class ReportStatusResult(Protocol):
+    def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, object]: ...
+
+
+class ReportStatusReader(Protocol):
+    def read(self, request: ReportStatusRequest) -> ReportStatusResult: ...
+
+
+class ImpactDecisionWorkflow(Protocol):
+    def propose(
+        self,
+        request: ImpactDecisionCreateRequest,
+        *,
+        reviewer_actor: str,
+        decided_at: datetime,
+        event_callback: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> ImpactWorkflowResult: ...
 
 
 class LinearAutomationResult(Protocol):
@@ -241,6 +358,13 @@ class LinearPolicyControl(Protocol):
     ) -> LinearPolicyWriteResult: ...
 
 
+class PlanReviewPolicyControl(Protocol):
+    def configure(
+        self,
+        policy: PlanReviewPolicy,
+    ) -> PlanReviewPolicyWriteResult: ...
+
+
 class PostMergeAutomationResult(Protocol):
     state: str
 
@@ -259,6 +383,19 @@ class PostMergeAutomation(Protocol):
     ) -> PostMergeAutomationResult: ...
 
 
+class PlanReviewWorkflow(Protocol):
+    def review(
+        self,
+        *,
+        plan: ExperimentPlan,
+        task: TaskRecord,
+        policy: ProjectPolicy,
+        review_id: str,
+        operation_id: str,
+        completed_at: datetime,
+    ) -> PlanReview: ...
+
+
 class ApplicationService:
     """Shared authorization and mutation boundary for human and machine callers."""
 
@@ -274,8 +411,13 @@ class ApplicationService:
         bootstrap_proposal: BootstrapProposal | None = None,
         runs: RunCoordinator | None = None,
         submission_workflow: SubmissionWorkflow | None = None,
+        impact_workflow: ImpactWorkflow | None = None,
+        report_status_reader: ReportStatusReader | None = None,
+        impact_decision_workflow: ImpactDecisionWorkflow | None = None,
+        plan_review_workflow: PlanReviewWorkflow | None = None,
         notification_commits: SessionCommitVerifier | None = None,
         linear_policy_control: LinearPolicyControl | None = None,
+        plan_review_policy_control: PlanReviewPolicyControl | None = None,
         linear_worker: LinearAutomation | None = None,
         post_merge: PostMergeAutomation | None = None,
         clock: Callable[[], datetime] = utc_now,
@@ -289,8 +431,13 @@ class ApplicationService:
         self.bootstrap_proposal = bootstrap_proposal
         self.runs = runs
         self.submission_workflow = submission_workflow
+        self.impact_workflow = impact_workflow
+        self.report_status_reader = report_status_reader
+        self.impact_decision_workflow = impact_decision_workflow
+        self.plan_review_workflow = plan_review_workflow
         self.notification_commits = notification_commits
         self.linear_policy_control = linear_policy_control
+        self.plan_review_policy_control = plan_review_policy_control
         self._linear_worker = linear_worker
         self._post_merge = post_merge
         self._clock = clock
@@ -367,6 +514,58 @@ class ApplicationService:
             actor=actor,
             project_id=self.project_id,
             claim_id=claim_id,
+        )
+
+    def linear_delivery_list(
+        self,
+        request: LinearDeliveryListRequest,
+        actor: ActorContext,
+    ) -> LinearDeliveryListResult:
+        actor.require_role("linear.delivery.list", ActorRole.MANAGER)
+        observed_at = self._clock()
+        records = self.runtime.list_linear_deliveries(
+            self.project_id,
+            topic=request.topic,
+            state=request.state,
+            limit=request.limit,
+            observed_at=observed_at,
+        )
+        items = tuple(
+            linear_delivery_view(record, observed_at=observed_at)
+            for record in records
+        )
+        return LinearDeliveryListResult(
+            topic=request.topic,
+            state=request.state,
+            limit=request.limit,
+            count=len(items),
+            items=items,
+        )
+
+    def linear_delivery_show(
+        self,
+        request: LinearDeliveryShowRequest,
+        actor: ActorContext,
+    ) -> LinearDeliveryShowResult:
+        actor.require_role("linear.delivery.show", ActorRole.MANAGER)
+        observed_at = self._clock()
+        record = self.runtime.get_linear_delivery(
+            self.project_id,
+            topic=request.topic,
+            outbox_id=request.outbox_id,
+            observed_at=observed_at,
+        )
+        if record is None:
+            raise RCPError(
+                code="linear_delivery_not_found",
+                message="Linear delivery was not found in this Project.",
+                context={
+                    "topic": request.topic,
+                    "outbox_id": request.outbox_id,
+                },
+            )
+        return LinearDeliveryShowResult(
+            delivery=linear_delivery_view(record, observed_at=observed_at)
         )
 
     def _claim(
@@ -486,6 +685,52 @@ class ApplicationService:
             {"success": True, "data": data},
         )
         return self._replay(finished)
+
+    def _operation_stage_recorder(
+        self,
+        operation: OperationRecord,
+        *,
+        workflow: str,
+        allowed_events: frozenset[str],
+        exclusive_event_groups: tuple[frozenset[str], ...] = (),
+    ) -> Callable[[str, dict[str, object]], None]:
+        if any(
+            not group or not group <= allowed_events
+            for group in exclusive_event_groups
+        ):
+            raise ValueError("exclusive event groups must be non-empty allowed subsets")
+
+        def record(kind: str, payload: dict[str, object]) -> None:
+            if kind not in allowed_events:
+                raise RCPError(
+                    code="workflow_event_invalid",
+                    message=f"{workflow} emitted an unsupported operation event.",
+                    context={"event_kind": kind},
+                )
+            observed = self.runtime.get_operation(operation.operation_id)
+            if observed is None or observed.state == "terminal":
+                raise RCPError(
+                    code="runtime_store_corrupt",
+                    message=f"{workflow} operation journal is unavailable.",
+                )
+            dedupe_group = next(
+                (
+                    group
+                    for group in exclusive_event_groups
+                    if kind in group
+                ),
+                frozenset({kind}),
+            )
+            if any(event.kind in dedupe_group for event in observed.events):
+                return
+            self.runtime.append_operation_event(
+                operation.operation_id,
+                kind,
+                self._clock(),
+                payload,
+            )
+
+        return record
 
     def _validate_task_policy(self, task: TaskRecord) -> None:
         configured_domains = {
@@ -727,6 +972,78 @@ class ApplicationService:
             data,
         )
 
+    @_journaled_mutation("plan.configure-review")
+    def plan_review_configure(
+        self,
+        request: PlanReviewConfigureRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "plan.configure-review"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(operation, actor, ActorRole.MANAGER)
+        if self.plan_review_policy_control is None:
+            raise RCPError(
+                code="plan_review_policy_control_not_configured",
+                message="Plan review policy proposal preparation is not configured.",
+            )
+        written = self.plan_review_policy_control.configure(request.review_policy)
+        proposal = written.proposal.as_dict()
+        try:
+            relative_path = written.path.relative_to(
+                written.proposal.worktree
+            ).as_posix()
+        except ValueError as error:
+            raise RCPError(
+                code="plan_review_policy_control_receipt_mismatch",
+                message="Plan review policy receipt path is outside its worktree.",
+            ) from error
+        expected_branch = f"research/control/{request.operation_id}"
+        if (
+            written.review_policy != request.review_policy
+            or written.project_policy.plan_review != request.review_policy
+            or written.base_commit != request.expected_default_head
+            or written.policy_digest != canonical_digest(written.project_policy)
+            or written.proposal.branch != expected_branch
+            or relative_path != PROJECT_POLICY_PATH
+        ):
+            raise RCPError(
+                code="plan_review_policy_control_receipt_mismatch",
+                message="Plan review policy receipt does not bind the configure request.",
+            )
+        self.runtime.append_operation_event(
+            operation.operation_id,
+            "plan_review_policy_observed",
+            self._clock(),
+            {
+                "base_commit": written.base_commit,
+                "previous_policy_digest": written.previous_policy_digest,
+                "policy_digest": written.policy_digest,
+                "proposal_commit": written.proposal.commit,
+            },
+        )
+        data = {
+            "plan_review_policy": written.review_policy.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            "previous_policy_digest": written.previous_policy_digest,
+            "policy_digest": written.policy_digest,
+            "path": relative_path,
+            "changed": written.proposal.effect_applied,
+            "proposal": proposal,
+        }
+        return self._finish(
+            operation,
+            (
+                "proposal_prepared"
+                if written.proposal.effect_applied
+                else "no_change"
+            ),
+            data,
+        )
+
     @_journaled_mutation("task.create")
     def task_create(
         self,
@@ -943,7 +1260,142 @@ class ApplicationService:
                 code="run_coordinator_not_configured",
                 message="Local immutable Run execution is not configured.",
             )
+        if spec.experiment_plan is not None and spec.plan_review is not None:
+            require_passing_plan_review(
+                spec.experiment_plan,
+                spec.plan_review,
+                task,
+                self.policy,
+            )
+            review_operation = self.runtime.get_operation(
+                spec.plan_review.review_operation_id
+            )
+            review_result = (
+                review_operation.result if review_operation is not None else None
+            )
+            review_data = (
+                review_result.get("data")
+                if isinstance(review_result, dict)
+                and review_result.get("success") is True
+                else None
+            )
+            review_record = (
+                review_data.get("review") if isinstance(review_data, dict) else None
+            )
+            if (
+                review_operation is None
+                or review_operation.command != "plan.review"
+                or review_operation.state != "terminal"
+                or review_operation.terminal_result != "passed"
+                or not isinstance(review_record, dict)
+                or review_record.get("review_digest")
+                != spec.plan_review.review_digest
+            ):
+                raise RCPError(
+                    code="plan_review_receipt_missing",
+                    message=(
+                        "Run start cannot observe the local independent-review "
+                        "operation bound by PlanReview."
+                    ),
+                )
         return task
+
+    def _plan_context(
+        self,
+        plan: ExperimentPlan,
+        actor: ActorContext,
+        *,
+        command: str,
+    ) -> TaskRecord:
+        actor.require_role(command, ActorRole.MANAGER, ActorRole.AGENT)
+        actor.require_session_scope(plan.session_id, command=command)
+        session = self.runtime.get_session(plan.session_id)
+        if session is None or session.project_id != self.project_id:
+            raise RCPError(
+                code="session_not_found",
+                message="ExperimentPlan Session was not found in this Project.",
+                context={"session_id": plan.session_id},
+            )
+        if session.task_id != plan.task_id:
+            raise RCPError(
+                code="plan_session_task_mismatch",
+                message="ExperimentPlan Task does not match its bound Session.",
+            )
+        native_id = session.metadata.get("native_session_id")
+        if isinstance(native_id, str) and native_id != plan.draft_invocation_id:
+            raise RCPError(
+                code="plan_drafter_identity_mismatch",
+                message="ExperimentPlan does not bind the Session's drafting invocation.",
+            )
+        task = self.tasks.load(plan.task_id)
+        self._validate_task_policy(task)
+        return task
+
+    def plan_lint(
+        self,
+        request: PlanLintRequest,
+        actor: ActorContext,
+    ) -> dict[str, object]:
+        task = self._plan_context(request.plan, actor, command="plan.lint")
+        return lint_experiment_plan(request.plan, task, self.policy).as_dict()
+
+    @_journaled_mutation("plan.review")
+    def plan_review(
+        self,
+        request: PlanReviewCreateRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "plan.review"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        task = self._plan_context(request.plan, actor, command=command)
+        if self.plan_review_workflow is None:
+            raise RCPError(
+                code="plan_reviewer_not_configured",
+                message="Independent PlanReview execution is not configured.",
+            )
+        review = self.plan_review_workflow.review(
+            plan=request.plan,
+            task=task,
+            policy=self.policy,
+            review_id=request.review_id,
+            operation_id=request.operation_id,
+            completed_at=self._clock(),
+        )
+        self.runtime.append_operation_event(
+            operation.operation_id,
+            "plan_review_observed",
+            self._clock(),
+            {
+                "plan_id": request.plan.plan_id,
+                "plan_digest": request.plan.plan_digest,
+                "review_id": review.review_id,
+                "review_digest": review.review_digest,
+                "reviewer_invocation_id": review.reviewer_invocation_id,
+                "outcome": review.outcome.value,
+            },
+        )
+        return self._finish(
+            operation,
+            review.outcome.value,
+            {
+                "review": review.model_dump(mode="json", exclude_none=True),
+            },
+        )
+
+    def plan_compile(
+        self,
+        request: PlanCompileRequest,
+        actor: ActorContext,
+    ) -> RunSpec:
+        task = self._plan_context(request.plan, actor, command="plan.compile")
+        return compile_experiment_plan(
+            request.plan,
+            request.review,
+            task,
+            self.policy,
+        )
 
     def _run_event_callback(
         self,
@@ -1114,24 +1566,166 @@ class ApplicationService:
             actor=actor,
         )
         assert self.submission_workflow is not None
-        proposed = self.submission_workflow.propose(request, task)
-        data = proposed.as_dict()
-        self.runtime.append_operation_event(
-            operation.operation_id,
-            "submission_proposal_prepared",
-            self._clock(),
-            {
-                "submission_id": request.submission.submission_id,
-                "base_commit": request.base_commit,
-                "proposal_commit": data.get("proposal", {}).get("commit")
-                if isinstance(data.get("proposal"), dict)
-                else None,
-            },
+        record_stage = self._operation_stage_recorder(
+            operation,
+            workflow="Submission",
+            allowed_events=_SUBMISSION_DELIVERY_EVENTS,
+            exclusive_event_groups=(_SUBMISSION_PR_EVENTS,),
         )
+
+        proposed = self.submission_workflow.propose(
+            request,
+            task,
+            event_callback=record_stage,
+        )
+        data = proposed.as_dict()
         return self._finish(
             operation,
             proposed.terminal_result,
             {"submission": data},
+        )
+
+    @_journaled_mutation("impact.create")
+    def impact_create(
+        self,
+        request: ImpactCreateRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "impact.create"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(
+            operation,
+            actor,
+            ActorRole.MANAGER,
+            ActorRole.TRUSTED_AUTOMATION,
+        )
+        if self.impact_workflow is None:
+            raise RCPError(
+                code="impact_workflow_not_configured",
+                message="Report impact workflow is not configured.",
+            )
+
+        record_stage = self._operation_stage_recorder(
+            operation,
+            workflow="Impact",
+            allowed_events=_IMPACT_DELIVERY_EVENTS,
+            exclusive_event_groups=(_IMPACT_PR_EVENTS,),
+        )
+
+        proposed = self.impact_workflow.propose(
+            request,
+            generated_at=operation.started_at,
+            event_callback=record_stage,
+        )
+        return self._finish(
+            operation,
+            proposed.terminal_result,
+            {"impact": proposed.as_dict()},
+        )
+
+    @_journaled_mutation("impact.batch")
+    def impact_batch_create(
+        self,
+        request: ImpactBatchCreateRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "impact.batch"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(
+            operation,
+            actor,
+            ActorRole.MANAGER,
+            ActorRole.TRUSTED_AUTOMATION,
+        )
+        if self.impact_workflow is None:
+            raise RCPError(
+                code="impact_workflow_not_configured",
+                message="Report impact workflow is not configured.",
+            )
+
+        record_stage = self._operation_stage_recorder(
+            operation,
+            workflow="Impact batch",
+            allowed_events=_IMPACT_BATCH_DELIVERY_EVENTS,
+            exclusive_event_groups=(_IMPACT_PR_EVENTS,),
+        )
+
+        proposed = self.impact_workflow.propose_batch(
+            request,
+            event_callback=record_stage,
+        )
+        return self._finish(
+            operation,
+            proposed.terminal_result,
+            {"impact": proposed.as_dict()},
+        )
+
+    def report_status(
+        self,
+        request: ReportStatusRequest,
+        actor: ActorContext,
+    ) -> ReportStatusResult:
+        actor.require_role(
+            "report.status",
+            ActorRole.MANAGER,
+            ActorRole.AGENT,
+            ActorRole.TRUSTED_AUTOMATION,
+        )
+        if self.report_status_reader is None:
+            raise RCPError(
+                code="report_status_not_configured",
+                message="Effective Report status reader is not configured.",
+            )
+        return self.report_status_reader.read(request)
+
+    @_journaled_mutation("impact.decide")
+    def impact_decide(
+        self,
+        request: ImpactDecisionCreateRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "impact.decide"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(operation, actor, ActorRole.MANAGER)
+        if request.rerun_task_id is not None:
+            task = self.tasks.load(request.rerun_task_id)
+            self._validate_task_policy(task)
+            if task.state not in {TaskState.PLANNED, TaskState.READY}:
+                raise RCPError(
+                    code="impact_rerun_task_state_invalid",
+                    message="Rerun decision must reference a planned or ready Task.",
+                    context={
+                        "task_id": task.task_id,
+                        "task_state": task.state.value,
+                    },
+                )
+        if self.impact_decision_workflow is None:
+            raise RCPError(
+                code="impact_decision_workflow_not_configured",
+                message="Impact decision workflow is not configured.",
+            )
+        record_stage = self._operation_stage_recorder(
+            operation,
+            workflow="Impact decision",
+            allowed_events=_IMPACT_DECISION_DELIVERY_EVENTS,
+            exclusive_event_groups=(_IMPACT_DECISION_PR_EVENTS,),
+        )
+        proposed = self.impact_decision_workflow.propose(
+            request,
+            reviewer_actor=actor.actor_id,
+            decided_at=operation.started_at,
+            event_callback=record_stage,
+        )
+        return self._finish(
+            operation,
+            proposed.terminal_result,
+            {"impact_decision": proposed.as_dict()},
         )
 
     @_journaled_mutation("review.accept")

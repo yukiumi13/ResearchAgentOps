@@ -9,6 +9,12 @@ from pathlib import Path
 
 from researchctl.adapters.git_commit import GitSessionCommitVerifier
 from researchctl.adapters.git_accepted_merge import GitAcceptedMergeReader
+from researchctl.adapters.github_impact import GitHubImpactDelivery
+from researchctl.adapters.github_impact_decision import (
+    GitHubImpactDecisionDelivery,
+)
+from researchctl.adapters.github_submission import GitHubSubmissionDelivery
+from researchctl.adapters.plan_reviewer import EphemeralPlanReviewer
 from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH
 from researchctl.domain.enums import ProjectState
 from researchctl.domain.models import LinearProjectionPolicy, RunSpec
@@ -22,7 +28,15 @@ from researchctl.services.application import ApplicationService
 from researchctl.services.bootstrap_proposal import BootstrapProposalService
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
+from researchctl.services.control_plan_review_policy import (
+    ControlPlanReviewPolicyRepository,
+)
 from researchctl.services.control_tasks import ControlTaskRecordRepository
+from researchctl.services.impact_workflow import ImpactWorkflowService
+from researchctl.services.impact_decision_workflow import (
+    ImpactDecisionWorkflowService,
+)
+from researchctl.services.report_status import ReportStatusService
 from researchctl.services.local_run import LocalRunExecutor
 from researchctl.services.linear_delivery import (
     AcceptedMergeReader,
@@ -37,6 +51,7 @@ from researchctl.services.project_runtime import (
     ProjectRuntimeService,
 )
 from researchctl.services.post_merge import TrustedPostMergeService
+from researchctl.services.plan_review import IndependentPlanReviewService
 from researchctl.services.run_execution import LocalRunCoordinator
 from researchctl.services.run_profiles import LocalRunProfile
 from researchctl.services.session_harness import LocalSessionHarness
@@ -72,6 +87,11 @@ class TrustedLinearApplicationHandle(ApplicationHandle):
 
 @dataclass(slots=True)
 class TrustedPostMergeApplicationHandle(ApplicationHandle):
+    pass
+
+
+@dataclass(slots=True)
+class TrustedImpactApplicationHandle(ApplicationHandle):
     pass
 
 
@@ -123,6 +143,8 @@ def open_application(
     bootstrap_expected_default_head: str | None = None,
     linear_operation_id: str | None = None,
     linear_expected_default_head: str | None = None,
+    plan_review_operation_id: str | None = None,
+    plan_review_expected_default_head: str | None = None,
     run_spec: RunSpec | None = None,
 ) -> ApplicationHandle:
     if (task_operation_id is None) != (task_command is None):
@@ -173,9 +195,20 @@ def open_application(
                 "together."
             ),
         )
+    if (plan_review_operation_id is None) != (
+        plan_review_expected_default_head is None
+    ):
+        raise RCPError(
+            code="plan_review_mutation_context_incomplete",
+            message=(
+                "Plan review operation ID and expected default head must be "
+                "supplied together."
+            ),
+        )
     if task_operation_id is not None and (
         bootstrap_operation_id is not None
         or bootstrap_proposal_operation_id is not None
+        or plan_review_operation_id is not None
     ):
         raise RCPError(
             code="mutation_context_conflict",
@@ -185,6 +218,7 @@ def open_application(
         task_operation_id is not None
         or bootstrap_operation_id is not None
         or bootstrap_proposal_operation_id is not None
+        or plan_review_operation_id is not None
     ):
         raise RCPError(
             code="mutation_context_conflict",
@@ -194,12 +228,27 @@ def open_application(
         task_operation_id is not None
         or bootstrap_operation_id is not None
         or bootstrap_proposal_operation_id is not None
+        or plan_review_operation_id is not None
         or run_spec is not None
     ):
         raise RCPError(
             code="mutation_context_conflict",
             message=(
                 "Linear policy configuration cannot share another mutation "
+                "factory context."
+            ),
+        )
+    if plan_review_operation_id is not None and (
+        task_operation_id is not None
+        or bootstrap_operation_id is not None
+        or bootstrap_proposal_operation_id is not None
+        or linear_operation_id is not None
+        or run_spec is not None
+    ):
+        raise RCPError(
+            code="mutation_context_conflict",
+            message=(
+                "Plan review policy configuration cannot share another mutation "
                 "factory context."
             ),
         )
@@ -301,6 +350,20 @@ def open_application(
                 expected_default_head=linear_expected_default_head,
             )
         )
+        plan_review_policy_control = (
+            None
+            if (
+                plan_review_operation_id is None
+                or plan_review_expected_default_head is None
+            )
+            else ControlPlanReviewPolicyRepository(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                operation_id=plan_review_operation_id,
+                expected_default_head=plan_review_expected_default_head,
+            )
+        )
         service = ApplicationService(
             project_id=project.project_id,
             policy=project.policy,
@@ -311,6 +374,7 @@ def open_application(
             bootstrap_proposal=bootstrap_proposal,
             runs=runs,
             linear_policy_control=linear_policy_control,
+            plan_review_policy_control=plan_review_policy_control,
             notification_commits=GitSessionCommitVerifier(
                 project.repository_root,
             ),
@@ -318,6 +382,39 @@ def open_application(
                 repository_root=project.repository_root,
                 worktrees_directory=project.runtime.worktrees_directory,
                 default_branch=project.project.repository.default_branch,
+                delivery=GitHubSubmissionDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
+                policy=project.policy,
+            ),
+            impact_workflow=ImpactWorkflowService(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                delivery=GitHubImpactDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
+            ),
+            report_status_reader=ReportStatusService(
+                repository_root=project.repository_root,
+                default_branch=project.project.repository.default_branch,
+            ),
+            impact_decision_workflow=ImpactDecisionWorkflowService(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                delivery=GitHubImpactDecisionDelivery(
+                    accepted_remote_url=project.project.repository.remote_url,
+                    environment=environment,
+                ),
+            ),
+            plan_review_workflow=IndependentPlanReviewService(
+                EphemeralPlanReviewer(
+                    project.repository_root,
+                    environment=environment,
+                )
             ),
         )
         return ApplicationHandle(
@@ -449,3 +546,27 @@ def open_post_merge_application(
     except Exception:
         base.close()
         raise
+
+
+def open_impact_automation_application(
+    path: Path = Path("."),
+    *,
+    automation_identity: str = "researchctl-impact",
+    local_host: str | None = None,
+) -> TrustedImpactApplicationHandle:
+    """Compose the main-push Impact scanner under one trusted identity."""
+
+    if not automation_identity.strip():
+        raise ValueError("automation_identity must be non-empty")
+    base = open_application(path, local_host=local_host, environment={})
+    actor = ActorContext(
+        actor_id=automation_identity,
+        role=ActorRole.TRUSTED_AUTOMATION,
+        credential_kind=CredentialKind.AUTOMATION_CREDENTIAL,
+    )
+    return TrustedImpactApplicationHandle(
+        project=base.project,
+        runtime=base.runtime,
+        service=base.service,
+        actor=actor,
+    )

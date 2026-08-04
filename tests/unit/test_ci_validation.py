@@ -178,7 +178,7 @@ def _prepare_submission(
         worktrees_directory=worktrees,
         default_branch="main",
     )
-    proposed = workflow.propose(
+    proposed = workflow.prepare_proposal(
         SubmissionCreateRequest(
             operation_id="operation_20260803T120000Z_" + "1" * 24,
             idempotency_key="ci-proposal",

@@ -18,13 +18,18 @@ from researchctl.adapters.git_ci import (
 )
 from researchctl.adapters.git_scope import GitWriteScopeValidator
 from researchctl.config import ProjectConfig, dump_project_config
-from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH, __version__
+from researchctl.constants import (
+    LINEAR_PROJECTION_POLICY_PATH,
+    PROJECT_POLICY_PATH,
+    __version__,
+)
 from researchctl.domain.enums import SubmissionState
 from researchctl.domain.models import (
     CIValidationAttestation,
     CIValidationCheck,
     GeneratedOutputDigest,
     LinearProjectionPolicy,
+    ProjectPolicy,
     ProjectRecord,
     ReportProposal,
     ReportRecord,
@@ -232,6 +237,7 @@ class _TrustedBase:
     config: ProjectConfig
     project: ProjectRecord
     task: TaskRecord
+    policy: ProjectPolicy
     linear_policy: LinearProjectionPolicy | None
 
 
@@ -298,6 +304,7 @@ class ExactHeadCIValidator:
                 base=base,
                 head=head,
                 task=trusted.task,
+                policy=trusted.policy,
                 expected_submission_id=request.submission_id,
                 linear_policy=trusted.linear_policy,
             )
@@ -307,6 +314,7 @@ class ExactHeadCIValidator:
                 base=base,
                 head=head,
                 task=trusted.task,
+                policy=trusted.policy,
                 expected_submission_id=request.submission_id,
                 linear_policy=trusted.linear_policy,
             )
@@ -390,6 +398,7 @@ class ExactHeadCIValidator:
         base: GitCommitData,
         head: GitCommitData,
         task: TaskRecord,
+        policy: ProjectPolicy,
         expected_submission_id: str,
         linear_policy: LinearProjectionPolicy | None,
     ) -> _ValidatedHead:
@@ -404,6 +413,7 @@ class ExactHeadCIValidator:
             root,
             commit=head.object_id,
             task=task,
+            policy=policy,
             submission_id=expected_submission_id,
         )
         expected_paths = tuple(item.path for item in bundle.files)
@@ -434,7 +444,12 @@ class ExactHeadCIValidator:
                 ),
                 "record_linkage": bundle.source_digest,
                 "source_identity": source_evidence,
-                "trusted_base_records": canonical_digest(task),
+                "trusted_base_records": canonical_digest(
+                    {
+                        "task_digest": canonical_digest(task),
+                        "policy_digest": canonical_digest(policy),
+                    }
+                ),
             }
         )
         return _ValidatedHead(
@@ -455,6 +470,7 @@ class ExactHeadCIValidator:
         base: GitCommitData,
         head: GitCommitData,
         task: TaskRecord,
+        policy: ProjectPolicy,
         expected_submission_id: str,
         linear_policy: LinearProjectionPolicy | None,
     ) -> _ValidatedHead:
@@ -482,6 +498,7 @@ class ExactHeadCIValidator:
             root,
             commit=proposal_commit.object_id,
             task=task,
+            policy=policy,
             submission_id=expected_submission_id,
         )
         proposal_paths = tuple(item.path for item in open_bundle.files)
@@ -587,6 +604,7 @@ class ExactHeadCIValidator:
             claim_scope=decision.claim_scope,
             code_disposition=decision.code_disposition,
             accepted_base_tree=base.tree,
+            policy=policy,
         )
         if (
             accepted.submission != accepted_submission
@@ -656,7 +674,12 @@ class ExactHeadCIValidator:
                     }
                 ),
                 "source_identity": source_evidence,
-                "trusted_base_records": canonical_digest(task),
+                "trusted_base_records": canonical_digest(
+                    {
+                        "task_digest": canonical_digest(task),
+                        "policy_digest": canonical_digest(policy),
+                    }
+                ),
             }
         )
         return _ValidatedHead(
@@ -726,13 +749,19 @@ class ExactHeadCIValidator:
                 "ci_task_identity_mismatch",
                 "Protected-base Task identity does not match its canonical path.",
             )
+        project_policy = self._record(
+            root,
+            commit=base.object_id,
+            path=PROJECT_POLICY_PATH,
+            model_type=ProjectPolicy,
+        )
         policy_bytes = self.git.read_blob_at(
             root,
             commit=base.object_id,
             path=LINEAR_PROJECTION_POLICY_PATH,
             required=False,
         )
-        policy = (
+        linear_policy = (
             None
             if policy_bytes is None
             else self._parse_canonical(
@@ -745,7 +774,8 @@ class ExactHeadCIValidator:
             config=config,
             project=project,
             task=task,
-            linear_policy=policy,
+            policy=project_policy,
+            linear_policy=linear_policy,
         )
 
     def _open_bundle(
@@ -754,6 +784,7 @@ class ExactHeadCIValidator:
         *,
         commit: str,
         task: TaskRecord,
+        policy: ProjectPolicy,
         submission_id: str,
     ) -> tuple[
         ResearchSubmission,
@@ -833,6 +864,7 @@ class ExactHeadCIValidator:
             submission=submission,
             proposal=proposal,
             evidence=tuple(evidence),
+            policy=policy,
         )
         expected_paths = {item.path for item in bundle.files}
         if paths != expected_paths:

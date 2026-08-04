@@ -21,7 +21,12 @@ from researchctl.domain.enums import (
     CodeDisposition,
     EvidenceStatus,
     FailureClass,
+    ImpactDisposition,
     InputKind,
+    PlanFindingKind,
+    PlanMetricDirection,
+    PlanReviewOutcome,
+    PlanValueSourceKind,
     Priority,
     ProjectState,
     ReportApplicability,
@@ -35,13 +40,17 @@ from researchctl.domain.enums import (
     TaskState,
 )
 from researchctl.domain.types import (
+    DependencyReceiptId,
     DecisionId,
     GitObjectId,
     HumanKey,
+    ImpactId,
     AttestationId,
     LinearUuid,
     NonEmptyStr,
     OperationId,
+    PlanId,
+    PlanReviewId,
     ProjectId,
     ReportId,
     RepositoryPath,
@@ -115,6 +124,7 @@ class AgentPolicy(StrictModel):
             ".research/decisions/**",
             ".research/policies/**",
             ".research/project.yaml",
+            ".research/impacts/**",
             ".research/reports/**",
             ".research/tasks/**",
         }
@@ -142,11 +152,20 @@ class ExecutionDomainPolicy(StrictModel):
         return self
 
 
+class PlanReviewPolicy(StrictModel):
+    provider: Literal["codex", "claude"]
+    model: ShortText
+    policy_version: ShortText
+    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3600)]
+
+
 class ProjectPolicy(ProtocolRecord):
     agent: AgentPolicy
     impact: ImpactPolicy = Field(default_factory=ImpactPolicy)
     security: SecurityPolicy = Field(default_factory=SecurityPolicy)
     execution_domains: tuple[ExecutionDomainPolicy, ...] = ()
+    plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
+    plan_review: PlanReviewPolicy | None = None
 
     @model_validator(mode="after")
     def require_unique_execution_domains(self) -> ProjectPolicy:
@@ -216,6 +235,7 @@ class TaskRecord(ProtocolRecord):
     execution: ExecutionPreferences = Field(default_factory=ExecutionPreferences)
     waiting_on: ShortText | None = None
     next_decision: NonEmptyStr | None = None
+    plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
     created_at: UtcDateTime
     updated_at: UtcDateTime
     linear_issue_id: LinearUuid | None = None
@@ -275,6 +295,238 @@ class ArtifactRef(StrictModel):
     verification: ArtifactVerification = ArtifactVerification.DECLARED
 
 
+class PlanMetric(StrictModel):
+    name: HumanKey
+    direction: PlanMetricDirection
+    target: JsonValue | None = None
+
+    @model_validator(mode="after")
+    def require_target_consistency(self) -> PlanMetric:
+        if (self.direction is PlanMetricDirection.TARGET) != (self.target is not None):
+            raise ValueError("target metrics require a target and other directions forbid it")
+        return self
+
+
+class PlanValueSource(StrictModel):
+    field_path: ShortText
+    source_kind: PlanValueSourceKind
+    source_digest: Sha256Digest
+
+
+_PLAN_DECISION_FIELDS = frozenset(
+    {
+        "argv",
+        "artifact_declarations",
+        "comparison",
+        "config",
+        "environment",
+        "failure_conditions",
+        "hypothesis",
+        "inputs",
+        "metrics",
+        "repetitions",
+        "requested_host",
+        "resources",
+        "seeds",
+        "stop_conditions",
+        "working_directory",
+    }
+)
+
+
+class ExperimentPlan(ProtocolRecord):
+    plan_id: PlanId
+    task_id: TaskId
+    session_id: SessionId
+    draft_invocation_id: ShortText
+    task_digest: Sha256Digest
+    policy_digest: Sha256Digest
+    run_id: RunId
+    operation_id: OperationId
+    source_commit: GitObjectId
+    source_tree: GitObjectId
+    baseline_commit: GitObjectId | None
+    hypothesis: NonEmptyStr
+    comparison: NonEmptyStr
+    argv: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    working_directory: RepositoryPath
+    environment: InputIdentity
+    config: InputIdentity | None
+    inputs: tuple[InputIdentity, ...]
+    metrics: Annotated[tuple[PlanMetric, ...], Field(min_length=1)]
+    repetitions: Annotated[StrictInt, Field(ge=1, le=1000000)] | None
+    seeds: tuple[Annotated[StrictInt, Field(ge=0)], ...]
+    resources: ResourceRequirement
+    requested_host: HumanKey | None
+    stop_conditions: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    failure_conditions: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    artifact_declarations: tuple[ArtifactDeclaration, ...]
+    value_sources: Annotated[tuple[PlanValueSource, ...], Field(min_length=1)]
+    created_at: UtcDateTime
+    plan_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_canonical_plan(self) -> ExperimentPlan:
+        if (self.repetitions is not None) == bool(self.seeds):
+            raise ValueError("plan requires exactly one of repetitions or non-empty seeds")
+        if self.seeds != tuple(sorted(self.seeds)) or len(self.seeds) != len(
+            set(self.seeds)
+        ):
+            raise ValueError("plan seeds must be unique and sorted")
+        metric_names = tuple(item.name for item in self.metrics)
+        if len(metric_names) != len(set(metric_names)):
+            raise ValueError("plan metric names must be unique")
+        identities = [self.environment]
+        if self.config is not None:
+            identities.append(self.config)
+        identities.extend(self.inputs)
+        identity_keys = [(item.kind, item.logical_id) for item in identities]
+        if len(identity_keys) != len(set(identity_keys)):
+            raise ValueError("plan input identity keys must be unique")
+        artifact_names = tuple(item.name for item in self.artifact_declarations)
+        artifact_paths = tuple(item.path for item in self.artifact_declarations)
+        if len(artifact_names) != len(set(artifact_names)):
+            raise ValueError("plan artifact names must be unique")
+        if len(artifact_paths) != len(set(artifact_paths)):
+            raise ValueError("plan artifact paths must be unique")
+        source_paths = tuple(item.field_path for item in self.value_sources)
+        if source_paths != tuple(sorted(source_paths)):
+            raise ValueError("plan value_sources must be sorted by field_path")
+        if len(source_paths) != len(set(source_paths)):
+            raise ValueError("plan value_sources must be unique by field_path")
+        if set(source_paths) != _PLAN_DECISION_FIELDS:
+            raise ValueError(
+                "plan value_sources must cover every decision-bearing field exactly"
+            )
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"plan_digest"},
+            exclude_none=False,
+        )
+        if self.plan_digest != canonical_digest(content):
+            raise ValueError("plan_digest does not match canonical ExperimentPlan content")
+        return self
+
+
+class PlanReviewFinding(StrictModel):
+    kind: PlanFindingKind
+    code: HumanKey
+    field_path: ShortText | None = None
+    message: NonEmptyStr
+
+
+class PlanReview(ProtocolRecord):
+    review_id: PlanReviewId
+    review_operation_id: OperationId
+    plan_id: PlanId
+    plan_digest: Sha256Digest
+    task_id: TaskId
+    task_digest: Sha256Digest
+    policy_digest: Sha256Digest
+    review_policy_version: ShortText
+    drafter_invocation_id: ShortText
+    reviewer_invocation_id: ShortText
+    reviewer_provider: HumanKey
+    reviewer_model: ShortText
+    outcome: PlanReviewOutcome
+    findings: tuple[PlanReviewFinding, ...] = ()
+    reviewer_output_digest: Sha256Digest
+    completed_at: UtcDateTime
+    completion_receipt_digest: Sha256Digest
+    review_digest: Sha256Digest
+
+    @staticmethod
+    def calculate_completion_receipt(
+        *,
+        review_operation_id: str,
+        plan_digest: str,
+        task_digest: str,
+        policy_digest: str,
+        review_policy_version: str,
+        reviewer_invocation_id: str,
+        reviewer_provider: str,
+        reviewer_model: str,
+        outcome: str,
+        findings: tuple[PlanReviewFinding, ...],
+        reviewer_output_digest: str,
+    ) -> str:
+        from researchctl.serialization import canonical_digest
+
+        return canonical_digest(
+            {
+                "review_operation_id": review_operation_id,
+                "plan_digest": plan_digest,
+                "task_digest": task_digest,
+                "policy_digest": policy_digest,
+                "review_policy_version": review_policy_version,
+                "reviewer_invocation_id": reviewer_invocation_id,
+                "reviewer_provider": reviewer_provider,
+                "reviewer_model": reviewer_model,
+                "outcome": outcome,
+                "findings": [
+                    item.model_dump(mode="json", exclude_none=True) for item in findings
+                ],
+                "reviewer_output_digest": reviewer_output_digest,
+            }
+        )
+
+    @model_validator(mode="after")
+    def require_canonical_review(self) -> PlanReview:
+        if self.reviewer_invocation_id == self.drafter_invocation_id:
+            raise ValueError("PlanReview invocation must differ from the Plan drafter")
+        finding_keys = tuple(
+            (item.field_path or "", item.code, item.kind.value, item.message)
+            for item in self.findings
+        )
+        if finding_keys != tuple(sorted(finding_keys)) or len(finding_keys) != len(
+            set(finding_keys)
+        ):
+            raise ValueError("PlanReview findings must be unique and sorted")
+        kinds = {item.kind for item in self.findings}
+        if self.outcome is PlanReviewOutcome.PASSED and kinds & {
+            PlanFindingKind.NEEDS_INPUT,
+            PlanFindingKind.INVALID,
+        }:
+            raise ValueError("passed PlanReview cannot contain blocking findings")
+        if self.outcome is PlanReviewOutcome.NEEDS_INPUT and (
+            PlanFindingKind.NEEDS_INPUT not in kinds
+            or PlanFindingKind.INVALID in kinds
+        ):
+            raise ValueError("needs_input PlanReview requires only needs-input blockers")
+        if (
+            self.outcome is PlanReviewOutcome.INVALID
+            and PlanFindingKind.INVALID not in kinds
+        ):
+            raise ValueError("invalid PlanReview requires an invalid finding")
+        expected_receipt = self.calculate_completion_receipt(
+            review_operation_id=self.review_operation_id,
+            plan_digest=self.plan_digest,
+            task_digest=self.task_digest,
+            policy_digest=self.policy_digest,
+            review_policy_version=self.review_policy_version,
+            reviewer_invocation_id=self.reviewer_invocation_id,
+            reviewer_provider=self.reviewer_provider,
+            reviewer_model=self.reviewer_model,
+            outcome=self.outcome.value,
+            findings=self.findings,
+            reviewer_output_digest=self.reviewer_output_digest,
+        )
+        if self.completion_receipt_digest != expected_receipt:
+            raise ValueError("PlanReview completion receipt does not match review evidence")
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"review_digest"},
+            exclude_none=True,
+        )
+        if self.review_digest != canonical_digest(content):
+            raise ValueError("review_digest does not match canonical PlanReview content")
+        return self
+
+
 class RunSpec(ProtocolRecord):
     run_id: RunId
     task_id: TaskId
@@ -291,6 +543,8 @@ class RunSpec(ProtocolRecord):
     resources: ResourceRequirement = Field(default_factory=ResourceRequirement)
     requested_host: HumanKey | None = None
     artifact_declarations: tuple[ArtifactDeclaration, ...] = ()
+    experiment_plan: ExperimentPlan | None = None
+    plan_review: PlanReview | None = None
     created_at: UtcDateTime
     spec_digest: Sha256Digest
 
@@ -312,6 +566,64 @@ class RunSpec(ProtocolRecord):
         artifact_paths = [item.path for item in self.artifact_declarations]
         if len(artifact_paths) != len(set(artifact_paths)):
             raise ValueError("run artifact paths must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def require_plan_consistency(self) -> RunSpec:
+        if (self.experiment_plan is None) != (self.plan_review is None):
+            raise ValueError("RunSpec requires both ExperimentPlan and PlanReview or neither")
+        plan = self.experiment_plan
+        review = self.plan_review
+        if plan is None or review is None:
+            return self
+        expected = (
+            plan.run_id,
+            plan.task_id,
+            plan.session_id,
+            plan.operation_id,
+            plan.source_commit,
+            plan.source_tree,
+            plan.baseline_commit,
+            plan.argv,
+            plan.working_directory,
+            plan.environment,
+            plan.config,
+            plan.inputs,
+            plan.resources,
+            plan.requested_host,
+            plan.artifact_declarations,
+            plan.created_at,
+        )
+        observed = (
+            self.run_id,
+            self.task_id,
+            self.session_id,
+            self.operation_id,
+            self.source_commit,
+            self.source_tree,
+            self.baseline_commit,
+            self.argv,
+            self.working_directory,
+            self.environment,
+            self.config,
+            self.inputs,
+            self.resources,
+            self.requested_host,
+            self.artifact_declarations,
+            self.created_at,
+        )
+        if observed != expected:
+            raise ValueError("RunSpec execution fields drift from its ExperimentPlan")
+        if (
+            review.outcome is not PlanReviewOutcome.PASSED
+            or review.plan_id != plan.plan_id
+            or review.plan_digest != plan.plan_digest
+            or review.task_id != plan.task_id
+            or review.task_digest != plan.task_digest
+            or review.policy_digest != plan.policy_digest
+            or review.drafter_invocation_id != plan.draft_invocation_id
+        ):
+            raise ValueError("RunSpec PlanReview does not pass and bind its ExperimentPlan")
         return self
 
     @model_validator(mode="after")
@@ -396,6 +708,35 @@ class DependencySet(StrictModel):
     resources: tuple[ShortText, ...] = ()
     environments: tuple[ShortText, ...] = ()
 
+    @model_validator(mode="after")
+    def require_canonical_dependencies(self) -> DependencySet:
+        for label, values in (
+            ("paths", self.paths),
+            ("resources", self.resources),
+            ("environments", self.environments),
+        ):
+            if tuple(sorted(values)) != values or len(values) != len(set(values)):
+                raise ValueError(
+                    f"dependency {label} must be unique and sorted"
+                )
+        for path in self.paths:
+            has_pattern_syntax = any(character in path for character in "*?[]")
+            if has_pattern_syntax and not (
+                path.endswith("/**")
+                and "*" not in path[:-3]
+                and "?" not in path
+                and "[" not in path
+                and "]" not in path
+            ):
+                raise ValueError(
+                    "dependency paths support only exact paths or a trailing /**"
+                )
+            if path == ".research" or path.startswith(".research/"):
+                raise ValueError(
+                    "dependency paths cannot target research control records"
+                )
+        return self
+
 
 class DecisionRequest(StrictModel):
     question: NonEmptyStr
@@ -475,6 +816,133 @@ class ValidationBasis(StrictModel):
     assessed_at: UtcDateTime
 
 
+class ObservedDependencyIdentity(StrictModel):
+    version: NonEmptyStr | None = None
+    digest: Sha256Digest | None = None
+
+    @model_validator(mode="after")
+    def require_version_or_digest(self) -> ObservedDependencyIdentity:
+        if self.version is None and self.digest is None:
+            raise ValueError(
+                "observed dependency identity requires version or digest"
+            )
+        return self
+
+
+class DependencyChangeObservation(StrictModel):
+    kind: Literal["resource", "environment"]
+    dependency: ShortText
+    state: Literal["changed", "unchanged", "unknown"]
+    basis_identity: ObservedDependencyIdentity | None = None
+    target_identity: ObservedDependencyIdentity | None = None
+    evidence_digest: Sha256Digest | None = None
+    reason: NonEmptyStr | None = None
+
+    @model_validator(mode="after")
+    def require_state_evidence(self) -> DependencyChangeObservation:
+        if self.state == "unknown":
+            if self.reason is None:
+                raise ValueError("unknown dependency observation requires reason")
+            return self
+        if self.reason is not None:
+            raise ValueError("known dependency observation cannot include reason")
+        if (
+            self.basis_identity is None
+            or self.target_identity is None
+            or self.evidence_digest is None
+        ):
+            raise ValueError(
+                "known dependency observation requires both identities and evidence"
+            )
+        identities_match = self.basis_identity == self.target_identity
+        if (self.state == "unchanged") != identities_match:
+            raise ValueError(
+                "dependency observation state must match its identities"
+            )
+        return self
+
+
+class DependencyChangeReceipt(ProtocolRecord):
+    receipt_id: DependencyReceiptId
+    provider_id: HumanKey
+    provider_version: ShortText
+    basis_tree: GitObjectId
+    target_commit: GitObjectId
+    target_tree: GitObjectId
+    observations: Annotated[
+        tuple[DependencyChangeObservation, ...],
+        Field(min_length=1, max_length=4096),
+    ]
+    provider_query_digest: Sha256Digest
+    query_digest: Sha256Digest
+    observed_at: UtcDateTime
+    receipt_digest: Sha256Digest
+
+    @staticmethod
+    def calculate_query_digest(
+        *,
+        provider_id: str,
+        provider_version: str,
+        basis_tree: str,
+        target_commit: str,
+        target_tree: str,
+        provider_query_digest: str,
+        dependencies: tuple[tuple[str, str], ...],
+    ) -> str:
+        from researchctl.serialization import canonical_digest
+
+        return canonical_digest(
+            {
+                "schema_version": PROTOCOL_VERSION,
+                "provider_id": provider_id,
+                "provider_version": provider_version,
+                "basis_tree": basis_tree,
+                "target_commit": target_commit,
+                "target_tree": target_tree,
+                "provider_query_digest": provider_query_digest,
+                "dependencies": [
+                    {"kind": kind, "dependency": dependency}
+                    for kind, dependency in dependencies
+                ],
+            }
+        )
+
+    @model_validator(mode="after")
+    def require_canonical_receipt(self) -> DependencyChangeReceipt:
+        dependency_keys = tuple(
+            (item.kind, item.dependency) for item in self.observations
+        )
+        if dependency_keys != tuple(sorted(dependency_keys)) or len(
+            dependency_keys
+        ) != len(set(dependency_keys)):
+            raise ValueError(
+                "dependency receipt observations must be unique and sorted"
+            )
+        expected_query_digest = self.calculate_query_digest(
+            provider_id=self.provider_id,
+            provider_version=self.provider_version,
+            basis_tree=self.basis_tree,
+            target_commit=self.target_commit,
+            target_tree=self.target_tree,
+            provider_query_digest=self.provider_query_digest,
+            dependencies=dependency_keys,
+        )
+        if self.query_digest != expected_query_digest:
+            raise ValueError("dependency receipt query_digest does not match query")
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"receipt_digest"},
+            exclude_none=True,
+        )
+        if self.receipt_digest != canonical_digest(content):
+            raise ValueError(
+                "receipt_digest does not match canonical dependency receipt"
+            )
+        return self
+
+
 class ReportRecord(ProtocolRecord):
     report_id: ReportId
     revision: Annotated[StrictInt, Field(ge=1)]
@@ -500,6 +968,248 @@ class ReportRecord(ProtocolRecord):
             and self.applicability != ReportApplicability.SNAPSHOT_ONLY
         ):
             raise ValueError("snapshot report applicability must be snapshot_only")
+        return self
+
+
+class ReportImpact(ProtocolRecord):
+    impact_id: ImpactId
+    report_id: ReportId
+    expected_report_revision: Annotated[StrictInt, Field(ge=1)]
+    change_provider_id: HumanKey
+    dependency_evaluator_id: HumanKey
+    basis_tree: GitObjectId
+    target_commit: GitObjectId
+    target_tree: GitObjectId
+    changed_paths: tuple[RepositoryPath, ...] = ()
+    dependency_receipts: Annotated[
+        tuple[DependencyChangeReceipt, ...],
+        Field(max_length=64),
+    ] = ()
+    matched_path_dependencies: tuple[RepositoryPath, ...] = ()
+    matched_resource_dependencies: tuple[ShortText, ...] = ()
+    matched_environment_dependencies: tuple[ShortText, ...] = ()
+    unresolved_resource_dependencies: tuple[ShortText, ...] = ()
+    unresolved_environment_dependencies: tuple[ShortText, ...] = ()
+    outcome: Literal["overlap", "no_overlap"]
+    proposed_applicability: Literal[
+        ReportApplicability.CURRENT,
+        ReportApplicability.STALE,
+    ]
+    proposed_report_digest: Sha256Digest
+    generated_at: UtcDateTime
+    impact_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_canonical_impact(self) -> ReportImpact:
+        for label, values in (
+            ("changed_paths", self.changed_paths),
+            ("matched_path_dependencies", self.matched_path_dependencies),
+            ("matched_resource_dependencies", self.matched_resource_dependencies),
+            (
+                "matched_environment_dependencies",
+                self.matched_environment_dependencies,
+            ),
+            (
+                "unresolved_resource_dependencies",
+                self.unresolved_resource_dependencies,
+            ),
+            (
+                "unresolved_environment_dependencies",
+                self.unresolved_environment_dependencies,
+            ),
+        ):
+            if tuple(sorted(values)) != values or len(values) != len(set(values)):
+                raise ValueError(f"impact {label} must be unique and sorted")
+        receipt_ids = tuple(item.receipt_id for item in self.dependency_receipts)
+        if receipt_ids != tuple(sorted(receipt_ids)) or len(receipt_ids) != len(
+            set(receipt_ids)
+        ):
+            raise ValueError("dependency receipts must be unique and sorted by ID")
+        for receipt in self.dependency_receipts:
+            if (
+                receipt.basis_tree != self.basis_tree
+                or receipt.target_commit != self.target_commit
+                or receipt.target_tree != self.target_tree
+            ):
+                raise ValueError(
+                    "dependency receipt target identity does not match Impact"
+                )
+        observed_states = [
+            ((observation.kind, observation.dependency), observation.state)
+            for receipt in self.dependency_receipts
+            for observation in receipt.observations
+        ]
+        observed_keys = [key for key, _ in observed_states]
+        if len(observed_keys) != len(set(observed_keys)):
+            raise ValueError(
+                "dependency receipts contain duplicate observations"
+            )
+        observed_changed = {
+            key for key, state in observed_states if state == "changed"
+        }
+        expected_changed = {
+            ("resource", value)
+            for value in self.matched_resource_dependencies
+        } | {
+            ("environment", value)
+            for value in self.matched_environment_dependencies
+        }
+        if observed_changed != expected_changed:
+            raise ValueError(
+                "matched external dependencies must equal changed receipt evidence"
+            )
+        if set(self.matched_resource_dependencies) & set(
+            self.unresolved_resource_dependencies
+        ) or set(self.matched_environment_dependencies) & set(
+            self.unresolved_environment_dependencies
+        ):
+            raise ValueError("matched and unresolved dependencies must be disjoint")
+        unresolved_external = {
+            ("resource", value)
+            for value in self.unresolved_resource_dependencies
+        } | {
+            ("environment", value)
+            for value in self.unresolved_environment_dependencies
+        }
+        for key, state in observed_states:
+            if (state == "unknown") != (key in unresolved_external):
+                raise ValueError(
+                    "receipt observation state must match unresolved dependencies"
+                )
+        has_overlap = bool(
+            self.matched_path_dependencies
+            or self.matched_resource_dependencies
+            or self.matched_environment_dependencies
+        )
+        if (self.outcome == "overlap") != has_overlap:
+            raise ValueError("impact outcome must match dependency overlap")
+        if not has_overlap and (
+            self.unresolved_resource_dependencies
+            or self.unresolved_environment_dependencies
+        ):
+            raise ValueError("no-overlap Impact cannot contain unresolved dependencies")
+        expected_applicability = (
+            ReportApplicability.STALE
+            if has_overlap
+            else ReportApplicability.CURRENT
+        )
+        if self.proposed_applicability is not expected_applicability:
+            raise ValueError(
+                "proposed applicability must match dependency overlap"
+            )
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"impact_digest"},
+            exclude_none=True,
+        )
+        if self.impact_digest != canonical_digest(content):
+            raise ValueError(
+                "impact_digest does not match canonical ReportImpact content"
+            )
+        return self
+
+
+class ReportImpactBatch(ProtocolRecord):
+    impact_id: ImpactId
+    before_commit: GitObjectId
+    target_commit: GitObjectId
+    target_tree: GitObjectId
+    impacts: Annotated[tuple[ReportImpact, ...], Field(min_length=1)]
+    snapshot_report_ids: tuple[ReportId, ...] = ()
+    ineligible_report_ids: tuple[ReportId, ...] = ()
+    up_to_date_report_ids: tuple[ReportId, ...] = ()
+    no_code_change_report_ids: tuple[ReportId, ...] = ()
+    unresolved_report_ids: tuple[ReportId, ...] = ()
+    generated_at: UtcDateTime
+    batch_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_canonical_batch(self) -> ReportImpactBatch:
+        report_ids = tuple(item.report_id for item in self.impacts)
+        if report_ids != tuple(sorted(report_ids)) or len(report_ids) != len(
+            set(report_ids)
+        ):
+            raise ValueError("batch impacts must be unique and sorted by Report ID")
+        skipped_groups = (
+            self.snapshot_report_ids,
+            self.ineligible_report_ids,
+            self.up_to_date_report_ids,
+            self.no_code_change_report_ids,
+            self.unresolved_report_ids,
+        )
+        for values in skipped_groups:
+            if values != tuple(sorted(values)) or len(values) != len(set(values)):
+                raise ValueError("batch skipped Report IDs must be unique and sorted")
+        all_report_ids = [*report_ids]
+        for values in skipped_groups:
+            all_report_ids.extend(values)
+        if len(all_report_ids) != len(set(all_report_ids)):
+            raise ValueError("a Report may appear only once in an Impact batch")
+        for impact in self.impacts:
+            if (
+                impact.impact_id != self.impact_id
+                or impact.target_commit != self.target_commit
+                or impact.target_tree != self.target_tree
+                or impact.generated_at != self.generated_at
+            ):
+                raise ValueError("batch child Impact identity does not match the batch")
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"batch_digest"},
+            exclude_none=True,
+        )
+        if self.batch_digest != canonical_digest(content):
+            raise ValueError(
+                "batch_digest does not match canonical ReportImpactBatch content"
+            )
+        return self
+
+
+class ImpactDecision(ProtocolRecord):
+    decision_id: DecisionId
+    impact_id: ImpactId
+    report_id: ReportId
+    expected_report_revision: Annotated[StrictInt, Field(ge=1)]
+    expected_impact_digest: Sha256Digest
+    impact_target_commit: GitObjectId
+    impact_target_tree: GitObjectId
+    decision_base_commit: GitObjectId
+    decision_base_tree: GitObjectId
+    disposition: ImpactDisposition
+    reviewer_actor: ShortText
+    reason: NonEmptyStr
+    rerun_task_id: TaskId | None = None
+    replacement_dependencies: DependencySet | None = None
+    decided_at: UtcDateTime
+    decision_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_canonical_impact_decision(self) -> ImpactDecision:
+        if (self.disposition is ImpactDisposition.RERUN) != (
+            self.rerun_task_id is not None
+        ):
+            raise ValueError("rerun disposition requires only rerun_task_id")
+        if (self.disposition is ImpactDisposition.DEPENDENCY_FIX) != (
+            self.replacement_dependencies is not None
+        ):
+            raise ValueError(
+                "dependency_fix disposition requires replacement_dependencies"
+            )
+        from researchctl.serialization import canonical_digest
+
+        content = self.model_dump(
+            mode="json",
+            exclude={"decision_digest"},
+            exclude_none=True,
+        )
+        if self.decision_digest != canonical_digest(content):
+            raise ValueError(
+                "decision_digest does not match canonical ImpactDecision content"
+            )
         return self
 
 
@@ -699,6 +1409,10 @@ ProtocolModel = (
     | ReviewDecision
     | ProjectPolicy
     | ReportRecord
+    | DependencyChangeReceipt
+    | ReportImpact
+    | ReportImpactBatch
+    | ImpactDecision
     | LinearProjectionPolicy
     | CIValidationAttestation
     | StatusUpdate

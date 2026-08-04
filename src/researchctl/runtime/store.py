@@ -31,6 +31,7 @@ from researchctl.serialization import canonical_json_bytes
 from researchctl.runtime.models import (
     AttentionItem,
     LinearDeliveryClaim,
+    LinearDeliveryRecord,
     LinearDeliveryReceiptRecord,
     OperationEvent,
     OperationRecord,
@@ -1971,6 +1972,262 @@ class RuntimeStore:
                 "last_claim_id": row["last_claim_id"],
                 "updated_at": _decode_time(row["updated_at"]),
             }
+
+    def list_linear_deliveries(
+        self,
+        project_id: str,
+        *,
+        topic: str | None = None,
+        state: str | None = None,
+        limit: int = 100,
+        observed_at: datetime | None = None,
+    ) -> tuple[LinearDeliveryRecord, ...]:
+        _require_text(project_id, "project_id")
+        if topic is not None and topic not in _LINEAR_DELIVERY_TOPICS:
+            raise ValueError("unknown Linear delivery topic")
+        if state is not None and state not in {
+            "pending",
+            "delivered",
+            "dead_letter",
+        }:
+            raise ValueError("invalid Linear delivery state")
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 1000
+        ):
+            raise ValueError("Linear delivery limit must be between 1 and 1000")
+        return self._query_linear_deliveries(
+            project_id=project_id,
+            topic=topic,
+            state=state,
+            outbox_id=None,
+            limit=limit,
+            observed_at=observed_at,
+        )
+
+    def get_linear_delivery(
+        self,
+        project_id: str,
+        *,
+        topic: str,
+        outbox_id: str,
+        observed_at: datetime | None = None,
+    ) -> LinearDeliveryRecord | None:
+        _require_text(project_id, "project_id")
+        _require_text(outbox_id, "outbox_id")
+        if topic not in _LINEAR_DELIVERY_TOPICS:
+            raise ValueError("unknown Linear delivery topic")
+        records = self._query_linear_deliveries(
+            project_id=project_id,
+            topic=topic,
+            state=None,
+            outbox_id=outbox_id,
+            limit=1,
+            observed_at=observed_at,
+        )
+        return records[0] if records else None
+
+    def _query_linear_deliveries(
+        self,
+        *,
+        project_id: str,
+        topic: str | None,
+        state: str | None,
+        outbox_id: str | None,
+        limit: int,
+        observed_at: datetime | None,
+    ) -> tuple[LinearDeliveryRecord, ...]:
+        observed = observed_at or datetime.now(UTC)
+        observed_timestamp = _encode_time(observed)
+        clauses = ["d.project_id = ?"]
+        filters: list[object] = [project_id]
+        if topic is not None:
+            clauses.append("d.topic = ?")
+            filters.append(topic)
+        if state is not None:
+            clauses.append("d.state = ?")
+            filters.append(state)
+        if outbox_id is not None:
+            clauses.append("d.outbox_id = ?")
+            filters.append(outbox_id)
+        query = (
+            """
+            WITH deliveries AS (
+                SELECT outbox_id, project_id, topic, aggregate_id,
+                       payload_json, created_at, state
+                FROM linear_projection_outbox
+                UNION ALL
+                SELECT outbox_id, project_id, topic, aggregate_id,
+                       payload_json, created_at, state
+                FROM notification_reply_outbox
+            )
+            SELECT
+                d.outbox_id, d.project_id, d.topic, d.aggregate_id,
+                d.payload_json, d.created_at, d.state,
+                s.attempt_count, s.last_error_code, s.last_claim_id,
+                s.updated_at AS status_updated_at,
+                c.claim_id AS active_claim_id,
+                c.claimed_at AS active_claimed_at,
+                c.expires_at AS active_expires_at,
+                r.receipt_id, r.credential_identity,
+                r.workspace_id AS receipt_workspace_id,
+                r.issue_id AS receipt_issue_id,
+                r.thread_id AS receipt_thread_id,
+                r.comment_id AS receipt_comment_id,
+                r.event_id AS receipt_event_id,
+                r.task_id AS receipt_task_id,
+                r.source_marker_json AS receipt_source_marker_json,
+                r.payload_digest AS receipt_payload_digest,
+                r.transport_digest AS receipt_transport_digest,
+                r.marker_text AS receipt_marker_text,
+                r.payload_json AS receipt_payload_json,
+                r.created_at AS receipt_created_at
+            FROM deliveries AS d
+            LEFT JOIN linear_delivery_status AS s
+              ON s.topic = d.topic AND s.outbox_id = d.outbox_id
+                 AND s.project_id = d.project_id
+            LEFT JOIN linear_delivery_claims AS c
+              ON c.topic = d.topic AND c.outbox_id = d.outbox_id
+                 AND c.project_id = d.project_id AND c.expires_at > ?
+            LEFT JOIN linear_delivery_receipts AS r
+              ON r.topic = d.topic AND r.outbox_id = d.outbox_id
+                 AND r.project_id = d.project_id
+            WHERE
+            """
+            + " AND ".join(clauses)
+            + " ORDER BY d.created_at DESC, d.outbox_id DESC LIMIT ?"
+        )
+        parameters = [observed_timestamp, *filters, limit]
+        with self._read_lock():
+            rows = self._connection.execute(query, parameters).fetchall()
+            return tuple(self._linear_delivery_record_from_row(row) for row in rows)
+
+    @classmethod
+    def _linear_delivery_record_from_row(
+        cls,
+        row: sqlite3.Row,
+    ) -> LinearDeliveryRecord:
+        outbox = cls._outbox_from_row(row)
+        active_claim = (
+            None
+            if row["active_claim_id"] is None
+            else LinearDeliveryClaim(
+                claim_id=row["active_claim_id"],
+                outbox=outbox,
+                claimed_at=_decode_time(row["active_claimed_at"]),  # type: ignore[arg-type]
+                expires_at=_decode_time(row["active_expires_at"]),  # type: ignore[arg-type]
+            )
+        )
+        receipt = cls._linear_delivery_receipt_from_query_row(row)
+        return LinearDeliveryRecord(
+            project_id=outbox.project_id,
+            topic=outbox.topic,
+            outbox_id=outbox.outbox_id,
+            aggregate_id=outbox.aggregate_id,
+            state=outbox.state,
+            created_at=outbox.created_at,
+            status_updated_at=_decode_time(row["status_updated_at"]),
+            attempt_count=int(row["attempt_count"] or 0),
+            last_error_code=row["last_error_code"],
+            last_claim_id=row["last_claim_id"],
+            active_claim=active_claim,
+            receipt=receipt,
+            lineage=cls._linear_delivery_lineage(outbox, receipt),
+        )
+
+    @staticmethod
+    def _linear_delivery_receipt_from_query_row(
+        row: sqlite3.Row,
+    ) -> LinearDeliveryReceiptRecord | None:
+        if row["receipt_id"] is None:
+            return None
+        marker = _decode_object(row["receipt_source_marker_json"])
+        return LinearDeliveryReceiptRecord(
+            receipt_id=row["receipt_id"],
+            project_id=row["project_id"],
+            credential_identity=row["credential_identity"],
+            topic=row["topic"],
+            outbox_id=row["outbox_id"],
+            workspace_id=row["receipt_workspace_id"],
+            issue_id=row["receipt_issue_id"],
+            thread_id=row["receipt_thread_id"],
+            comment_id=row["receipt_comment_id"],
+            event_id=row["receipt_event_id"],
+            task_id=row["receipt_task_id"],
+            source_marker=(
+                SessionNotificationSourceMarker.model_validate(marker)
+                if marker is not None
+                else None
+            ),
+            payload_digest=row["receipt_payload_digest"],
+            transport_digest=row["receipt_transport_digest"],
+            marker=row["receipt_marker_text"],
+            payload=_decode_object(row["receipt_payload_json"]) or {},
+            created_at=_decode_time(row["receipt_created_at"]),  # type: ignore[arg-type]
+        )
+
+    @staticmethod
+    def _linear_delivery_lineage(
+        outbox: OutboxRecord,
+        receipt: LinearDeliveryReceiptRecord | None,
+    ) -> dict[str, Any]:
+        lineage: dict[str, Any] = {"aggregate_id": outbox.aggregate_id}
+        for key in (
+            "event_id",
+            "agent_id",
+            "task_id",
+            "session_id",
+            "submission_id",
+            "decision_id",
+            "report_id",
+            "report_revision",
+            "accepted_merge_commit",
+            "ci_subject_head",
+            "ci_attestation_id",
+            "workflow_id",
+            "check_identity",
+            "notification_id",
+            "reply_id",
+            "commit_sha",
+            "actor_id",
+            "linear_issue_id",
+            "source_thread_id",
+            "source_comment_id",
+        ):
+            value = outbox.payload.get(key)
+            if value is not None:
+                lineage[key] = value
+        target = outbox.payload.get("target")
+        if isinstance(target, dict):
+            lineage["target"] = {
+                key: target[key]
+                for key in ("workspace_id", "team_id", "project_id", "issue_id")
+                if target.get(key) is not None
+            }
+        marker = outbox.payload.get("marker")
+        if isinstance(marker, dict):
+            lineage["marker"] = {
+                key: marker[key]
+                for key in (
+                    "agent_id",
+                    "task_id",
+                    "session_id",
+                    "report_id",
+                    "notification_id",
+                    "reply_id",
+                )
+                if marker.get(key) is not None
+            }
+        if receipt is not None:
+            lineage.setdefault("event_id", receipt.event_id)
+            lineage.setdefault("task_id", receipt.task_id)
+            if receipt.source_marker is not None:
+                lineage["source_marker"] = receipt.source_marker.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                )
+        return lineage
 
     def get_linear_delivery_receipt(
         self,

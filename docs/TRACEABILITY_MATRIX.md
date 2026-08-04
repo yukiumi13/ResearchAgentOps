@@ -1,7 +1,7 @@
 # Requirement Traceability Matrix
 
 Status: Phase 0 baseline
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 `docs/USER_SCENARIOS.md` is the scenario catalog. The contract column points to
 the current authoritative specification and ADRs. Phase 9 rows are deliberate
@@ -29,12 +29,12 @@ stable acceptance-suite keys, not filenames.
 | `US-017` | Canonical Submission, multiple renderers | Spec Sections 7.5, 7.8, 8, 14, 17; ADRs 0003, 0008, 0010 | 4 | `AT-US-017` | golden renderers, byte comparison and digest stability |
 | `US-018` | GitHub/VS Code/CLI review | Spec Sections 9, 14, 17; ADR 0003 | 4 | `AT-US-018` | proposal/digest parity and manager-only acceptance |
 | `US-019` | Single-repository truth and retention | Spec Sections 3, 9, 13-14; ADRs 0001, 0002 | 4 | `AT-US-019` | clean-clone validation and reachability disposition |
-| `US-020` | Rerun, waive, or stale impact decision | Spec Sections 6.6, 15; ADR 0005 | 6 | `AT-US-020` | conservative impact and stale-CAS rejection |
+| `US-020` | Rerun, waive, or stale impact decision | Spec Sections 6.6, 15; ADR 0005 | 6 | `AT-US-020` | effective status, explicit decision materialization and protected regeneration; live providers pending |
 | `US-021` | Trusted CI vs SSH experiments | Spec Sections 4.3, 7.8, 12, 17; ADRs 0007, 0010 | 4 | `AT-US-021` | secretless exact-head attestation and separate runner authority |
 | `US-022` | Onboarding and glossary | Spec Sections 8, 10, 18; scenario contract | 1 | `AT-US-022` | terminology/help golden tests and no-service start |
 | `US-023` | `allowed_write_paths` enforcement | Spec Sections 4.4, 7.1, 11, 17; ADRs 0007, 0011 | 2 | `AT-US-023` | prefix, traversal/symlink/rename/protected-path adversarial tests |
 | `US-024` | Batch-safe worktree sync | Spec Section 15; ADRs 0004, 0005 | 6 | `AT-US-024` | preview, safe-point policy, isolated conflict recovery |
-| `US-025` | Complete delegated plan and traceability | Spec Sections 20-21; Implementation Plan | 0 | `AT-US-025` | static 33-ID, 77-prompt, phase and test coverage check |
+| `US-025` | Complete delegated plan and traceability | Spec Sections 20-21; Implementation Plan; Workflow Coverage | 0 | `AT-US-025` | static 33-ID, 77-prompt, phase, test, workflow and status coverage check |
 | `US-026` | Merge/abandon/retain-isolated disposition | Spec Sections 9, 14; ADRs 0002, 0005 | 4 | `AT-US-026` | disposition gate, cleanup safety, snapshot claim |
 | `US-027` | Local CI and benchmark responsiveness | Spec Sections 19-21 | 1 | `AT-US-027` | supported-envelope latency and queue/execution metrics |
 | `US-028` | SSH plus tmux, not Slurm/daemon | Spec Sections 2, 6.3, 11-13 | 2 | `AT-US-028` | deterministic tmux lifecycle and no scheduler dependency |
@@ -73,3 +73,9 @@ the stable `US-*` catalog.
 | `REQ-20260803-004` | `US-008`, `US-013`, `US-014`, `US-021`, `US-023`, `US-028` | Design Assessment conclusion |
 | `REQ-20260803-005` | `US-017`, `US-018`, `US-021`, `US-030`, `US-033` | Spec Sections 14 and 17; ADR 0010 |
 | `REQ-20260803-006` | `US-006`, `US-009`, `US-010`, `US-030`, `US-033` | Spec Sections 7.9 and 11.1; ADR 0012 |
+| `REQ-20260803-007` | `US-017`, `US-018`, `US-021`, `US-026` | Spec Section 14; Mutation Contracts Section 5; ADR 0003 |
+| `REQ-20260803-008` | `US-008`, `US-013`, `US-021`, `US-023`, `US-027` | Spec Sections 7.2, 12, and 17; Mutation Contracts Sections 3 and 5; ExperimentPlan, reviewer-control, Run/Submission/CI tests |
+| `REQ-20260803-009` | `US-019`, `US-020`, `US-021`, `US-026` | Spec Section 15; Mutation Contracts Section 5; ADR 0005 |
+| `REQ-20260803-010` | `US-014`, `US-020`, `US-025`, `US-027` | Workflow Coverage; ADR 0013; traceability parser test |
+| `REQ-20260803-011` | `US-016`, `US-020`, `US-021` | Spec Section 15; ADRs 0005 and 0013; receipt/evaluator tests |
+| `REQ-20260803-012` | `US-002`, `US-018`, `US-020`, `US-021` | Spec Sections 4 and 15; Mutation Contracts Section 5; ADR 0005; status/decision/CI tests |
