@@ -400,6 +400,7 @@ def doc_tree_command(
         repository, policy = _repository_and_policy(project, policy_file)
         baseline_repository: Path | None = None
         baseline_policy: DocumentLayoutPolicy | None = None
+        baseline_policy_missing = False
         if baseline_project is not None:
             try:
                 baseline_repository, baseline_policy = _repository_and_policy(
@@ -411,11 +412,13 @@ def doc_tree_command(
                     raise
                 baseline_repository = discover_repository(baseline_project).root
                 baseline_policy = policy
+                baseline_policy_missing = True
         result = lint_document_tree(
             repository,
             policy,
             baseline_root=baseline_repository,
             baseline_policy=baseline_policy,
+            baseline_policy_missing=baseline_policy_missing,
         )
     except Exception as exc:
         _abort(_error(exc), command="doc.tree", json_output=json_output)

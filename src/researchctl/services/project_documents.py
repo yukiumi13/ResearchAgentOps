@@ -686,6 +686,7 @@ def lint_document_tree(
     *,
     baseline_root: Path | None = None,
     baseline_policy: DocumentLayoutPolicy | None = None,
+    baseline_policy_missing: bool = False,
 ) -> DocumentTreeLintResult:
     repository = Path(os.path.abspath(os.fspath(repository_root)))
     findings: list[DocumentFinding] = []
@@ -1035,6 +1036,7 @@ def lint_document_tree(
             baseline_repository,
             selected_baseline_policy,
             findings,
+            allow_missing_root=baseline_policy_missing,
         )
 
     return DocumentTreeLintResult(
@@ -1050,6 +1052,8 @@ def _lint_frozen_documents(
     baseline_repository: Path,
     baseline_policy: DocumentLayoutPolicy,
     findings: list[DocumentFinding],
+    *,
+    allow_missing_root: bool = False,
 ) -> None:
     baseline_document_root = baseline_repository / baseline_policy.root
     if baseline_repository.is_symlink() or not baseline_repository.is_dir():
@@ -1058,6 +1062,12 @@ def _lint_frozen_documents(
             message="Document baseline must be an existing non-symlink directory.",
         )
     if baseline_document_root.is_symlink() or not baseline_document_root.is_dir():
+        if (
+            allow_missing_root
+            and not baseline_document_root.exists()
+            and not baseline_document_root.is_symlink()
+        ):
+            return
         findings.append(
             DocumentFinding(
                 kind="invalid",

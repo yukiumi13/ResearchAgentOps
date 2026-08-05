@@ -466,6 +466,19 @@ def test_tree_lint_compares_frozen_documents_with_explicit_baseline(
     )
     assert any(finding.code == "frozen_document_modified" for finding in invalid.findings)
 
+    missing_root_baseline = tmp_path / "missing-root-baseline"
+    missing_root_baseline.mkdir()
+    missing_root = lint_document_tree(
+        current,
+        policy,
+        baseline_root=missing_root_baseline,
+        baseline_policy=policy,
+    )
+    assert any(
+        finding.code == "document_baseline_root_missing"
+        for finding in missing_root.findings
+    )
+
 
 def test_tree_lint_requires_each_configured_root_file(tmp_path: Path) -> None:
     policy = _custom_policy()
@@ -542,8 +555,8 @@ def test_doc_cli_uses_current_policy_for_a_pre_policy_baseline(
     baseline = tmp_path / "baseline"
     for repository in (current, baseline):
         subprocess.run(["git", "init", "-q", str(repository)], check=True)
-        (repository / "docs").mkdir()
-        (repository / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (current / "docs").mkdir()
+    (current / "docs/README.md").write_text("# Index\n", encoding="utf-8")
     (current / ".researchctl-docs.yaml").write_text(
         dump_yaml(_custom_policy()),
         encoding="utf-8",
