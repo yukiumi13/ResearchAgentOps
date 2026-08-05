@@ -146,3 +146,20 @@ requirements so traceability does not silently stop at that boundary.
   and disposition-specific inputs. Protected-base CI regenerates the exact
   Decision/Report bytes. A rerun decision references a manager-created Task but
   never starts, retries, or collects a Run.
+
+## REQ-20260804-001 - Project document contracts work without research init
+
+- Source: post-export project-document hierarchy and standalone-lint discussion,
+  2026-08-04.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: a Git repository with `.researchctl-docs.yaml` but no `.research`,
+  SQLite database, Session, or manager context can run the same strict document
+  schema/tree/render diagnostics locally and in CI. Canonical `a/b:c` routes
+  bind type, contract, and directory; unknown hierarchy changes fail closed.
+  Frontmatter/path agreement, required relations, finite legacy exceptions,
+  deterministic YAML/Markdown pairs, visible renderer versions, optional
+  generated index freshness, baseline-frozen bytes, and configured machine-only
+  artifact roots are checked. Standalone policy is CODEOWNERS-protected; after
+  initialization, label/directory/contract/index/artifact-root remapping uses the
+  manager-only field-scoped `doc.configure-layout` proposal. Tags do not grant
+  routing or authority.

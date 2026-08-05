@@ -79,3 +79,4 @@ the stable `US-*` catalog.
 | `REQ-20260803-010` | `US-014`, `US-020`, `US-025`, `US-027` | Workflow Coverage; ADR 0013; traceability parser test |
 | `REQ-20260803-011` | `US-016`, `US-020`, `US-021` | Spec Section 15; ADRs 0005 and 0013; receipt/evaluator tests |
 | `REQ-20260803-012` | `US-002`, `US-018`, `US-020`, `US-021` | Spec Sections 4 and 15; Mutation Contracts Section 5; ADR 0005; status/decision/CI tests |
+| `REQ-20260804-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; document schema/tree/CI tests |

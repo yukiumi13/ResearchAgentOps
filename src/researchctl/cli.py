@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from researchctl.ci_cli import ci_app
 from researchctl.constants import __version__
+from researchctl.document_cli import doc_app
 from researchctl.errors import RCPError
 from researchctl.notification_cli import notification_app
 from researchctl.output import dump_envelope, envelope, error_payload
@@ -32,6 +33,7 @@ from researchctl.serialization import SerializationError
 from researchctl.services.doctor import doctor
 from researchctl.services.init_project import initialize_project
 from researchctl.services.upgrade import check_upgrade
+from researchctl.writing_cli import brief_app, update_app
 
 app = typer.Typer(
     name="researchctl",
@@ -50,6 +52,9 @@ app.add_typer(plan_app, name="plan")
 app.add_typer(linear_app, name="linear")
 app.add_typer(review_app, name="review")
 app.add_typer(report_app, name="report")
+app.add_typer(doc_app, name="doc")
+app.add_typer(brief_app, name="brief")
+app.add_typer(update_app, name="update")
 app.add_typer(notification_app, name="notification")
 app.add_typer(ci_app, name="ci")
 app.command("submit")(submit_command)

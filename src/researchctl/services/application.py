@@ -14,6 +14,7 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     CIValidationAttestation,
+    DocumentLayoutPolicy,
     ExperimentPlan,
     LinearProjectionPolicy,
     ProjectPolicy,
@@ -34,6 +35,9 @@ from researchctl.runtime.models import (
 from researchctl.runtime.store import RuntimeStore, attention_dedupe_key
 from researchctl.serialization import canonical_digest
 from researchctl.services.actor import ActorContext, ActorRole
+from researchctl.services.control_document_layout_policy import (
+    DocumentLayoutPolicyWriteResult,
+)
 from researchctl.services.control_linear_policy import LinearPolicyWriteResult
 from researchctl.services.control_plan_review_policy import PlanReviewPolicyWriteResult
 from researchctl.services.linear_delivery_read import (
@@ -44,6 +48,7 @@ from researchctl.services.linear_delivery_read import (
 from researchctl.services.requests import (
     BootstrapAcceptRequest,
     BootstrapProposalRequest,
+    DocumentLayoutConfigureRequest,
     InboxAckRequest,
     InboxListRequest,
     InboxResolveRequest,
@@ -365,6 +370,13 @@ class PlanReviewPolicyControl(Protocol):
     ) -> PlanReviewPolicyWriteResult: ...
 
 
+class DocumentLayoutPolicyControl(Protocol):
+    def configure(
+        self,
+        policy: DocumentLayoutPolicy,
+    ) -> DocumentLayoutPolicyWriteResult: ...
+
+
 class PostMergeAutomationResult(Protocol):
     state: str
 
@@ -418,6 +430,7 @@ class ApplicationService:
         notification_commits: SessionCommitVerifier | None = None,
         linear_policy_control: LinearPolicyControl | None = None,
         plan_review_policy_control: PlanReviewPolicyControl | None = None,
+        document_layout_policy_control: DocumentLayoutPolicyControl | None = None,
         linear_worker: LinearAutomation | None = None,
         post_merge: PostMergeAutomation | None = None,
         clock: Callable[[], datetime] = utc_now,
@@ -438,6 +451,7 @@ class ApplicationService:
         self.notification_commits = notification_commits
         self.linear_policy_control = linear_policy_control
         self.plan_review_policy_control = plan_review_policy_control
+        self.document_layout_policy_control = document_layout_policy_control
         self._linear_worker = linear_worker
         self._post_merge = post_merge
         self._clock = clock
@@ -1025,6 +1039,80 @@ class ApplicationService:
         )
         data = {
             "plan_review_policy": written.review_policy.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            "previous_policy_digest": written.previous_policy_digest,
+            "policy_digest": written.policy_digest,
+            "path": relative_path,
+            "changed": written.proposal.effect_applied,
+            "proposal": proposal,
+        }
+        return self._finish(
+            operation,
+            (
+                "proposal_prepared"
+                if written.proposal.effect_applied
+                else "no_change"
+            ),
+            data,
+        )
+
+    @_journaled_mutation("doc.configure-layout")
+    def document_layout_configure(
+        self,
+        request: DocumentLayoutConfigureRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "doc.configure-layout"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(operation, actor, ActorRole.MANAGER)
+        if self.document_layout_policy_control is None:
+            raise RCPError(
+                code="document_layout_policy_control_not_configured",
+                message="Document layout policy proposal preparation is not configured.",
+            )
+        written = self.document_layout_policy_control.configure(
+            request.document_layout
+        )
+        proposal = written.proposal.as_dict()
+        try:
+            relative_path = written.path.relative_to(
+                written.proposal.worktree
+            ).as_posix()
+        except ValueError as error:
+            raise RCPError(
+                code="document_layout_policy_control_receipt_mismatch",
+                message="Document layout policy receipt path is outside its worktree.",
+            ) from error
+        expected_branch = f"research/control/{request.operation_id}"
+        if (
+            written.document_layout != request.document_layout
+            or written.project_policy.document_layout != request.document_layout
+            or written.base_commit != request.expected_default_head
+            or written.policy_digest != canonical_digest(written.project_policy)
+            or written.proposal.branch != expected_branch
+            or relative_path != PROJECT_POLICY_PATH
+        ):
+            raise RCPError(
+                code="document_layout_policy_control_receipt_mismatch",
+                message="Document layout policy receipt does not bind the configure request.",
+            )
+        self.runtime.append_operation_event(
+            operation.operation_id,
+            "document_layout_policy_observed",
+            self._clock(),
+            {
+                "base_commit": written.base_commit,
+                "previous_policy_digest": written.previous_policy_digest,
+                "policy_digest": written.policy_digest,
+                "proposal_commit": written.proposal.commit,
+            },
+        )
+        data = {
+            "document_layout": written.document_layout.model_dump(
                 mode="json",
                 exclude_none=True,
             ),

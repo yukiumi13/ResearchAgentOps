@@ -199,6 +199,23 @@ Static completeness and preliminary local benchmarks exist. Static mapping is
 not runtime acceptance, and production p95/p99 or external pilot claims require
 recorded measurements from an exact release commit.
 
+### WF-15 - Portable Project Document Contracts
+
+```text
+project policy -> classification/type/contract/directory routes
+-> human or Agent authors canonical source -> schema/path/relation/tree lint
+-> deterministic render/index comparison -> optional frozen baseline comparison
+-> local/editor/CI findings -> repository review
+```
+
+Without `researchctl init`, `.researchctl-docs.yaml` supplies the complete static
+policy and CODEOWNERS protects policy changes. Managed repositories use the same
+policy shape under ProjectPolicy and manager-only `doc.configure-layout`.
+Machine artifact roots use explicit extension allowlists and reject Markdown,
+so prose can move to `docs/` without changing script-consumed `data/` paths.
+Local schema/tree/index/frozen checks and source-workflow wiring are verified;
+an editor/language-server adapter and a protected-repository pilot remain open.
+
 ## Scenario Checklist
 
 | Check | Scenario | Status | Primary workflow | Supporting workflows | Current proof | Open acceptance gap |
@@ -216,15 +233,15 @@ recorded measurements from an exact release commit.
 | [x] | `US-011` | `partial` | `WF-02` | `WF-11` | execution-domain policy records | HostPool selection and grouped fleet view |
 | [x] | `US-012` | `partial` | `WF-05` | `WF-11` | typed local preflight and immutable inputs | cross-domain staging and destination verification |
 | [x] | `US-013` | `partial` | `WF-03` | `WF-04` | local tmux attach/pause/continue and one-writer rules | provider-complete remote continuation |
-| [x] | `US-014` | `verified_local` | `WF-00` | `WF-14` | Git/tmux/SQLite composition and CLI/JSON parity | observed pilot maintenance budget |
-| [x] | `US-015` | `verified_local` | `WF-05` | `WF-06` | protected paths and renderer-owned Markdown tests | cleanup pilot across long-lived repository |
+| [x] | `US-014` | `verified_local` | `WF-00` | `WF-14`, `WF-15` | Git/tmux/SQLite composition, portable document linter, and CLI/JSON parity | observed pilot maintenance budget |
+| [x] | `US-015` | `verified_local` | `WF-15` | `WF-05`, `WF-06` | frontmatter/path/tree, frozen baseline, orphan render, and machine-root tests | cleanup pilot across long-lived repository |
 | [x] | `US-016` | `verified_local` | `WF-05` | `WF-06` | mismatch/failure evidence and submission checks | explicit failure-study policy workflow |
 | [x] | `US-017` | `partial` | `WF-06` | `WF-09`, `WF-10` | canonical Submission/renderers plus separate Plan/PlanReview evidence and deterministic CI replay | live PR and installed-rule pilot |
 | [x] | `US-018` | `partial` | `WF-06` | `WF-09` | fixed GitHub PR plus CLI/Git review artifacts | request-changes/reject/abandon end-to-end pilot |
 | [x] | `US-019` | `partial` | `WF-08` | `WF-01`, `WF-06` | Git-owned accepted records and immutable refs | reachability-aware cleanup and retention apply |
 | [x] | `US-020` | `partial` | `WF-07` | `WF-05` | batch, typed receipts, fail-closed unresolved classification, effective status and explicit decisions | live providers/replay and protected-repository pilot |
-| [x] | `US-021` | `partial` | `WF-09` | `WF-05` | secretless exact-head CI separated from Runs | installed branch rules and authorized runner pilot |
-| [x] | `US-022` | `partial` | `WF-01` | `WF-14` | init/doctor/help and core terminology | glossary golden tests and novice usability run |
+| [x] | `US-021` | `partial` | `WF-09` | `WF-05`, `WF-15` | secretless exact-head CI and baseline document lint separated from Runs | installed branch rules and authorized runner pilot |
+| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free document checks plus init/doctor/help and core terminology | glossary golden tests and novice usability run |
 | [x] | `US-023` | `verified_local` | `WF-03` | `WF-06`, `WF-09` | traversal/symlink/rename/protected path tests | hostile same-user isolation remains out of scope |
 | [x] | `US-024` | `designed` | `WF-08` | `WF-03`, `WF-07` | safe-point and conflict contract | preview/apply batch sync implementation |
 | [x] | `US-025` | `verified_local` | `WF-14` | `WF-00` | 77-prompt/33-scenario static traceability tests | executed acceptance results must stay separate |
@@ -233,7 +250,7 @@ recorded measurements from an exact release commit.
 | [x] | `US-028` | `partial` | `WF-03` | `WF-11` | deterministic local tmux and no daemon dependency | fixed SSH remote lifecycle |
 | [x] | `US-029` | `designed` | `WF-11` | `WF-05` | exact-input and ambiguity contracts | on-prem-to-cloud run and artifact return |
 | [x] | `US-030` | `deployment_pending` | `WF-10` | `WF-09` | stable outbox/receipt and crash-recovery fake-port tests | real Linear comment canary |
-| [x] | `US-031` | `partial` | `WF-01` | `WF-00` | dirty/idempotent init and bootstrap tests | explicit upgrade apply and realistic repo pilot |
+| [x] | `US-031` | `partial` | `WF-01` | `WF-00`, `WF-15` | standalone document adoption plus dirty/idempotent init and bootstrap tests | explicit upgrade apply and realistic repo pilot |
 | [x] | `US-032` | `designed` | `WF-12` | `WF-11` | allocation safety ADR and state contract | controller, contention, quarantine, restore tests |
 | [x] | `US-033` | `deployment_pending` | `WF-10` | `WF-13` | Git-authoritative replay and ignored-mutation tests | outage/canary against real Linear transport |
 
@@ -263,6 +280,10 @@ recorded measurements from an exact release commit.
    tested. Documentation must keep `deployment_pending` separate from local
    completion until branch rules, credentials, and a shadow/canary pilot are
    observed from an exact release commit.
+7. `Low`: document diagnostics are reusable through CLI/JSON and generated
+   schemas, but no editor language-server adapter currently streams per-keystroke
+   findings. That adapter should remain a thin presentation over WF-15 rather
+   than another policy implementation.
 
 ## Dependency Framework Decision
 

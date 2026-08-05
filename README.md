@@ -138,6 +138,80 @@ non-passing opinion blocks compilation or execution. Plan-backed Submissions
 carry separate `plan.yaml` and `plan-review.yaml` evidence, and protected CI
 reruns deterministic validation from the protected Task and Project policy.
 
+## Concise Research Writing
+
+`AnalysisBrief` and `ResearchUpdate` are presentation contracts, not accepted
+research authority. They keep Agent-authored analysis and operational updates
+short before those texts enter a review document or Linear comment.
+
+An `AnalysisBrief` contains one question, one conclusion, one protocol, up to
+five metrics, up to eight `setting` rows, at most three interpretation points,
+at most three material limitations, and explicit source references. Every
+setting supplies the same metrics and references declared sources. The linter
+also enforces sentence, English-word, and CJK-character budgets.
+
+```bash
+researchctl brief lint analysis-brief.yaml
+researchctl brief render analysis-brief.yaml --output-file analysis-brief.md
+```
+
+The Markdown renderer fixes the order to Answer, Evidence, Interpretation,
+Limits, and Sources. Generated output carries a renderer marker and should not
+be edited by hand.
+
+`ResearchUpdate` represents exactly one operational delta: started, completed,
+failed, or conclusion changed. It allows no more than two evidence values and
+renders a compact heading/bullet update with a visible renderer marker:
+
+```bash
+researchctl update lint research-update.yaml
+researchctl update render research-update.yaml
+```
+
+The update renderer produces a deterministic Linear-sized preview. Delivery
+policy, issue binding, credentials, and accepted Report projection remain
+separate concerns; passing writing lint does not authorize publication or make
+the update canonical research truth.
+
+## Portable Project Documents
+
+Document contracts can be adopted without `researchctl init`. Put a strict
+`DocumentLayoutPolicy` in `.researchctl-docs.yaml`, protect that file with
+CODEOWNERS, and run the same static checks locally or in any CI:
+
+```bash
+researchctl doc tree --project .
+researchctl doc tree --project . --json
+```
+
+The command does not open `.research`, SQLite, a Session, or manager state. It
+checks canonical `a/b:c` classification routes, frontmatter schemas, type/path
+agreement, required relations, directory depth, links, structured YAML/Markdown
+pairs, renderer bytes, optional generated index freshness, and finite legacy
+exceptions. An optional baseline checkout also enforces byte immutability for
+documents already marked `validity: frozen`:
+
+```bash
+researchctl doc tree --project . --baseline-project /path/to/base-checkout
+```
+
+Projects can keep stable machine inputs under paths such as `data/` by declaring
+`machine_artifact_roots` with explicit extension allowlists. Those roots can
+never allow Markdown, so prose moves to `docs/` without forcing scripts to change
+their data paths. `researchctl doc index` deterministically renders the configured
+type/classification/contract/directory table.
+
+After initialization, the identical policy lives under
+`.research/policies/default.yaml.document_layout`. Changing a label, directory,
+contract, index, artifact root, or route mapping then uses manager-only
+`researchctl doc configure-layout`; protected-base CI verifies that no other
+Project policy field changed. Ordinary tags never affect routing or authority.
+
+Generated schemas include `document-layout-policy`, `markdown-frontmatter`,
+`design-document`, `project-status-summary`, and `analysis-brief`. Editor and
+Agent integrations should consume those schemas or `doc tree --json` rather than
+implementing a second validator. The exact decision is recorded in ADR 0014.
+
 ## Session Addressing
 
 Sessions do not need email addresses, Linear accounts, or one external user per
@@ -233,6 +307,9 @@ Implemented and tested locally:
   no-fallback lint, explicit manager-owned reviewer policy control, independent
   ephemeral review, deterministic RunSpec compilation, Run gating, separate
   Submission evidence, and protected-CI replay;
+- portable standalone/managed project-document schemas, classification routes,
+  frontmatter/tree lint, deterministic render/index checks, frozen-baseline
+  enforcement, machine-artifact boundaries, and manager-owned layout control;
 - Submission, Decision, deterministic Report rendering, manager acceptance,
   constrained Agent-authored GitHub PR delivery, protected-base dispatch,
   exact-head validation, and source tests;

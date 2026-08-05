@@ -87,6 +87,10 @@ SessionId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("session")),
 ]
+DocumentId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("document")),
+]
 OperationId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("operation")),
@@ -154,6 +158,25 @@ NotificationReplyId = Annotated[
 HumanKey = Annotated[
     str,
     StringConstraints(strict=True, pattern=r"^[A-Za-z][A-Za-z0-9._-]{0,63}$"),
+]
+DocumentSlug = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        max_length=80,
+    ),
+]
+DocumentLabel = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=(
+            r"^[a-z][a-z0-9-]*(?:/[a-z][a-z0-9-]*)*"
+            r":[a-z][a-z0-9-]*$"
+        ),
+        max_length=128,
+    ),
 ]
 Sha256Digest = Annotated[
     str,

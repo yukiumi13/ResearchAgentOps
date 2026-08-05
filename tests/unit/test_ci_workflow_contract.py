@@ -57,8 +57,12 @@ def test_source_tests_run_exact_pr_head_without_secrets_or_write_permission() ->
     assert "ref: ${{ github.event.pull_request.head.sha }}" in content
     assert "persist-credentials: false" in content
     assert 'observed_head" != "$RCP_HEAD_SHA' in content
+    assert "RCP_BASE_SHA: ${{ github.event.pull_request.base.sha }}" in content
+    assert 'git worktree add --detach "$RUNNER_TEMP/researchctl-base" "$RCP_BASE_SHA"' in content
     assert "pip install '.[dev]'" in content
     assert 'bin/python" -m pytest' in content
+    assert 'doc tree \\' in content
+    assert '--baseline-project "$RUNNER_TEMP/researchctl-base"' in content
     assert "ci dispatch" not in content
     assert "LINEAR" not in content
     assert "SSH_" not in content
@@ -87,6 +91,7 @@ def test_codeowners_template_has_no_claimed_real_owner() -> None:
     assert "/.research/reports/" in content
     assert "/.research/tasks/" in content
     assert "/.github/workflows/" in content
+    assert "/.researchctl-docs.yaml" in content
     assert "/src/researchctl/" in content
     assert "/src/researchctl/services/ci_validation.py" in content
     owners = re.findall(r"(?m)^/\S+\s+(@\S+)$", content)

@@ -8,11 +8,20 @@ from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 
 
 EXPECTED_FILE_SHA256 = {
+    "analysis-brief.schema.json": (
+        "12ed5e47d2062c99e4f8c6ad729adf4a5d93ae4c5de3a3d61b953b5b5e7eb64c"
+    ),
     "ci-validation-attestation.schema.json": (
         "28545c955f8732f6f07b0ace2655888c410a64bb6745d078de0fc8bf57165100"
     ),
     "dependency-change-receipt.schema.json": (
         "9c84ab2efb3a14e72194aea7dc724d733492f44a111ed9da648c09ea9259517a"
+    ),
+    "design-document.schema.json": (
+        "7957d08df38bd16c4200deab85293829ab275e3c4139932e8c68ff709b92ad13"
+    ),
+    "document-layout-policy.schema.json": (
+        "58505dd099742e8b9eabcb873597688541943ca216abadd06b7e1946ee4182b1"
     ),
     "experiment-plan.schema.json": (
         "ea9a9e6605cfeed351cb603ade19dab4c2a2e0050fad77742e1fa1c14e1eabd5"
@@ -23,12 +32,18 @@ EXPECTED_FILE_SHA256 = {
     "linear-projection-policy.schema.json": (
         "1fe26641a13487c156e897b61dc57e728ecdb3e9ea933e96f6084710d11b2646"
     ),
+    "markdown-frontmatter.schema.json": (
+        "1929e4aa632a802d41eeb952365bd70997ca1c8dcd4be372c47d1055309376ec"
+    ),
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
-    "policy.schema.json": "9f50cdae7e15d3ff7ad43269a45d72ee1070064ed9e482e51c84602613c23c69",
-    "manifest.json": "4025543d5e1205375aef5dbb361bacef99cee4074e61aa82ac676714952737e0",
+    "policy.schema.json": "7441eb0e6dc1ebabd89dde53e75fed1b00cae0114fc0ab4e23258d230da087fb",
+    "manifest.json": "dfc592ad24b96ca899010d02eed96ec400775f608358b8c7d13d174ecce18fac",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
+    "project-status-summary.schema.json": (
+        "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"
+    ),
     "report-proposal.schema.json": (
         "4208f055cfc0429fb10f6d33b9b82d5b9bd6716eeae712974023bb8c52be75c6"
     ),
@@ -41,6 +56,9 @@ EXPECTED_FILE_SHA256 = {
     "report.schema.json": "6c2ba291f310a5c0e4f17683b41ebc4337b8ad40c61852e016717f4e7fdf62ae",
     "research-submission.schema.json": (
         "9194a5383e9323596ee51a900c5633376f48bfaf589424027f9ab236244d0c39"
+    ),
+    "research-update.schema.json": (
+        "3faa7a548a30ffa72bc3b51194e6340dc52a5d6c7caa947b9263951453b2f3fb"
     ),
     "review-decision.schema.json": (
         "e5de29722548b47f2f005399911caa5d60a2dca9d393ddb58305ac621b635cad"

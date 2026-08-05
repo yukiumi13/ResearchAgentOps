@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from datetime import date
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -9,6 +11,7 @@ from pydantic import (
     Field,
     JsonValue,
     StrictBool,
+    StrictFloat,
     StrictInt,
     TypeAdapter,
     model_validator,
@@ -42,6 +45,9 @@ from researchctl.domain.enums import (
 from researchctl.domain.types import (
     DependencyReceiptId,
     DecisionId,
+    DocumentId,
+    DocumentLabel,
+    DocumentSlug,
     GitObjectId,
     HumanKey,
     ImpactId,
@@ -159,6 +165,182 @@ class PlanReviewPolicy(StrictModel):
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3600)]
 
 
+DocumentKind = Literal["design_document", "project_status_summary"]
+DocumentSchema = Literal[
+    "design-document",
+    "project-status-summary",
+    "analysis-brief",
+    "markdown-frontmatter",
+]
+DocumentRelationKind = Literal["supersedes", "derived_from", "see_also"]
+
+
+class DocumentRoute(StrictModel):
+    classification: DocumentLabel
+    document_type: DocumentSlug
+    directory: RepositoryPath
+    contract: DocumentSchema
+    required_relations: tuple[DocumentRelationKind, ...] = ()
+
+
+class LegacyDocumentPath(StrictModel):
+    path: RepositoryPath
+    classification: DocumentLabel
+    migration_target: RepositoryPath
+    reason: ShortText
+
+
+class MachineArtifactRoot(StrictModel):
+    directory: RepositoryPath
+    allowed_extensions: Annotated[tuple[str, ...], Field(min_length=1)] = (
+        ".csv",
+        ".json",
+        ".jsonl",
+        ".xlsx",
+        ".py",
+    )
+
+    @model_validator(mode="after")
+    def require_machine_only_extensions(self) -> MachineArtifactRoot:
+        if self.directory == ".":
+            raise ValueError("machine artifact root must identify a repository directory")
+        if len(self.allowed_extensions) != len(set(self.allowed_extensions)):
+            raise ValueError("machine artifact extensions must be unique")
+        for extension in self.allowed_extensions:
+            if (
+                not extension.startswith(".")
+                or extension != extension.lower()
+                or len(extension) < 2
+                or not extension[1:].replace("-", "").isalnum()
+            ):
+                raise ValueError(
+                    "machine artifact extensions must be lowercase dot-prefixed suffixes"
+                )
+        if {".md", ".markdown"} & set(self.allowed_extensions):
+            raise ValueError("machine artifact roots cannot allow Markdown")
+        return self
+
+
+def _default_document_routes() -> tuple[DocumentRoute, ...]:
+    return (
+        DocumentRoute(
+            classification="decision/architecture:adr",
+            document_type="adr",
+            directory="docs/adr",
+            contract="markdown-frontmatter",
+        ),
+        DocumentRoute(
+            classification="design/architecture:proposal",
+            document_type="design",
+            directory="docs/design",
+            contract="design-document",
+        ),
+        DocumentRoute(
+            classification="operations/project:runbook",
+            document_type="runbook",
+            directory="docs/runbooks",
+            contract="markdown-frontmatter",
+        ),
+        DocumentRoute(
+            classification="reference/project:document",
+            document_type="reference",
+            directory="docs/reference",
+            contract="markdown-frontmatter",
+        ),
+        DocumentRoute(
+            classification="status/project:snapshot",
+            document_type="status",
+            directory="docs/status",
+            contract="project-status-summary",
+        ),
+    )
+
+
+class DocumentLayoutPolicy(StrictModel):
+    root: RepositoryPath = "docs"
+    routes: Annotated[tuple[DocumentRoute, ...], Field(min_length=1)] = Field(
+        default_factory=_default_document_routes
+    )
+    root_files: tuple[RepositoryPath, ...] = ("docs/README.md",)
+    generated_index: RepositoryPath | None = None
+    legacy_files: tuple[LegacyDocumentPath, ...] = ()
+    machine_artifact_roots: tuple[MachineArtifactRoot, ...] = ()
+    max_depth: Annotated[StrictInt, Field(ge=1, le=8)] = 4
+
+    @model_validator(mode="after")
+    def require_closed_unambiguous_layout(self) -> DocumentLayoutPolicy:
+        root_parts = PurePosixPath(self.root).parts
+
+        def within_root(path: str) -> bool:
+            parts = PurePosixPath(path).parts
+            return parts[: len(root_parts)] == root_parts and len(parts) > len(root_parts)
+
+        labels = tuple(route.classification for route in self.routes)
+        types = tuple(route.document_type for route in self.routes)
+        directories = tuple(route.directory for route in self.routes)
+        if len(labels) != len(set(labels)):
+            raise ValueError("document route classifications must be unique")
+        if len(types) != len(set(types)):
+            raise ValueError("document route types must be unique")
+        if any(not within_root(directory) for directory in directories):
+            raise ValueError("document route directories must be below the document root")
+        directory_parts = [PurePosixPath(directory).parts for directory in directories]
+        for index, parts in enumerate(directory_parts):
+            for other_index, other in enumerate(directory_parts):
+                if index != other_index and parts[: len(other)] == other:
+                    raise ValueError("document route directories must not overlap")
+
+        root_files = tuple(self.root_files)
+        if len(root_files) != len(set(root_files)) or any(
+            not within_root(path) for path in root_files
+        ):
+            raise ValueError("document root_files must be unique files below the root")
+        if self.generated_index is not None and self.generated_index not in root_files:
+            raise ValueError("generated document index must be declared in root_files")
+
+        legacy_paths = tuple(item.path for item in self.legacy_files)
+        migration_targets = tuple(item.migration_target for item in self.legacy_files)
+        if len(legacy_paths) != len(set(legacy_paths)):
+            raise ValueError("legacy document paths must be unique")
+        if any(
+            not within_root(path)
+            for path in (*legacy_paths, *migration_targets)
+        ):
+            raise ValueError("legacy paths and migration targets must be below the root")
+        if set(legacy_paths) & set(root_files):
+            raise ValueError("legacy documents cannot also be root files")
+        route_labels = set(labels)
+        if any(item.classification not in route_labels for item in self.legacy_files):
+            raise ValueError("legacy documents must use an accepted route classification")
+
+        artifact_directories = tuple(
+            item.directory for item in self.machine_artifact_roots
+        )
+        if len(artifact_directories) != len(set(artifact_directories)):
+            raise ValueError("machine artifact roots must be unique")
+        document_parts = PurePosixPath(self.root).parts
+        artifact_parts = [
+            PurePosixPath(directory).parts for directory in artifact_directories
+        ]
+        for index, parts in enumerate(artifact_parts):
+            if parts[: len(document_parts)] == document_parts or document_parts[
+                : len(parts)
+            ] == parts:
+                raise ValueError("machine artifact roots must not overlap the document root")
+            for other_index, other in enumerate(artifact_parts):
+                if index != other_index and (
+                    parts[: len(other)] == other or other[: len(parts)] == parts
+                ):
+                    raise ValueError("machine artifact roots must not overlap")
+        return self
+
+    def route_for_label(self, label: str) -> DocumentRoute | None:
+        return next(
+            (route for route in self.routes if route.classification == label),
+            None,
+        )
+
+
 class ProjectPolicy(ProtocolRecord):
     agent: AgentPolicy
     impact: ImpactPolicy = Field(default_factory=ImpactPolicy)
@@ -166,6 +348,7 @@ class ProjectPolicy(ProtocolRecord):
     execution_domains: tuple[ExecutionDomainPolicy, ...] = ()
     plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
     plan_review: PlanReviewPolicy | None = None
+    document_layout: DocumentLayoutPolicy = Field(default_factory=DocumentLayoutPolicy)
 
     @model_validator(mode="after")
     def require_unique_execution_domains(self) -> ProjectPolicy:
@@ -741,6 +924,367 @@ class DependencySet(StrictModel):
 class DecisionRequest(StrictModel):
     question: NonEmptyStr
     options: Annotated[tuple[ShortText, ...], Field(min_length=1)]
+
+
+BriefValue = ShortText | StrictBool | StrictInt | StrictFloat
+
+
+class BriefMetric(StrictModel):
+    key: HumanKey
+    label: ShortText
+
+
+class BriefSource(StrictModel):
+    key: HumanKey
+    location: NonEmptyStr
+
+
+class BriefEvidence(StrictModel):
+    setting: ShortText
+    values: Annotated[dict[HumanKey, BriefValue], Field(min_length=1, max_length=5)]
+    source_keys: Annotated[tuple[HumanKey, ...], Field(min_length=1, max_length=4)]
+
+    @model_validator(mode="after")
+    def require_finite_values_and_unique_sources(self) -> BriefEvidence:
+        if len(self.source_keys) != len(set(self.source_keys)):
+            raise ValueError("brief evidence source_keys must be unique")
+        for value in self.values.values():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("brief evidence values must be finite")
+        return self
+
+
+DocumentLifecycle = Literal[
+    "draft",
+    "proposed",
+    "accepted",
+    "superseded",
+    "deprecated",
+]
+DocumentActorRole = Literal["manager", "agent", "trusted_automation", "external_agent"]
+
+
+class DocumentAuthor(StrictModel):
+    role: DocumentActorRole
+    actor_id: ShortText
+    session_id: SessionId | None = None
+
+    @model_validator(mode="after")
+    def bind_governed_agent_session(self) -> DocumentAuthor:
+        if (self.role == "agent") != (self.session_id is not None):
+            raise ValueError(
+                "governed Agent document authors require exactly one canonical session_id"
+            )
+        return self
+
+
+class DocumentAcceptance(StrictModel):
+    accepted_by: ShortText
+    accepted_at: UtcDateTime
+    accepted_commit: GitObjectId
+
+
+class DocumentReference(StrictModel):
+    key: HumanKey
+    kind: Literal[
+        "repository_path",
+        "git_commit",
+        "task",
+        "run",
+        "report",
+        "artifact",
+        "external",
+    ]
+    location: NonEmptyStr
+    digest: Sha256Digest | None = None
+
+
+class MarkdownDocumentReference(StrictModel):
+    kind: Literal[
+        "repository_path",
+        "git_commit",
+        "task",
+        "run",
+        "report",
+        "artifact",
+        "external",
+    ]
+    location: NonEmptyStr
+    digest: Sha256Digest | None = None
+
+
+class DocumentRelations(StrictModel):
+    supersedes: tuple[RepositoryPath, ...] = ()
+    derived_from: tuple[RepositoryPath, ...] = ()
+    see_also: tuple[RepositoryPath, ...] = ()
+
+    @model_validator(mode="after")
+    def require_unique_relations(self) -> DocumentRelations:
+        for kind, values in (
+            ("supersedes", self.supersedes),
+            ("derived_from", self.derived_from),
+            ("see_also", self.see_also),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"document relation {kind} must be unique")
+        return self
+
+
+class MarkdownFrontmatter(StrictModel):
+    type: DocumentSlug
+    title: ShortText
+    owner: Annotated[
+        str,
+        Field(
+            min_length=3,
+            max_length=160,
+            pattern=(
+                r"^(?:session:session_\d{8}T\d{6}Z_[0-9a-f]{24}|"
+                r"(?:person|team):[A-Za-z0-9][A-Za-z0-9._-]*)$"
+            ),
+        ),
+    ]
+    last_updated: date
+    validity: Literal["valid", "invalid", "frozen"]
+    invalid_reason: ShortText | None = None
+    tags: tuple[HumanKey, ...] = ()
+    references: tuple[MarkdownDocumentReference, ...] = ()
+    relations: DocumentRelations = Field(default_factory=DocumentRelations)
+
+    @model_validator(mode="after")
+    def require_frontmatter_semantics(self) -> MarkdownFrontmatter:
+        if (self.validity == "invalid") != (self.invalid_reason is not None):
+            raise ValueError(
+                "invalid documents require invalid_reason and other validity states forbid it"
+            )
+        if len(self.tags) != len(set(self.tags)):
+            raise ValueError("document frontmatter tags must be unique")
+        return self
+
+
+class DocumentEnvelope(ProtocolRecord):
+    document_id: DocumentId
+    document_kind: DocumentKind
+    classification: DocumentLabel
+    slug: DocumentSlug
+    title: ShortText
+    status: DocumentLifecycle = "draft"
+    project_id: ProjectId | None = None
+    basis_commit: GitObjectId
+    revision: Annotated[StrictInt, Field(ge=1)] = 1
+    authored_by: DocumentAuthor
+    created_at: UtcDateTime
+    updated_at: UtcDateTime
+    acceptance: DocumentAcceptance | None = None
+    supersedes: DocumentId | None = None
+    tags: tuple[HumanKey, ...] = ()
+    sources: tuple[DocumentReference, ...] = ()
+
+    @model_validator(mode="after")
+    def require_document_lineage(self) -> DocumentEnvelope:
+        if self.updated_at < self.created_at:
+            raise ValueError("document updated_at cannot precede created_at")
+        if self.supersedes == self.document_id:
+            raise ValueError("document cannot supersede itself")
+        if len(self.tags) != len(set(self.tags)):
+            raise ValueError("document tags must be unique")
+        source_keys = tuple(source.key for source in self.sources)
+        if len(source_keys) != len(set(source_keys)):
+            raise ValueError("document source keys must be unique")
+        if (self.status == "accepted") != (self.acceptance is not None):
+            raise ValueError(
+                "accepted documents require acceptance and other states forbid it"
+            )
+        return self
+
+
+class DesignOption(StrictModel):
+    key: HumanKey
+    summary: NonEmptyStr
+    benefits: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    drawbacks: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    disposition: Literal["selected", "rejected", "deferred"]
+    rationale: NonEmptyStr
+
+
+class DesignComponent(StrictModel):
+    key: HumanKey
+    responsibility: NonEmptyStr
+    interfaces: tuple[NonEmptyStr, ...] = ()
+
+
+class DesignWorkflow(StrictModel):
+    name: ShortText
+    steps: Annotated[tuple[NonEmptyStr, ...], Field(min_length=2)]
+
+
+class DesignFailureMode(StrictModel):
+    condition: NonEmptyStr
+    behavior: NonEmptyStr
+    recovery: NonEmptyStr
+
+
+class DesignValidationCase(StrictModel):
+    case: NonEmptyStr
+    expected: NonEmptyStr
+    evidence: NonEmptyStr
+
+
+class DesignDocument(DocumentEnvelope):
+    document_kind: Literal["design_document"] = "design_document"
+    problem: NonEmptyStr
+    context: NonEmptyStr
+    goals: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    non_goals: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    constraints: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    options: Annotated[tuple[DesignOption, ...], Field(min_length=2)]
+    components: Annotated[tuple[DesignComponent, ...], Field(min_length=1)]
+    workflows: Annotated[tuple[DesignWorkflow, ...], Field(min_length=1)]
+    security_considerations: Annotated[
+        tuple[NonEmptyStr, ...], Field(min_length=1)
+    ]
+    failure_modes: Annotated[tuple[DesignFailureMode, ...], Field(min_length=1)]
+    migration_steps: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+    validation: Annotated[tuple[DesignValidationCase, ...], Field(min_length=1)]
+    open_questions: tuple[NonEmptyStr, ...] = ()
+    decision_requests: tuple[DecisionRequest, ...] = ()
+
+    @model_validator(mode="after")
+    def require_complete_design(self) -> DesignDocument:
+        option_keys = tuple(option.key for option in self.options)
+        component_keys = tuple(component.key for component in self.components)
+        workflow_names = tuple(workflow.name for workflow in self.workflows)
+        if len(option_keys) != len(set(option_keys)):
+            raise ValueError("design option keys must be unique")
+        if sum(option.disposition == "selected" for option in self.options) != 1:
+            raise ValueError("design documents require exactly one selected option")
+        if len(component_keys) != len(set(component_keys)):
+            raise ValueError("design component keys must be unique")
+        if len(workflow_names) != len(set(workflow_names)):
+            raise ValueError("design workflow names must be unique")
+        if self.status == "accepted" and self.open_questions:
+            raise ValueError("accepted design documents cannot retain open questions")
+        return self
+
+
+CapabilityStatus = Literal[
+    "verified_local",
+    "partial",
+    "deployment_pending",
+    "designed",
+    "blocked",
+    "deprecated",
+]
+
+
+class StatusCapability(StrictModel):
+    key: HumanKey
+    title: ShortText
+    status: CapabilityStatus
+    summary: NonEmptyStr
+    evidence_keys: Annotated[tuple[HumanKey, ...], Field(min_length=1)]
+    missing: tuple[NonEmptyStr, ...] = ()
+
+    @model_validator(mode="after")
+    def require_status_evidence(self) -> StatusCapability:
+        if len(self.evidence_keys) != len(set(self.evidence_keys)):
+            raise ValueError("capability evidence_keys must be unique")
+        incomplete = {"partial", "deployment_pending", "designed", "blocked"}
+        if self.status in incomplete and not self.missing:
+            raise ValueError(f"{self.status} capabilities must declare missing work")
+        if self.status == "verified_local" and self.missing:
+            raise ValueError("verified_local capabilities cannot declare missing work")
+        return self
+
+
+class StatusWorkItem(StrictModel):
+    key: HumanKey
+    summary: NonEmptyStr
+    state: Literal["active", "blocked", "ready_for_review", "queued"]
+    owner: ShortText
+    next_action: NonEmptyStr
+
+
+class StatusRisk(StrictModel):
+    key: HumanKey
+    severity: Literal["low", "medium", "high", "critical"]
+    risk: NonEmptyStr
+    mitigation: NonEmptyStr
+
+
+class ProjectStatusSummary(DocumentEnvelope):
+    document_kind: Literal["project_status_summary"] = "project_status_summary"
+    as_of: UtcDateTime
+    executive_summary: NonEmptyStr
+    capabilities: Annotated[tuple[StatusCapability, ...], Field(min_length=1)]
+    active_work: tuple[StatusWorkItem, ...] = ()
+    risks: tuple[StatusRisk, ...] = ()
+    decisions_needed: tuple[DecisionRequest, ...] = ()
+    next_steps: Annotated[tuple[NonEmptyStr, ...], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def require_traceable_current_state(self) -> ProjectStatusSummary:
+        capability_keys = tuple(item.key for item in self.capabilities)
+        work_keys = tuple(item.key for item in self.active_work)
+        risk_keys = tuple(item.key for item in self.risks)
+        if len(capability_keys) != len(set(capability_keys)):
+            raise ValueError("status capability keys must be unique")
+        if len(work_keys) != len(set(work_keys)):
+            raise ValueError("status work item keys must be unique")
+        if len(risk_keys) != len(set(risk_keys)):
+            raise ValueError("status risk keys must be unique")
+        declared_sources = {source.key for source in self.sources}
+        used_sources = {
+            key for capability in self.capabilities for key in capability.evidence_keys
+        }
+        if used_sources != declared_sources:
+            raise ValueError(
+                "status capability evidence must use every declared source exactly by key"
+            )
+        if self.as_of < self.updated_at:
+            raise ValueError("status as_of cannot precede document updated_at")
+        return self
+
+
+class AnalysisBrief(ProtocolRecord):
+    question: ShortText
+    conclusion: ShortText
+    protocol: ShortText
+    metrics: Annotated[tuple[BriefMetric, ...], Field(min_length=1, max_length=5)]
+    evidence: Annotated[tuple[BriefEvidence, ...], Field(min_length=1, max_length=8)]
+    interpretation: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
+    limitations: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
+    sources: Annotated[tuple[BriefSource, ...], Field(min_length=1, max_length=16)]
+
+    @model_validator(mode="after")
+    def require_rectangular_traceable_evidence(self) -> AnalysisBrief:
+        metric_keys = tuple(metric.key for metric in self.metrics)
+        if len(metric_keys) != len(set(metric_keys)):
+            raise ValueError("analysis brief metric keys must be unique")
+        source_keys = tuple(source.key for source in self.sources)
+        if len(source_keys) != len(set(source_keys)):
+            raise ValueError("analysis brief source keys must be unique")
+        settings = tuple(row.setting for row in self.evidence)
+        if len(settings) != len(set(settings)):
+            raise ValueError("analysis brief settings must be unique")
+
+        expected_metrics = set(metric_keys)
+        declared_sources = set(source_keys)
+        used_sources: set[str] = set()
+        for row in self.evidence:
+            if set(row.values) != expected_metrics:
+                raise ValueError(
+                    "every analysis brief setting must define every metric exactly once"
+                )
+            unknown_sources = set(row.source_keys) - declared_sources
+            if unknown_sources:
+                raise ValueError(
+                    "analysis brief evidence references undeclared source keys"
+                )
+            used_sources.update(row.source_keys)
+        if used_sources != declared_sources:
+            raise ValueError("analysis brief sources must all be used by evidence")
+        return self
 
 
 class ResearchSubmission(ProtocolRecord):
@@ -1349,6 +1893,26 @@ class StatusEvidence(StrictModel):
     value: NonEmptyStr
 
 
+class ResearchUpdate(ProtocolRecord):
+    event: Literal["started", "completed", "failed", "conclusion_changed"]
+    session_id: SessionId
+    session_label: HumanKey | None = None
+    task_key: HumanKey | None = None
+    source_commit: GitObjectId
+    observed_at: UtcDateTime
+    summary: ShortText
+    evidence: Annotated[tuple[StatusEvidence, ...], Field(max_length=2)] = ()
+    source: BriefSource
+    next_action: ShortText | None = None
+
+    @model_validator(mode="after")
+    def require_unique_evidence_kinds(self) -> ResearchUpdate:
+        kinds = tuple(item.kind for item in self.evidence)
+        if len(kinds) != len(set(kinds)):
+            raise ValueError("research update evidence kinds must be unique")
+        return self
+
+
 class SessionNotificationSourceMarker(StrictModel):
     """Structured binding recovered from an RCP-owned hidden transport marker."""
 
@@ -1416,4 +1980,8 @@ ProtocolModel = (
     | LinearProjectionPolicy
     | CIValidationAttestation
     | StatusUpdate
+    | AnalysisBrief
+    | ResearchUpdate
+    | DesignDocument
+    | ProjectStatusSummary
 )

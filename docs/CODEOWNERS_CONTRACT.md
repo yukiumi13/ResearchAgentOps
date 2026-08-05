@@ -75,6 +75,16 @@ share caches, writable environments, or artifacts as trusted inputs.
 The workflow pins third-party actions by full commit SHA. Updating those pins is
 a CODEOWNER-reviewed control-plane change.
 
+The source workflow also runs portable project-document lint from the exact PR
+head and compares baseline-frozen documents with a detached checkout of the
+exact base SHA. In a repository that has not run `researchctl init`,
+`.researchctl-docs.yaml` is the complete document taxonomy and therefore must be
+CODEOWNERS-protected: changing it can add or remap an accepted classification,
+directory, schema contract, generated index, or machine artifact root. Source
+lint diagnoses those rules but does not authorize the policy change. After
+initialization, the same policy is inside protected ProjectPolicy and changes
+through the manager-only, protected-base-validated `doc.configure-layout` path.
+
 ## Attestation Contract
 
 Successful validation writes one canonical YAML artifact outside the repository

@@ -507,6 +507,49 @@ The command adds the explicit Project transition and selected classifications
 to the same PR. CI verifies deterministic rendering. Only then may the manager
 merge and enter managed.
 
+### 10.1 Portable project document contracts
+
+Document linting is independently adoptable and does not require
+`researchctl init`. An uninitialized Git repository may define one protected
+`.researchctl-docs.yaml` containing a strict `DocumentLayoutPolicy` and run:
+
+```text
+researchctl doc lint DOCUMENT.yaml
+researchctl doc render DOCUMENT.yaml --output-file DOCUMENT.md
+researchctl doc index --output-file docs/README.md
+researchctl doc tree --project .
+```
+
+These commands do not open `.research`, SQLite, a Session, or a manager context.
+The same policy can be used by an editor adapter, pre-commit hook, external Agent,
+or arbitrary CI. Stable JSON findings are the machine integration contract.
+
+Managed projects store the same policy at
+`.research/policies/default.yaml.document_layout`. `doc.configure-layout` is
+manager-only and prepares one fixed control proposal. Protected-base CI compares
+the old and new ProjectPolicy field by field; no Agent can introduce or remap a
+classification, contract, directory, generated index, or machine artifact root
+inside an ordinary document proposal.
+
+Each document route binds exactly one canonical `a/b:c` classification, short
+document type, schema contract, and directory. Directory overlap, unknown paths,
+type/path disagreement, unknown fields, missing required relations, unsafe
+links, excessive nesting, orphan renders, and renderer byte drift fail closed.
+Existing files may bypass conversion only through finite per-file legacy entries
+with declared migration targets.
+
+Manual Markdown begins with strict frontmatter. `validity` is `valid`, `invalid`,
+or `frozen`; only `invalid` has `invalid_reason`. When CI supplies a trusted
+baseline checkout, a baseline-frozen document cannot change bytes or disappear.
+Structured design, status, and brief YAML remains canonical while its Markdown
+is renderer-owned and visibly identifies its renderer version.
+
+Projects may declare `machine_artifact_roots`, for example `data/` with an
+extension allowlist of `.csv`, `.json`, `.jsonl`, `.xlsx`, and `.py`. Markdown
+can never be allowed in such a root. This enforces the human-readable `docs/`
+versus machine-consumed `data/` boundary without moving stable script inputs.
+See ADR 0014 for the complete authority and integration decision.
+
 ## 11. Session and attention workflow
 
 researchctl start creates or observes a unique session branch, worktree, tmux

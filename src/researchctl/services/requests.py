@@ -14,6 +14,7 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     DependencySet,
+    DocumentLayoutPolicy,
     ExperimentPlan,
     LinearProjectionPolicy,
     ReportProposal,
@@ -79,6 +80,11 @@ class LinearConfigureRequest(MutationRequest):
 class PlanReviewConfigureRequest(MutationRequest):
     expected_default_head: GitObjectId
     review_policy: PlanReviewPolicy
+
+
+class DocumentLayoutConfigureRequest(MutationRequest):
+    expected_default_head: GitObjectId
+    document_layout: DocumentLayoutPolicy
 
 
 LinearDeliveryTopic = Literal[
