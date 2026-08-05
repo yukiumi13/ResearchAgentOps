@@ -1,3 +1,4 @@
+generated_index: null
 legacy_files:
   - classification: reference/project:document
     migration_target: docs/reference/codeowners-contract.md
@@ -91,6 +92,7 @@ legacy_files:
     migration_target: docs/adr/0013-dependency-impact-providers.md
     path: docs/adr/0013-dependency-impact-providers.md
     reason: Pre-frontmatter ADR.
+machine_artifact_roots: []
 max_depth: 4
 root: docs
 root_files: []

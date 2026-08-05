@@ -169,7 +169,14 @@ def _repository_and_policy(
             code="document_policy_invalid",
             message="Standalone document policy cannot be a symbolic link.",
         )
-    return repository, DocumentLayoutPolicy()
+    raise RCPError(
+        code="document_policy_missing",
+        message="Repository has no managed or standalone document policy.",
+        remediation=(
+            "Create .researchctl-docs.yaml, pass --policy-file, or run "
+            "researchctl init."
+        ),
+    )
 
 
 @doc_app.command("lint")

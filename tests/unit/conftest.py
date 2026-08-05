@@ -9,7 +9,6 @@ import pytest
 
 from researchctl.serialization import canonical_digest
 
-
 OBSERVED_AT = datetime(2026, 8, 2, 12, 34, 56, tzinfo=UTC)
 
 
@@ -246,6 +245,16 @@ def initialized_repository(tmp_path):
         capture_output=True,
         text=True,
     )
+    for key, value in (
+        ("user.name", "Tests"),
+        ("user.email", "tests@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(repository), "config", key, value],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     (repository / "README.md").write_text("# Project\n", encoding="utf-8")
     subprocess.run(
         ["git", "-C", str(repository), "add", "README.md"],

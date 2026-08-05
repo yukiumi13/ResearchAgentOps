@@ -444,3 +444,17 @@ def test_doc_cli_works_in_uninitialized_repository_with_standalone_policy(
     )
     assert index.exit_code == 0
     assert f"researchctl-renderer:{DOCUMENT_INDEX_RENDERER_ID}" in index.stdout
+
+
+def test_doc_cli_fails_closed_without_an_explicit_policy(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "docs").mkdir()
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "tree", "--project", str(tmp_path), "--json"],
+    )
+
+    assert result.exit_code == 2
+    assert '"code": "document_policy_missing"' in result.stdout
+    assert not (tmp_path / ".research").exists()

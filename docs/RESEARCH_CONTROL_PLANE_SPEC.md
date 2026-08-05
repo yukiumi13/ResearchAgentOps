@@ -523,6 +523,8 @@ researchctl doc tree --project .
 These commands do not open `.research`, SQLite, a Session, or a manager context.
 The same policy can be used by an editor adapter, pre-commit hook, external Agent,
 or arbitrary CI. Stable JSON findings are the machine integration contract.
+If no standalone, managed, or explicitly selected policy exists, the commands
+fail with `document_policy_missing`; they do not apply a guessed hierarchy.
 
 Managed projects store the same policy at
 `.research/policies/default.yaml.document_layout`. `doc.configure-layout` is

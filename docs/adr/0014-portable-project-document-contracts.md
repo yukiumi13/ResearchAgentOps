@@ -52,6 +52,11 @@ renderers, finding codes, CLI, and JSON output. Standalone commands do not open
 only a manager may prepare `doc.configure-layout`, and protected-base CI permits
 that proposal to change only the `document_layout` policy field.
 
+The standalone policy or an explicit `--policy-file` is required. When neither
+standalone nor managed policy exists, the CLI fails with
+`document_policy_missing`; built-in model defaults cannot silently classify a
+real repository.
+
 A route is the exact four-part mapping:
 
 ```text

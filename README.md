@@ -184,6 +184,11 @@ researchctl doc tree --project .
 researchctl doc tree --project . --json
 ```
 
+The policy is required in standalone mode. If neither it nor a managed Project
+policy exists, commands fail with `document_policy_missing`; `researchctl` does
+not silently choose a repository hierarchy. A one-off caller may instead pass
+an explicit `--policy-file`.
+
 The command does not open `.research`, SQLite, a Session, or manager state. It
 checks canonical `a/b:c` classification routes, frontmatter schemas, type/path
 agreement, required relations, directory depth, links, structured YAML/Markdown
