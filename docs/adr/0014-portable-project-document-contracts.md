@@ -103,6 +103,12 @@ the same path with identical bytes. The static core accepts directory inputs;
 GitHub Actions, another CI system, or an editor integration decides how a
 baseline is materialized.
 
+During the first policy-adoption PR, the trusted baseline may not have any
+document policy. Only for that exact `document_policy_missing` case, baseline
+frozen scanning uses the subject policy's route shape against the old tree. An
+invalid, shadowed, or unsafe baseline policy still fails closed. This permits
+first adoption without weakening later baseline-policy validation.
+
 Structured YAML is canonical source for design documents, project status
 summaries, and analysis briefs. Its Markdown pair is deterministic generated
 output and carries a visible versioned renderer marker. A configured generated

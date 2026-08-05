@@ -558,6 +558,9 @@ a reviewed project policy may explicitly tighten or widen the finite bounds.
 Manual Markdown begins with strict frontmatter. `validity` is `valid`, `invalid`,
 or `frozen`; only `invalid` has `invalid_reason`. When CI supplies a trusted
 baseline checkout, a baseline-frozen document cannot change bytes or disappear.
+On the first standalone-policy adoption, an otherwise valid baseline may have no
+policy; only then does frozen scanning apply the subject route shape to the old
+tree. Any present-but-invalid, shadowed, or unsafe baseline policy fails closed.
 Structured design, status, and brief YAML remains canonical while its Markdown
 is renderer-owned and visibly identifies its renderer version.
 

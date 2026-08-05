@@ -535,6 +535,38 @@ def test_doc_cli_works_in_uninitialized_repository_with_standalone_policy(
     assert f"researchctl-renderer:{DOCUMENT_INDEX_RENDERER_ID}" in index.stdout
 
 
+def test_doc_cli_uses_current_policy_for_a_pre_policy_baseline(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    for repository in (current, baseline):
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        (repository / "docs").mkdir()
+        (repository / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (current / ".researchctl-docs.yaml").write_text(
+        dump_yaml(_custom_policy()),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(current),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"success": true' in result.stdout
+    assert not (baseline / ".research").exists()
+
+
 def test_doc_cli_renders_and_lints_policy_before_repository_adoption(
     tmp_path: Path,
 ) -> None:

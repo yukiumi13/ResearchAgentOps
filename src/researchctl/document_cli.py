@@ -401,10 +401,16 @@ def doc_tree_command(
         baseline_repository: Path | None = None
         baseline_policy: DocumentLayoutPolicy | None = None
         if baseline_project is not None:
-            baseline_repository, baseline_policy = _repository_and_policy(
-                baseline_project,
-                None,
-            )
+            try:
+                baseline_repository, baseline_policy = _repository_and_policy(
+                    baseline_project,
+                    None,
+                )
+            except RCPError as error:
+                if error.code != "document_policy_missing":
+                    raise
+                baseline_repository = discover_repository(baseline_project).root
+                baseline_policy = policy
         result = lint_document_tree(
             repository,
             policy,
