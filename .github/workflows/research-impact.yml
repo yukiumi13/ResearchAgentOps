@@ -41,7 +41,7 @@ jobs:
           [[ "$RCP_BEFORE" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RCP_AFTER" =~ ^[0-9a-f]{40}$ ]]
           [[ -n "$RCP_GENERATED_AT" ]]
-          observed_head="$(git rev-parse --verify HEAD^{commit})"
+          observed_head="$(git rev-parse --verify 'HEAD^{commit}')"
           if [[ "$observed_head" != "$RCP_AFTER" ]]; then
             echo "::error::Checked-out main commit differs from the push event"
             exit 2

@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RCP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          observed_head="$(git rev-parse --verify HEAD^{commit})"
+          observed_head="$(git rev-parse --verify 'HEAD^{commit}')"
           if [[ "$observed_head" != "$RCP_HEAD_SHA" ]]; then
             echo "::error::Checked-out source differs from the event's exact head"
             exit 2
