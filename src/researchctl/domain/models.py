@@ -173,6 +173,7 @@ DocumentSchema = Literal[
     "markdown-frontmatter",
 ]
 DocumentRelationKind = Literal["supersedes", "derived_from", "see_also"]
+AgentGuideFormat = Literal["claude", "agents"]
 
 
 class DocumentRoute(StrictModel):
@@ -188,6 +189,22 @@ class LegacyDocumentPath(StrictModel):
     classification: DocumentLabel
     migration_target: RepositoryPath
     reason: ShortText
+
+
+class AgentGuideTarget(StrictModel):
+    path: RepositoryPath
+    format: AgentGuideFormat
+
+
+class ClassificationDepthPolicy(StrictModel):
+    minimum: Annotated[StrictInt, Field(ge=1, le=8)] = 2
+    maximum: Annotated[StrictInt, Field(ge=1, le=8)] = 4
+
+    @model_validator(mode="after")
+    def require_ordered_bounds(self) -> ClassificationDepthPolicy:
+        if self.minimum > self.maximum:
+            raise ValueError("classification depth minimum cannot exceed maximum")
+        return self
 
 
 class MachineArtifactRoot(StrictModel):
@@ -258,11 +275,15 @@ def _default_document_routes() -> tuple[DocumentRoute, ...]:
 
 class DocumentLayoutPolicy(StrictModel):
     root: RepositoryPath = "docs"
+    classification_depth: ClassificationDepthPolicy = Field(
+        default_factory=ClassificationDepthPolicy
+    )
     routes: Annotated[tuple[DocumentRoute, ...], Field(min_length=1)] = Field(
         default_factory=_default_document_routes
     )
     root_files: tuple[RepositoryPath, ...] = ("docs/README.md",)
     generated_index: RepositoryPath | None = None
+    agent_guides: tuple[AgentGuideTarget, ...] = ()
     legacy_files: tuple[LegacyDocumentPath, ...] = ()
     machine_artifact_roots: tuple[MachineArtifactRoot, ...] = ()
     max_depth: Annotated[StrictInt, Field(ge=1, le=8)] = 4
@@ -282,6 +303,13 @@ class DocumentLayoutPolicy(StrictModel):
             raise ValueError("document route classifications must be unique")
         if len(types) != len(set(types)):
             raise ValueError("document route types must be unique")
+        for label in labels:
+            namespace, _separator, _category = label.partition(":")
+            depth = len(namespace.split("/"))
+            if not self.classification_depth.minimum <= depth <= self.classification_depth.maximum:
+                raise ValueError(
+                    "document route classification depth must satisfy classification_depth"
+                )
         if any(not within_root(directory) for directory in directories):
             raise ValueError("document route directories must be below the document root")
         directory_parts = [PurePosixPath(directory).parts for directory in directories]
@@ -297,6 +325,16 @@ class DocumentLayoutPolicy(StrictModel):
             raise ValueError("document root_files must be unique files below the root")
         if self.generated_index is not None and self.generated_index not in root_files:
             raise ValueError("generated document index must be declared in root_files")
+
+        guide_paths = tuple(item.path for item in self.agent_guides)
+        if len(guide_paths) != len(set(guide_paths)):
+            raise ValueError("agent guide paths must be unique")
+        for guide_path in guide_paths:
+            guide_parts = PurePosixPath(guide_path).parts
+            if guide_parts[: len(root_parts)] == root_parts:
+                raise ValueError("agent guides must live outside the document root")
+            if PurePosixPath(guide_path).suffix.lower() != ".md":
+                raise ValueError("agent guides must be Markdown files")
 
         legacy_paths = tuple(item.path for item in self.legacy_files)
         migration_targets = tuple(item.migration_target for item in self.legacy_files)
@@ -319,19 +357,26 @@ class DocumentLayoutPolicy(StrictModel):
         if len(artifact_directories) != len(set(artifact_directories)):
             raise ValueError("machine artifact roots must be unique")
         document_parts = PurePosixPath(self.root).parts
-        artifact_parts = [
+        artifact_path_parts = [
             PurePosixPath(directory).parts for directory in artifact_directories
         ]
-        for index, parts in enumerate(artifact_parts):
+        for index, parts in enumerate(artifact_path_parts):
             if parts[: len(document_parts)] == document_parts or document_parts[
                 : len(parts)
             ] == parts:
                 raise ValueError("machine artifact roots must not overlap the document root")
-            for other_index, other in enumerate(artifact_parts):
+            for other_index, other in enumerate(artifact_path_parts):
                 if index != other_index and (
                     parts[: len(other)] == other or other[: len(parts)] == parts
                 ):
                     raise ValueError("machine artifact roots must not overlap")
+        for guide_path in guide_paths:
+            guide_parts = PurePosixPath(guide_path).parts
+            if any(
+                guide_parts[: len(parts)] == parts
+                for parts in artifact_path_parts
+            ):
+                raise ValueError("agent guides cannot live in machine artifact roots")
         return self
 
     def route_for_label(self, label: str) -> DocumentRoute | None:

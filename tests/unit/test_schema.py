@@ -21,7 +21,7 @@ EXPECTED_FILE_SHA256 = {
         "7957d08df38bd16c4200deab85293829ab275e3c4139932e8c68ff709b92ad13"
     ),
     "document-layout-policy.schema.json": (
-        "58505dd099742e8b9eabcb873597688541943ca216abadd06b7e1946ee4182b1"
+        "51abcc64f4e76bb98e55388ca5aaf6928f6ca5c7d5e1bab0586ad0fba1d2928f"
     ),
     "experiment-plan.schema.json": (
         "ea9a9e6605cfeed351cb603ade19dab4c2a2e0050fad77742e1fa1c14e1eabd5"
@@ -38,8 +38,8 @@ EXPECTED_FILE_SHA256 = {
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
-    "policy.schema.json": "7441eb0e6dc1ebabd89dde53e75fed1b00cae0114fc0ab4e23258d230da087fb",
-    "manifest.json": "dfc592ad24b96ca899010d02eed96ec400775f608358b8c7d13d174ecce18fac",
+    "policy.schema.json": "5aeafa6a514d7598f70ecc33e030bf63c3b18011de086e7d3b627928c687408c",
+    "manifest.json": "7229a4660670217d9220a8f84bffaa9339413fbac7f2468ad00a8ce911956b17",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
         "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"

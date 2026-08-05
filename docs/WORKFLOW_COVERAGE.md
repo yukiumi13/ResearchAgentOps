@@ -202,8 +202,10 @@ recorded measurements from an exact release commit.
 ### WF-15 - Portable Project Document Contracts
 
 ```text
-project policy -> classification/type/contract/directory routes
--> human or Agent authors canonical source -> schema/path/relation/tree lint
+complete policy template -> standalone policy lint -> manager-reviewed project policy
+-> checked classification depth and classification/type/contract/directory routes
+-> deterministic project-local Agent guide -> human or Agent discovers policy
+-> authors canonical source -> schema/path/relation/tree lint
 -> deterministic render/index comparison -> optional frozen baseline comparison
 -> local/editor/CI findings -> repository review
 ```
@@ -213,8 +215,12 @@ policy and CODEOWNERS protects policy changes. Managed repositories use the same
 policy shape under ProjectPolicy and manager-only `doc.configure-layout`.
 Machine artifact roots use explicit extension allowlists and reject Markdown,
 so prose can move to `docs/` without changing script-consumed `data/` paths.
-Local schema/tree/index/frozen checks and source-workflow wiring are verified;
-an editor/language-server adapter and a protected-repository pilot remain open.
+Configured Claude/AGENTS guide blocks expose the no-fallback workflow and current
+routes; tree lint rejects missing or stale instructions. Semantic namespace depth
+and route filesystem depth are separate bounded policy fields. Local policy-
+template/lint, schema/tree/index/guide/frozen checks, and source-workflow wiring
+are verified; an editor/language-server adapter and a protected-repository pilot
+remain open.
 
 ## Scenario Checklist
 
@@ -241,7 +247,7 @@ an editor/language-server adapter and a protected-repository pilot remain open.
 | [x] | `US-019` | `partial` | `WF-08` | `WF-01`, `WF-06` | Git-owned accepted records and immutable refs | reachability-aware cleanup and retention apply |
 | [x] | `US-020` | `partial` | `WF-07` | `WF-05` | batch, typed receipts, fail-closed unresolved classification, effective status and explicit decisions | live providers/replay and protected-repository pilot |
 | [x] | `US-021` | `partial` | `WF-09` | `WF-05`, `WF-15` | secretless exact-head CI and baseline document lint separated from Runs | installed branch rules and authorized runner pilot |
-| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free document checks plus init/doctor/help and core terminology | glossary golden tests and novice usability run |
+| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free policy template/lint, deterministic Claude/AGENTS guide, document checks, init/doctor/help, and core terminology | glossary golden tests and novice usability run |
 | [x] | `US-023` | `verified_local` | `WF-03` | `WF-06`, `WF-09` | traversal/symlink/rename/protected path tests | hostile same-user isolation remains out of scope |
 | [x] | `US-024` | `designed` | `WF-08` | `WF-03`, `WF-07` | safe-point and conflict contract | preview/apply batch sync implementation |
 | [x] | `US-025` | `verified_local` | `WF-14` | `WF-00` | 77-prompt/33-scenario static traceability tests | executed acceptance results must stay separate |

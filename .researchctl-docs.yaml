@@ -1,4 +1,10 @@
 generated_index: null
+classification_depth:
+  minimum: 2
+  maximum: 4
+agent_guides:
+  - path: CLAUDE.md
+    format: claude
 legacy_files:
   - classification: reference/project:document
     migration_target: docs/reference/codeowners-contract.md

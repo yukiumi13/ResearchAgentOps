@@ -516,7 +516,10 @@ Document linting is independently adoptable and does not require
 ```text
 researchctl doc lint DOCUMENT.yaml
 researchctl doc render DOCUMENT.yaml --output-file DOCUMENT.md
+researchctl doc policy-template --output-file .researchctl-docs.yaml
+researchctl doc policy-lint .researchctl-docs.yaml
 researchctl doc index --output-file docs/README.md
+researchctl doc agent-guide --output-file CLAUDE.md
 researchctl doc tree --project .
 ```
 
@@ -525,6 +528,11 @@ The same policy can be used by an editor adapter, pre-commit hook, external Agen
 or arbitrary CI. Stable JSON findings are the machine integration contract.
 If no standalone, managed, or explicitly selected policy exists, the commands
 fail with `document_policy_missing`; they do not apply a guessed hierarchy.
+`doc policy-template` renders a complete strict candidate with all policy
+sections explicit, and `doc policy-lint` validates that candidate without
+repository discovery. The template is a starting proposal, not accepted project
+authority; its project-specific routes require ordinary manager/CODEOWNER
+review before adoption.
 
 Managed projects store the same policy at
 `.research/policies/default.yaml.document_layout`. `doc.configure-layout` is
@@ -540,11 +548,33 @@ links, excessive nesting, orphan renders, and renderer byte drift fail closed.
 Existing files may bypass conversion only through finite per-file legacy entries
 with declared migration targets.
 
+`DocumentLabel` enforces lowercase slash-separated namespaces and one `:`
+category. `classification_depth` independently bounds the number of namespace
+segments before `:`; defaults are two through four. Filesystem `max_depth`
+bounds nesting below a mapped route, is constrained to `1..8`, and defaults to
+four. Thus `a/b:c` is the shortest default label shape, not advisory prose, but
+a reviewed project policy may explicitly tighten or widen the finite bounds.
+
 Manual Markdown begins with strict frontmatter. `validity` is `valid`, `invalid`,
 or `frozen`; only `invalid` has `invalid_reason`. When CI supplies a trusted
 baseline checkout, a baseline-frozen document cannot change bytes or disappear.
 Structured design, status, and brief YAML remains canonical while its Markdown
 is renderer-owned and visibly identifies its renderer version.
+
+Standalone correctness also requires Agent discovery. `DocumentLayoutPolicy`
+may declare `agent_guides`, each binding a repository-relative Markdown path to
+the `claude` or `agents` format. `doc agent-guide` inserts or replaces only its
+versioned managed block, preserves unrelated instructions in the file, and may
+write only a target explicitly declared by policy. The block identifies both
+policy locations, forbids hierarchy fallback, lists accepted routes, explains
+manual versus structured authoring, and requires `doc tree`. Tree lint rejects
+a missing, malformed, symlinked, or byte-stale configured guide. The guide is a
+discovery projection of policy, not another authority.
+
+A shared Skill may describe the generic workflow and an MCP server may proxy
+diagnostics for remote clients, but neither is required for standalone use and
+neither may own project taxonomy or implement different validation semantics.
+The repository policy, generated guide block, and CI form the portable baseline.
 
 Projects may declare `machine_artifact_roots`, for example `data/` with an
 extension allowlist of `.csv`, `.json`, `.jsonl`, `.xlsx`, and `.py`. Markdown

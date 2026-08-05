@@ -1,7 +1,7 @@
 # Requirement Traceability Matrix
 
 Status: Phase 0 baseline
-Updated: 2026-08-04
+Updated: 2026-08-05
 
 `docs/USER_SCENARIOS.md` is the scenario catalog. The contract column points to
 the current authoritative specification and ADRs. Phase 9 rows are deliberate
@@ -80,3 +80,4 @@ the stable `US-*` catalog.
 | `REQ-20260803-011` | `US-016`, `US-020`, `US-021` | Spec Section 15; ADRs 0005 and 0013; receipt/evaluator tests |
 | `REQ-20260803-012` | `US-002`, `US-018`, `US-020`, `US-021` | Spec Sections 4 and 15; Mutation Contracts Section 5; ADR 0005; status/decision/CI tests |
 | `REQ-20260804-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; document schema/tree/CI tests |
+| `REQ-20260805-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; policy template/lint and Agent guide tests |

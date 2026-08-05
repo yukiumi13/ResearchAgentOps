@@ -1,7 +1,7 @@
 # Post-export Requirement Ledger
 
 Status: normative implementation input
-Updated: 2026-08-04
+Updated: 2026-08-05
 
 `USER_SCENARIOS.md` preserves anonymous anchors for all 77 prompts in the
 private historical research. This ledger gives stable identities to later
@@ -163,3 +163,23 @@ requirements so traceability does not silently stop at that boundary.
   initialization, label/directory/contract/index/artifact-root remapping uses the
   manager-only field-scoped `doc.configure-layout` proposal. Tags do not grant
   routing or authority.
+
+## REQ-20260805-001 - Standalone Agents discover and draft the document contract
+
+- Source: post-export standalone Agent injection, policy-example, and hierarchy-
+  depth discussion, 2026-08-05.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc policy-template` emits a complete schema-valid candidate with
+  all policy sections explicit, while `doc policy-lint` validates it without a
+  repository, managed state, or implicit taxonomy. Project policy may declare
+  repository-local Claude or AGENTS guide targets. `doc agent-guide` writes only
+  a declared target and deterministically inserts or replaces one visible,
+  versioned managed block while preserving unrelated instructions. The block
+  identifies policy discovery order, forbids fallback labels and directories,
+  renders accepted routes, distinguishes manual from generated documents, and
+  requires `doc tree`. Tree lint fails on missing, malformed, symlinked, or stale
+  guide blocks. The lexical label grammar is mandatory; project policy bounds
+  namespace segments before `:` independently from filesystem `max_depth`.
+  Skills and MCP adapters may reuse the workflow but are not required and cannot
+  become a second taxonomy or validator. Adopting or changing the candidate
+  policy remains a manager/CODEOWNER-reviewed operation.

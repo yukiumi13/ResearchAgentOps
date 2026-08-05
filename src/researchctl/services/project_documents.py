@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import ValidationError
 
 from researchctl.domain.models import (
+    AgentGuideFormat,
+    AgentGuideTarget,
     AnalysisBrief,
     DesignDocument,
     DocumentLayoutPolicy,
@@ -17,12 +19,17 @@ from researchctl.domain.models import (
     ProjectStatusSummary,
 )
 from researchctl.errors import RCPError
-from researchctl.serialization import SerializationError, load_yaml
+from researchctl.repository import safe_repository_path
+from researchctl.serialization import SerializationError, dump_yaml, load_yaml
 
 
 DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v1"
 PROJECT_STATUS_RENDERER_ID = "project-status-summary.v1"
 DOCUMENT_INDEX_RENDERER_ID = "project-document-index.v1"
+PROJECT_AGENT_GUIDE_RENDERER_IDS: dict[AgentGuideFormat, str] = {
+    "claude": "project-document-agent-guide.claude.v1",
+    "agents": "project-document-agent-guide.agents.v1",
+}
 
 ProjectDocument = DesignDocument | ProjectStatusSummary
 StructuredDocument = ProjectDocument | AnalysisBrief
@@ -207,6 +214,103 @@ def render_document_index(policy: DocumentLayoutPolicy) -> bytes:
             )
             + " |"
         )
+    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+
+
+def standalone_document_policy_template(
+    guide_format: AgentGuideFormat,
+) -> DocumentLayoutPolicy:
+    guide_path = "CLAUDE.md" if guide_format == "claude" else "AGENTS.md"
+    return DocumentLayoutPolicy(
+        generated_index="docs/README.md",
+        agent_guides=(AgentGuideTarget(path=guide_path, format=guide_format),),
+    )
+
+
+def render_standalone_document_policy_template(
+    guide_format: AgentGuideFormat,
+) -> bytes:
+    header = (
+        "# researchctl standalone document policy candidate\n"
+        "# Customize routes for this project; manager/CODEOWNER review is required.\n"
+    )
+    return (
+        header + dump_yaml(standalone_document_policy_template(guide_format))
+    ).encode("utf-8")
+
+
+def agent_guide_markers(guide_format: AgentGuideFormat) -> tuple[str, str]:
+    renderer_id = PROJECT_AGENT_GUIDE_RENDERER_IDS[guide_format]
+    return (
+        f"<!-- researchctl-agent-guide:{renderer_id}:begin -->",
+        f"<!-- researchctl-agent-guide:{renderer_id}:end -->",
+    )
+
+
+def render_project_agent_guide(
+    policy: DocumentLayoutPolicy,
+    guide_format: AgentGuideFormat,
+) -> bytes:
+    begin, end = agent_guide_markers(guide_format)
+    subject = "Claude" if guide_format == "claude" else "Repository agents"
+    lines = [
+        begin,
+        "## Researchctl Document Workflow",
+        "",
+        _visible_marker(PROJECT_AGENT_GUIDE_RENDERER_IDS[guide_format]),
+        "",
+        f"{subject} must treat the repository's effective document policy as the only",
+        "authority for document classifications, contracts, and paths. Standalone",
+        "repositories use `.researchctl-docs.yaml`; managed repositories use",
+        "`.research/policies/default.yaml.document_layout`. Never invent a fallback",
+        "classification or directory when neither policy exists.",
+        "The effective policy also bounds the namespace segments before `:` to",
+        (
+            f"{policy.classification_depth.minimum} through "
+            f"{policy.classification_depth.maximum}; filesystem nesting is governed"
+        ),
+        "separately by route directories and `max_depth`.",
+        "",
+        "When creating, moving, or editing project documentation:",
+        "",
+        "1. Read the effective policy before choosing a path or document type.",
+        "2. Select one existing route from the table below. Do not create a new label,",
+        "   type, contract, or directory as part of an ordinary document change.",
+        "3. For `markdown-frontmatter`, write Markdown with the required strict",
+        "   frontmatter. For a structured contract, edit its canonical YAML source and",
+        "   regenerate the paired Markdown; never edit generated Markdown directly.",
+        "4. Run `researchctl doc tree --project .` before proposing or committing the",
+        "   change. Use `researchctl doc tree --project . --json` when another tool or",
+        "   review agent will consume the findings.",
+        "5. If `researchctl` or the effective policy is unavailable, stop and report the",
+        "   missing prerequisite instead of approximating the checks.",
+        "",
+        "Changes to the document policy are taxonomy changes. They require the",
+        "repository's manager/CODEOWNER review and must not be hidden inside a content",
+        "proposal. Standalone linting does not require `researchctl init`, a Session,",
+        "SQLite, or manager credentials.",
+        "",
+        "### Accepted Routes",
+        "",
+        "| Type | Classification | Contract | Directory | Required relations |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for route in policy.routes:
+        relations = ", ".join(route.required_relations) or "-"
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _code(route.document_type),
+                    _code(route.classification),
+                    _code(route.contract),
+                    _code(route.directory),
+                    _text(relations),
+                )
+            )
+            + " |"
+        )
+    lines.extend(["", end])
     return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
 
 
@@ -495,6 +599,87 @@ def _route_for_path(policy: DocumentLayoutPolicy, relative: str) -> DocumentRout
     )
 
 
+def _lint_agent_guides(
+    repository: Path,
+    policy: DocumentLayoutPolicy,
+    findings: list[DocumentFinding],
+) -> int:
+    checked = 0
+    for target in policy.agent_guides:
+        try:
+            guide_path = safe_repository_path(repository, target.path)
+        except RCPError:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="agent_guide_path_invalid",
+                    path=target.path,
+                    message="Configured agent guide path contains a symbolic link.",
+                )
+            )
+            continue
+        if not guide_path.exists():
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="agent_guide_missing",
+                    path=target.path,
+                    message="Configured agent guide is missing.",
+                )
+            )
+            continue
+        if guide_path.is_symlink() or not guide_path.is_file():
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="agent_guide_path_invalid",
+                    path=target.path,
+                    message="Configured agent guide must be a regular non-symlink file.",
+                )
+            )
+            continue
+        checked += 1
+        try:
+            observed = guide_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="agent_guide_unreadable",
+                    path=target.path,
+                    message=f"Configured agent guide cannot be read: {type(error).__name__}.",
+                )
+            )
+            continue
+        expected = render_project_agent_guide(policy, target.format).decode("utf-8")
+        begin, end = agent_guide_markers(target.format)
+        begin_index = observed.find(begin)
+        end_index = observed.find(end)
+        if (
+            begin_index < 0
+            or end_index < begin_index
+            or observed.count(begin) != 1
+            or observed.count(end) != 1
+        ):
+            matches = False
+        else:
+            observed_block = observed[begin_index : end_index + len(end)] + "\n"
+            matches = observed_block == expected
+        if not matches:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="agent_guide_mismatch",
+                    path=target.path,
+                    message=(
+                        "Agent guide is missing its managed block or differs from the "
+                        "effective document policy."
+                    ),
+                )
+            )
+    return checked
+
+
 def lint_document_tree(
     repository_root: Path,
     policy: DocumentLayoutPolicy,
@@ -526,6 +711,7 @@ def lint_document_tree(
         )
 
     files = _collect_files(document_root, findings)
+    agent_guide_count = _lint_agent_guides(repository, policy, findings)
     root_files = set(policy.root_files)
     legacy = {item.path: item for item in policy.legacy_files}
     structured_sources: dict[str, tuple[StructuredDocument, str]] = {}
@@ -853,7 +1039,7 @@ def lint_document_tree(
 
     return DocumentTreeLintResult(
         root=policy.root,
-        checked_files=len(files) + artifact_file_count,
+        checked_files=len(files) + artifact_file_count + agent_guide_count,
         structured_documents=len(structured_sources),
         findings=tuple(findings),
     )

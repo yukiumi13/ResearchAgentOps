@@ -57,6 +57,12 @@ standalone nor managed policy exists, the CLI fails with
 `document_policy_missing`; built-in model defaults cannot silently classify a
 real repository.
 
+For first adoption, `doc policy-template` renders a complete strict policy
+candidate rather than asking an Agent to invent YAML fields. `doc policy-lint`
+validates that file without repository discovery or managed state. The template
+remains a proposal: adapting its routes and accepting it as
+`.researchctl-docs.yaml` still requires manager/CODEOWNER review.
+
 A route is the exact four-part mapping:
 
 ```text
@@ -68,6 +74,22 @@ overlapping directories, type/path disagreement, excessive depth, missing
 relations, unsafe links, invalid frontmatter, stale generated Markdown, and
 orphan renders fail closed. A finite `legacy_files` allowlist supports migration
 without turning an entire directory into an exemption.
+
+The base label type enforces lowercase slash-separated namespace segments and a
+single `:` category. Policy then enforces `classification_depth` on the number
+of namespace segments, defaulting to two through four. Filesystem `max_depth`
+is separate, bounds nesting below a mapped route, and is constrained to `1..8`.
+Both are hard checks and can be adjusted only as explicit policy fields.
+
+An executable policy alone is not discoverable to a newly started standalone
+Agent. Projects may therefore declare `agent_guides`, each binding a Markdown
+path to a `claude` or `agents` renderer. `researchctl doc agent-guide` inserts or
+updates one versioned managed block while preserving unrelated project
+instructions. It can write only a configured target. The deterministic block
+points to the effective policy, states the no-fallback rule and authority
+boundary, gives the required author/render/lint sequence, and renders the
+current accepted route table. `doc tree` rejects missing or stale configured
+blocks, so policy and Agent instructions cannot silently diverge.
 
 `machine_artifact_roots` are separately configured. Each root has an explicit
 extension allowlist and can never permit Markdown. This lets a project retain
@@ -93,7 +115,8 @@ Ordinary document content follows repository CODEOWNERS and branch protection.
 Changing `.researchctl-docs.yaml` in standalone mode changes what the linter
 accepts, so that file must be manager-owned through CODEOWNERS. In managed mode,
 adding a label, directory, contract, generated index, artifact root, or remapping
-an existing route requires the manager-only policy proposal. Tags are descriptive
+an existing route requires the manager-only policy proposal. Adding or remapping
+an Agent guide target is the same kind of policy change. Tags are descriptive
 metadata and never grant path or approval authority.
 
 The linter diagnoses policy compliance; it does not approve a PR. A dedicated
@@ -106,6 +129,9 @@ read-only and cannot acquire manager authority merely by acting as reviewer.
   file and CODEOWNERS entry.
 - Editors, Agents, pre-commit, and CI can share one deterministic diagnostic
   engine instead of reimplementing the rules.
+- A new standalone Claude/Codex session can discover the workflow from its
+  ordinary repository instruction file, while CI proves that the managed block
+  still describes the effective policy.
 - Project-specific taxonomies remain possible, but taxonomy changes are visible
   policy changes rather than an Agent fallback.
 - Existing prose can migrate incrementally while machine artifact paths remain
@@ -114,11 +140,14 @@ read-only and cannot acquire manager authority merely by acting as reviewer.
   trusted baseline checkout for that check.
 - The current CLI is the integration surface. A language-server/editor adapter
   may be added later without changing document authority or schema semantics.
+- A reusable Skill may teach generic command use and MCP may proxy the same
+  diagnostics, but neither is required and neither becomes project authority.
 
 ## Verification
 
 Focused tests cover strict route policy, seven project-defined document types,
 frontmatter/path agreement, relations, deterministic render pairs and index,
 machine artifact separation, frozen baseline comparison, standalone CLI use,
-manager-only policy proposals, protected field-scope replay, CODEOWNERS, and the
-exact-head source workflow contract.
+deterministic Agent guide insertion and drift detection, manager-only policy
+proposals, protected field-scope replay, CODEOWNERS, and the exact-head source
+workflow contract.

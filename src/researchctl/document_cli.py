@@ -1,33 +1,38 @@
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, Literal, NoReturn
 
 import typer
 from pydantic import ValidationError
 
 from researchctl.constants import PROJECT_POLICY_PATH
 from researchctl.domain.ids import new_id
-from researchctl.domain.models import DocumentLayoutPolicy, ProjectPolicy
+from researchctl.domain.models import AgentGuideFormat, DocumentLayoutPolicy, ProjectPolicy
 from researchctl.errors import RCPError
 from researchctl.output import dump_envelope, envelope, error_payload
-from researchctl.repository import discover_repository
+from researchctl.repository import discover_repository, safe_repository_path
 from researchctl.serialization import SerializationError, load_model
 from researchctl.services.project_documents import (
     DocumentLintResult,
     DocumentTreeLintResult,
+    agent_guide_markers,
     lint_document_tree,
     lint_project_document,
     load_project_document,
     render_document_index,
+    render_project_agent_guide,
     render_project_document,
+    render_standalone_document_policy_template,
 )
 from researchctl.services.requests import DocumentLayoutConfigureRequest
 
 
 doc_app = typer.Typer(
-    help="Lint, render, and classify governed project documents.",
+    help="Draft policy, lint, render, and classify governed project documents.",
     no_args_is_help=True,
 )
 
@@ -146,6 +151,149 @@ def _write_or_echo(content: bytes, output_file: Path | None) -> None:
     typer.echo(f"Rendered: {destination}")
 
 
+def _agent_guide_destination(
+    repository: Path,
+    output_file: Path,
+    policy: DocumentLayoutPolicy,
+    requested_format: AgentGuideFormat | None,
+) -> tuple[Path, AgentGuideFormat]:
+    lexical = (
+        Path(os.path.abspath(os.fspath(output_file)))
+        if output_file.is_absolute()
+        else Path(os.path.abspath(os.fspath(repository / output_file)))
+    )
+    try:
+        relative = lexical.relative_to(repository).as_posix()
+    except ValueError as error:
+        raise RCPError(
+            code="agent_guide_output_outside_repository",
+            message="Agent guide output must stay inside the selected repository.",
+            context={"path": str(output_file)},
+        ) from error
+    target = next((item for item in policy.agent_guides if item.path == relative), None)
+    if target is None:
+        raise RCPError(
+            code="agent_guide_target_unconfigured",
+            message="Agent guide output is not declared in policy.agent_guides.",
+            remediation="Declare the path and format in the protected document policy.",
+            context={"path": relative},
+        )
+    if requested_format is not None and requested_format != target.format:
+        raise RCPError(
+            code="agent_guide_format_mismatch",
+            message="Requested Agent guide format differs from the configured target.",
+            context={
+                "path": relative,
+                "requested_format": requested_format,
+                "configured_format": target.format,
+            },
+        )
+    return safe_repository_path(repository, target.path), target.format
+
+
+def _prepare_agent_guide_parent(repository: Path, destination: Path) -> None:
+    try:
+        relative_parent = destination.parent.relative_to(repository)
+    except ValueError as error:
+        raise RCPError(
+            code="agent_guide_output_outside_repository",
+            message="Agent guide output parent escapes the selected repository.",
+        ) from error
+    current = repository
+    for part in relative_parent.parts:
+        current = current / part
+        if current.exists() or current.is_symlink():
+            if current.is_symlink() or not current.is_dir():
+                raise RCPError(
+                    code="agent_guide_output_path_invalid",
+                    message="Agent guide output parent must use non-symlink directories.",
+                    context={"path": str(current)},
+                )
+            continue
+        current.mkdir(mode=0o755)
+
+
+def _atomic_replace(destination: Path, content: bytes, mode: int) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        dir=destination.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _upsert_agent_guide(
+    repository: Path,
+    destination: Path,
+    content: bytes,
+    guide_format: AgentGuideFormat,
+) -> None:
+    _prepare_agent_guide_parent(repository, destination)
+    observed: str | None = None
+    existing_mode = 0o644
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or not destination.is_file():
+            raise RCPError(
+                code="agent_guide_output_path_invalid",
+                message="Agent guide output must be a regular non-symlink file.",
+                context={"path": str(destination)},
+            )
+        observed = destination.read_text(encoding="utf-8")
+        existing_mode = stat.S_IMODE(destination.stat().st_mode)
+
+    rendered = content.decode("utf-8")
+    if observed is None:
+        updated = rendered
+        outcome = "Rendered"
+    else:
+        begin, end = agent_guide_markers(guide_format)
+        begin_count = observed.count(begin)
+        end_count = observed.count(end)
+        if begin_count == 0 and end_count == 0:
+            separator = "" if not observed else ("\n" if observed.endswith("\n") else "\n\n")
+            updated = observed + separator + rendered
+        elif begin_count == 1 and end_count == 1:
+            begin_index = observed.index(begin)
+            end_index = observed.index(end)
+            if end_index < begin_index:
+                raise RCPError(
+                    code="agent_guide_marker_invalid",
+                    message="Agent guide managed block markers are in the wrong order.",
+                )
+            end_exclusive = end_index + len(end)
+            if observed.startswith("\r\n", end_exclusive):
+                end_exclusive += 2
+            elif observed.startswith("\n", end_exclusive):
+                end_exclusive += 1
+            updated = observed[:begin_index] + rendered + observed[end_exclusive:]
+        else:
+            raise RCPError(
+                code="agent_guide_marker_invalid",
+                message="Agent guide contains incomplete or duplicate managed block markers.",
+            )
+        outcome = "Updated"
+
+    encoded = updated.encode("utf-8")
+    if observed is not None and encoded == observed.encode("utf-8"):
+        typer.echo(f"Unchanged: {destination}")
+        return
+    _atomic_replace(destination, encoded, existing_mode)
+    typer.echo(f"{outcome}: {destination}")
+
+
 def _repository_and_policy(
     project: Path,
     policy_file: Path | None,
@@ -246,7 +394,7 @@ def doc_tree_command(
     ] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    """Validate the complete configured document hierarchy and generated pairs."""
+    """Validate configured documents, Agent guides, and generated pairs."""
 
     try:
         repository, policy = _repository_and_policy(project, policy_file)
@@ -287,6 +435,134 @@ def doc_index_command(
         _write_or_echo(render_document_index(policy), output_file)
     except Exception as exc:
         _abort(_error(exc), command="doc.index", json_output=False)
+
+
+@doc_app.command("policy-template")
+def doc_policy_template_command(
+    agent_format: Annotated[
+        Literal["claude", "agents"],
+        typer.Option(
+            "--agent-format",
+            help="Project instruction target included in the example policy.",
+        ),
+    ] = "claude",
+    output_file: Annotated[
+        Path | None,
+        typer.Option("--output-file", help="Write the standalone policy candidate here."),
+    ] = None,
+) -> None:
+    """Render a complete, strict standalone document-policy example."""
+
+    try:
+        _write_or_echo(
+            render_standalone_document_policy_template(agent_format),
+            output_file,
+        )
+    except Exception as exc:
+        _abort(_error(exc), command="doc.policy-template", json_output=False)
+
+
+@doc_app.command("policy-lint")
+def doc_policy_lint_command(
+    policy_file: Annotated[
+        Path,
+        typer.Argument(help="Standalone DocumentLayoutPolicy YAML candidate."),
+    ],
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Validate a document policy without requiring a repository or research init."""
+
+    command = "doc.policy-lint"
+    try:
+        if policy_file.is_symlink() or not policy_file.is_file():
+            raise RCPError(
+                code="document_policy_invalid",
+                message="Document policy must be an existing non-symlink regular file.",
+                context={"path": str(policy_file)},
+            )
+        policy = load_model(policy_file, DocumentLayoutPolicy)
+        data = {
+            "path": str(policy_file),
+            "terminal_result": "passed",
+            "routes": len(policy.routes),
+            "agent_guides": len(policy.agent_guides),
+            "classification_depth": {
+                "minimum": policy.classification_depth.minimum,
+                "maximum": policy.classification_depth.maximum,
+            },
+            "max_depth": policy.max_depth,
+        }
+    except Exception as exc:
+        _abort(_error(exc), command=command, json_output=json_output)
+    if json_output:
+        typer.echo(dump_envelope(envelope(command=command, success=True, data=data)))
+    else:
+        typer.echo("Outcome: passed")
+        typer.echo(f"Policy: {data['path']}")
+        typer.echo(f"Routes: {data['routes']}")
+        typer.echo(f"Agent guides: {data['agent_guides']}")
+        depth = data["classification_depth"]
+        if not isinstance(depth, dict):
+            raise AssertionError("classification depth output must be a mapping")
+        typer.echo(f"Classification depth: {depth['minimum']}..{depth['maximum']}")
+        typer.echo(f"Filesystem max depth: {data['max_depth']}")
+
+
+@doc_app.command("agent-guide")
+def doc_agent_guide_command(
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    policy_file: Annotated[
+        Path | None,
+        typer.Option("--policy-file", help="Standalone DocumentLayoutPolicy YAML."),
+    ] = None,
+    guide_format: Annotated[
+        Literal["claude", "agents"] | None,
+        typer.Option("--format", help="Guide target format; inferred when writing."),
+    ] = None,
+    output_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-file",
+            help="Insert or update the managed block in a configured guide target.",
+        ),
+    ] = None,
+) -> None:
+    """Render project-local instructions that teach Agents the document workflow."""
+
+    try:
+        repository, policy = _repository_and_policy(project, policy_file)
+        if output_file is None:
+            selected_format: AgentGuideFormat
+            if guide_format is not None:
+                selected_format = guide_format
+            else:
+                configured_formats = {target.format for target in policy.agent_guides}
+                if len(configured_formats) > 1:
+                    raise RCPError(
+                        code="agent_guide_format_required",
+                        message="Policy declares multiple Agent guide formats.",
+                        remediation="Select one with --format.",
+                    )
+                selected_format = next(iter(configured_formats), "claude")
+            typer.echo(
+                render_project_agent_guide(policy, selected_format).decode("utf-8"),
+                nl=False,
+            )
+            return
+        destination, selected_format = _agent_guide_destination(
+            repository,
+            output_file,
+            policy,
+            guide_format,
+        )
+        _upsert_agent_guide(
+            repository,
+            destination,
+            render_project_agent_guide(policy, selected_format),
+            selected_format,
+        )
+    except Exception as exc:
+        _abort(_error(exc), command="doc.agent-guide", json_output=False)
 
 
 @doc_app.command("configure-layout")

@@ -13,16 +13,19 @@ from researchctl.domain.models import (
     DocumentLayoutPolicy,
     ProjectStatusSummary,
 )
-from researchctl.serialization import dump_yaml
+from researchctl.serialization import dump_yaml, load_yaml
 from researchctl.services.project_documents import (
     DESIGN_DOCUMENT_RENDERER_ID,
     DOCUMENT_INDEX_RENDERER_ID,
+    PROJECT_AGENT_GUIDE_RENDERER_IDS,
     PROJECT_STATUS_RENDERER_ID,
     lint_document_tree,
     load_markdown_frontmatter,
     render_design_document,
     render_document_index,
+    render_project_agent_guide,
     render_project_status_summary,
+    render_standalone_document_policy_template,
 )
 
 
@@ -247,6 +250,41 @@ def test_design_and_status_renderers_show_versioned_markers() -> None:
     assert "| Document lint | `verified_local` |" in status
 
 
+def test_agent_guide_renderer_teaches_the_effective_standalone_workflow() -> None:
+    guide = render_project_agent_guide(_custom_policy(), "claude").decode("utf-8")
+
+    assert "researchctl-agent-guide:" in guide
+    assert f"researchctl-renderer:{PROJECT_AGENT_GUIDE_RENDERER_IDS['claude']}" in guide
+    assert "`.researchctl-docs.yaml`" in guide
+    assert "`researchctl doc tree --project .`" in guide
+    assert "does not require `researchctl init`" in guide
+    assert "| `ledger` | `research/evidence:ledger` |" in guide
+
+
+def test_standalone_policy_template_is_explicit_and_schema_valid() -> None:
+    rendered = render_standalone_document_policy_template("claude")
+    payload = load_yaml(rendered.decode("utf-8"))
+    policy = DocumentLayoutPolicy.model_validate(payload)
+
+    assert set(payload) == {
+        "agent_guides",
+        "classification_depth",
+        "generated_index",
+        "legacy_files",
+        "machine_artifact_roots",
+        "max_depth",
+        "root",
+        "root_files",
+        "routes",
+    }
+    assert policy.generated_index == "docs/README.md"
+    assert policy.classification_depth.minimum == 2
+    assert policy.classification_depth.maximum == 4
+    assert policy.agent_guides[0].path == "CLAUDE.md"
+    assert policy.legacy_files == ()
+    assert policy.machine_artifact_roots == ()
+
+
 def test_markdown_frontmatter_requires_canonical_session_owner() -> None:
     valid = _frontmatter().replace(
         "owner: person:yl2708",
@@ -295,6 +333,33 @@ def test_custom_policy_supports_seven_project_types_and_rejects_overlap() -> Non
         {"directory": "data", "allowed_extensions": [".json", ".md"]}
     ]
     with pytest.raises(ValidationError, match="cannot allow Markdown"):
+        DocumentLayoutPolicy.model_validate(payload)
+
+    payload = policy.model_dump(mode="json")
+    payload["agent_guides"] = [
+        {"path": "docs/CLAUDE.md", "format": "claude"}
+    ]
+    with pytest.raises(ValidationError, match="outside the document root"):
+        DocumentLayoutPolicy.model_validate(payload)
+
+    payload = policy.model_dump(mode="json")
+    payload["agent_guides"] = [
+        {"path": "CLAUDE.txt", "format": "claude"}
+    ]
+    with pytest.raises(ValidationError, match="must be Markdown"):
+        DocumentLayoutPolicy.model_validate(payload)
+
+    payload = policy.model_dump(mode="json")
+    payload["routes"][0]["classification"] = "research:ledger"
+    with pytest.raises(ValidationError, match="classification depth"):
+        DocumentLayoutPolicy.model_validate(payload)
+
+    payload["classification_depth"] = {"minimum": 1, "maximum": 4}
+    customized = DocumentLayoutPolicy.model_validate(payload)
+    assert customized.routes[0].classification == "research:ledger"
+
+    payload["classification_depth"] = {"minimum": 4, "maximum": 2}
+    with pytest.raises(ValidationError, match="minimum cannot exceed maximum"):
         DocumentLayoutPolicy.model_validate(payload)
 
 
@@ -412,6 +477,30 @@ def test_tree_lint_requires_each_configured_root_file(tmp_path: Path) -> None:
     assert any(finding.code == "document_root_file_missing" for finding in result.findings)
 
 
+def test_tree_lint_requires_current_configured_agent_guide(tmp_path: Path) -> None:
+    payload = _custom_policy().model_dump(mode="json")
+    payload["agent_guides"] = [{"path": "CLAUDE.md", "format": "claude"}]
+    policy = DocumentLayoutPolicy.model_validate(payload)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+
+    missing = lint_document_tree(tmp_path, policy)
+    assert any(finding.code == "agent_guide_missing" for finding in missing.findings)
+
+    (tmp_path / "CLAUDE.md").write_bytes(render_project_agent_guide(policy, "claude"))
+    passed = lint_document_tree(tmp_path, policy)
+    assert passed.passed
+    assert passed.checked_files == 2
+
+    stale = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8").replace(
+        "research/evidence:ledger",
+        "research/evidence:stale",
+    )
+    (tmp_path / "CLAUDE.md").write_text(stale, encoding="utf-8")
+    invalid = lint_document_tree(tmp_path, policy)
+    assert any(finding.code == "agent_guide_mismatch" for finding in invalid.findings)
+
+
 def test_doc_cli_works_in_uninitialized_repository_with_standalone_policy(
     tmp_path: Path,
 ) -> None:
@@ -444,6 +533,104 @@ def test_doc_cli_works_in_uninitialized_repository_with_standalone_policy(
     )
     assert index.exit_code == 0
     assert f"researchctl-renderer:{DOCUMENT_INDEX_RENDERER_ID}" in index.stdout
+
+
+def test_doc_cli_renders_and_lints_policy_before_repository_adoption(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / ".researchctl-docs.yaml"
+
+    rendered = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "policy-template",
+            "--agent-format",
+            "claude",
+            "--output-file",
+            str(candidate),
+        ],
+    )
+    assert rendered.exit_code == 0
+    assert "Rendered:" in rendered.stdout
+
+    linted = CliRunner().invoke(
+        app,
+        ["doc", "policy-lint", str(candidate), "--json"],
+    )
+    assert linted.exit_code == 0
+    assert '"success": true' in linted.stdout
+    assert '"routes": 5' in linted.stdout
+    assert not (tmp_path / ".research").exists()
+
+
+def test_doc_cli_upserts_configured_agent_guide_without_initializing(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    payload = _custom_policy().model_dump(mode="json")
+    payload["agent_guides"] = [{"path": "CLAUDE.md", "format": "claude"}]
+    policy = DocumentLayoutPolicy.model_validate(payload)
+    (tmp_path / ".researchctl-docs.yaml").write_text(
+        dump_yaml(policy),
+        encoding="utf-8",
+    )
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("# Existing instructions\n", encoding="utf-8")
+
+    rendered = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "agent-guide",
+            "--project",
+            str(tmp_path),
+            "--output-file",
+            "CLAUDE.md",
+        ],
+    )
+    assert rendered.exit_code == 0
+    assert "Updated:" in rendered.stdout
+    observed = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert observed.startswith("# Existing instructions\n")
+    assert "researchctl-agent-guide:" in observed
+    assert not (tmp_path / ".research").exists()
+
+    repeated = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "agent-guide",
+            "--project",
+            str(tmp_path),
+            "--output-file",
+            "CLAUDE.md",
+        ],
+    )
+    assert repeated.exit_code == 0
+    assert "Unchanged:" in repeated.stdout
+
+    tree = CliRunner().invoke(
+        app,
+        ["doc", "tree", "--project", str(tmp_path), "--json"],
+    )
+    assert tree.exit_code == 0
+    assert '"checked_files": 2' in tree.stdout
+
+    outside_contract = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "agent-guide",
+            "--project",
+            str(tmp_path),
+            "--output-file",
+            "UNCONFIGURED.md",
+        ],
+    )
+    assert outside_contract.exit_code == 2
+    assert "agent_guide_target_unconfigured" in outside_contract.stderr
 
 
 def test_doc_cli_fails_closed_without_an_explicit_policy(tmp_path: Path) -> None:

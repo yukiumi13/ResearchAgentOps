@@ -80,8 +80,10 @@ head and compares baseline-frozen documents with a detached checkout of the
 exact base SHA. In a repository that has not run `researchctl init`,
 `.researchctl-docs.yaml` is the complete document taxonomy and therefore must be
 CODEOWNERS-protected: changing it can add or remap an accepted classification,
-directory, schema contract, generated index, or machine artifact root. Source
-lint diagnoses those rules but does not authorize the policy change. After
+directory, schema contract, generated index, machine artifact root, or Agent
+guide target. Configured Agent guide managed blocks are deterministic policy
+projections; source lint rejects missing or stale blocks but does not authorize
+the underlying policy change. After
 initialization, the same policy is inside protected ProjectPolicy and changes
 through the manager-only, protected-base-validated `doc.configure-layout` path.
 

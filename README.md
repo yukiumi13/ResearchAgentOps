@@ -180,9 +180,45 @@ Document contracts can be adopted without `researchctl init`. Put a strict
 CODEOWNERS, and run the same static checks locally or in any CI:
 
 ```bash
+researchctl doc policy-template --agent-format claude \
+  --output-file .researchctl-docs.yaml
+researchctl doc policy-lint .researchctl-docs.yaml
+mkdir -p docs
+researchctl doc agent-guide --project . --output-file CLAUDE.md
+researchctl doc index --project . --output-file docs/README.md
 researchctl doc tree --project .
 researchctl doc tree --project . --json
 ```
+
+`policy-template` is an explicit, schema-valid starting proposal rather than an
+accepted universal taxonomy. It includes every policy section, default routes,
+a generated index, finite empty migration/artifact lists, and one Agent guide
+target. Adapt its routes to the project, then put the policy change through the
+repository's manager/CODEOWNER review. `policy-lint` validates only the rule
+file and needs neither a Git repository nor `researchctl init`.
+
+Standalone Agents also need a repository-local discovery surface. Declare one
+or more generated guide targets in the same policy:
+
+```yaml
+agent_guides:
+  - path: CLAUDE.md
+    format: claude
+  # - path: AGENTS.md
+  #   format: agents
+```
+
+The `agent-guide` step inserts or refreshes the deterministic managed block
+without overwriting other project instructions:
+
+The guide tells the Agent to read the effective policy, select an accepted
+route, use canonical YAML/render pairs where required, fail instead of guessing
+when the tool or policy is absent, and run `doc tree`. It includes the current
+route table and a visible renderer marker. `doc tree` fails when a configured
+guide is missing, malformed, or stale, so CI checks the instructions and the
+documents together. Output writes are limited to targets explicitly declared in
+the protected policy. The `agents` format provides the same contract for an
+`AGENTS.md` target.
 
 The policy is required in standalone mode. If neither it nor a managed Project
 policy exists, commands fail with `document_policy_missing`; `researchctl` does
@@ -200,6 +236,12 @@ documents already marked `validity: frozen`:
 researchctl doc tree --project . --baseline-project /path/to/base-checkout
 ```
 
+The lexical label grammar is mandatory. Project policy separately bounds the
+number of namespace segments before `:` through `classification_depth`, whose
+defaults are `minimum: 2` and `maximum: 4`. Filesystem nesting below a mapped
+route uses the independent `max_depth` field (`1..8`, default `4`). A project
+may explicitly tighten or widen these bounded values; every route must comply.
+
 Projects can keep stable machine inputs under paths such as `data/` by declaring
 `machine_artifact_roots` with explicit extension allowlists. Those roots can
 never allow Markdown, so prose moves to `docs/` without forcing scripts to change
@@ -215,7 +257,10 @@ Project policy field changed. Ordinary tags never affect routing or authority.
 Generated schemas include `document-layout-policy`, `markdown-frontmatter`,
 `design-document`, `project-status-summary`, and `analysis-brief`. Editor and
 Agent integrations should consume those schemas or `doc tree --json` rather than
-implementing a second validator. The exact decision is recorded in ADR 0014.
+implementing a second validator. A reusable Skill may teach the generic command
+workflow, and an MCP adapter may expose it remotely, but project taxonomy remains
+in the repository policy and enforcement remains in the CLI/CI core. The exact
+decision is recorded in ADR 0014.
 
 ## Session Addressing
 
