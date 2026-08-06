@@ -10,8 +10,17 @@ from pydantic import ValidationError
 
 from researchctl.domain.models import AnalysisBrief, ResearchUpdate
 from researchctl.errors import RCPError
-from researchctl.output import dump_envelope, envelope, error_payload
-from researchctl.serialization import SerializationError, load_model
+from researchctl.output import (
+    dump_envelope,
+    envelope,
+    error_payload,
+    human_error_detail_lines,
+)
+from researchctl.serialization import (
+    SerializationError,
+    load_model,
+    validation_error_details,
+)
 from researchctl.services.generated_markdown import (
     atomic_replace_bytes,
     permits_generated_markdown_replacement,
@@ -34,21 +43,15 @@ update_app = typer.Typer(
 )
 
 
-def _error(exc: Exception) -> RCPError:
+def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
     if isinstance(exc, RCPError):
         return exc
     if isinstance(exc, ValidationError):
         return RCPError(
             code="validation_error",
             message="Writing contract schema validation failed.",
-            remediation="Review the invalid fields and rerun the command.",
-            context={
-                "details": exc.errors(
-                    include_url=False,
-                    include_context=False,
-                    include_input=False,
-                )
-            },
+            remediation="Fix the listed fields and rerun the same writing command.",
+            context={"details": validation_error_details(exc, source_path=source_path)},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
@@ -79,6 +82,8 @@ def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
         )
     else:
         typer.echo(f"Error [{error.code}]: {error.message}", err=True)
+        for line in human_error_detail_lines(error):
+            typer.echo(line, err=True)
         if error.remediation:
             typer.echo(f"Next: {error.remediation}", err=True)
     raise typer.Exit(code=2)
@@ -178,7 +183,11 @@ def brief_lint_command(
         brief = load_model(brief_file, AnalysisBrief)
         result = lint_analysis_brief(brief)
     except Exception as exc:
-        _abort(_error(exc), command=command, json_output=json_output)
+        _abort(
+            _error(exc, source_path=brief_file),
+            command=command,
+            json_output=json_output,
+        )
     _emit_lint(result, command=command, json_output=json_output)
 
 
@@ -196,7 +205,11 @@ def brief_render_command(
         brief = load_model(brief_file, AnalysisBrief)
         _write_or_echo(render_analysis_brief(brief), output_file)
     except Exception as exc:
-        _abort(_error(exc), command="brief.render", json_output=False)
+        _abort(
+            _error(exc, source_path=brief_file),
+            command="brief.render",
+            json_output=False,
+        )
 
 
 @update_app.command("lint")
@@ -214,7 +227,11 @@ def update_lint_command(
         update = load_model(update_file, ResearchUpdate)
         result = lint_research_update(update)
     except Exception as exc:
-        _abort(_error(exc), command=command, json_output=json_output)
+        _abort(
+            _error(exc, source_path=update_file),
+            command=command,
+            json_output=json_output,
+        )
     _emit_lint(result, command=command, json_output=json_output)
 
 
@@ -232,4 +249,8 @@ def update_render_command(
         update = load_model(update_file, ResearchUpdate)
         _write_or_echo(render_research_update(update), output_file)
     except Exception as exc:
-        _abort(_error(exc), command="update.render", json_output=False)
+        _abort(
+            _error(exc, source_path=update_file),
+            command="update.render",
+            json_output=False,
+        )

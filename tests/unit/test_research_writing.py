@@ -350,3 +350,19 @@ def test_writing_cli_reports_yaml_scanner_location_and_specific_remediation(
     assert '"column": 16' in payload
     assert "Quote plain YAML text" in payload
     assert "duplicate keys or aliases" not in payload
+
+
+def test_writing_cli_human_validation_error_names_field_and_yaml_location(
+    tmp_path: Path,
+) -> None:
+    brief_path = tmp_path / "brief.yaml"
+    payload = _brief().model_dump(mode="json")
+    payload["answer"] = 11677
+    brief_path.write_text(dump_yaml(payload), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["brief", "lint", str(brief_path)])
+
+    assert result.exit_code == 2
+    assert "invalid: answer [validation_error]" in result.stderr
+    assert "Input should be a valid string" in result.stderr
+    assert "line " in result.stderr and "column " in result.stderr

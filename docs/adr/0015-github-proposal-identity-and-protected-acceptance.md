@@ -18,9 +18,9 @@ relations:
   supersedes: []
   derived_from: []
   see_also:
-    - adr/0003-atomic-human-acceptance.md
-    - adr/0007-agent-threat-model.md
-    - adr/0010-ci-attestation-and-linear-delivery.md
+    - docs/adr/0003-atomic-human-acceptance.md
+    - docs/adr/0007-agent-threat-model.md
+    - docs/adr/0010-ci-attestation-and-linear-delivery.md
 ---
 # ADR 0015: GitHub Proposal Identity and Protected Acceptance
 

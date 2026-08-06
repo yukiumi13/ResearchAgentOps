@@ -36,13 +36,13 @@ EXPECTED_FILE_SHA256 = {
         "a41dd0bebb5fb3755589f9bb469fcedd5bd592ceefd23fccb4935bf7d4232ab2"
     ),
     "markdown-frontmatter.schema.json": (
-        "a3b7d85bb4837fa4a0d70d710ee9a53a5632e1026fb4ca87166d73610f7ee0e2"
+        "26d3ccc7a4c427c07ec5902c309047e41364883967351dbf234ff9e7ffec0dc8"
     ),
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
     "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
-    "manifest.json": "2d2d8ca056adb28866058e90c8379c56f7c6f09292ce11522fbf88176705baea",
+    "manifest.json": "3a4c32dea8baa0ef34b71f56dda3a07dfc60cc4f765d5599fbaf902bd2763826",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
         "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"

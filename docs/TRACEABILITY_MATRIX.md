@@ -83,3 +83,4 @@ the stable `US-*` catalog.
 | `REQ-20260805-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; policy template/lint and Agent guide tests |
 | `REQ-20260805-002` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; contract/schema/scaffold/check, renderer provenance, prose budget, and standalone doctor tests |
 | `REQ-20260805-003` | `US-017`, `US-018`, `US-021` | Spec Sections 9 and 17; ADR 0015; CODEOWNERS contract; read-only governance audit; installed PR checks and branch-rule canary |
+| `REQ-20260806-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; compatibility baseline reader, diagnostics, provenance, and relation tests |

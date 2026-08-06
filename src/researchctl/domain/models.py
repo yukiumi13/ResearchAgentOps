@@ -1223,7 +1223,16 @@ class MarkdownDocumentReference(StrictModel):
 
 class MarkdownClaimProvenance(StrictModel):
     key: HumanKey
-    value: ShortText
+    value: Annotated[
+        ShortText,
+        Field(
+            description=(
+                "Exact display text that must occur verbatim in the Markdown body. "
+                "Always quote numeric-looking YAML values, for example '11677' or "
+                "'91.20', so formatting and significant digits remain stable."
+            )
+        ),
+    ]
     basis: Literal["measured", "estimated", "derived", "external"]
     source_keys: Annotated[tuple[HumanKey, ...], Field(min_length=1, max_length=8)]
     method: ShortText | None = None
@@ -1237,10 +1246,21 @@ class MarkdownClaimProvenance(StrictModel):
         return self
 
 
+RepositoryRelationTargets = Annotated[
+    tuple[RepositoryPath, ...],
+    Field(
+        description=(
+            "Repository-root-relative document paths, for example "
+            "docs/runbooks/evaluation.md."
+        )
+    ),
+]
+
+
 class DocumentRelations(StrictModel):
-    supersedes: tuple[RepositoryPath, ...] = ()
-    derived_from: tuple[RepositoryPath, ...] = ()
-    see_also: tuple[RepositoryPath, ...] = ()
+    supersedes: RepositoryRelationTargets = ()
+    derived_from: RepositoryRelationTargets = ()
+    see_also: RepositoryRelationTargets = ()
 
     @model_validator(mode="after")
     def require_unique_relations(self) -> DocumentRelations:
@@ -1296,10 +1316,16 @@ class MarkdownFrontmatter(StrictModel):
             for item in self.provenance
             for source_key in item.source_keys
         }
-        if used_source_keys != set(source_keys):
-            raise ValueError(
-                "Markdown provenance must use every declared source and no unknown source"
-            )
+        declared_source_keys = set(source_keys)
+        if used_source_keys != declared_source_keys:
+            unused = sorted(declared_source_keys - used_source_keys)
+            undeclared = sorted(used_source_keys - declared_source_keys)
+            differences: list[str] = []
+            if unused:
+                differences.append("unused declared sources: " + ", ".join(unused))
+            if undeclared:
+                differences.append("undeclared source keys: " + ", ".join(undeclared))
+            raise ValueError("Markdown provenance source mismatch; " + "; ".join(differences))
         return self
 
 

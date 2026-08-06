@@ -16,8 +16,8 @@ relations:
   supersedes: []
   derived_from: []
   see_also:
-    - RESEARCH_CONTROL_PLANE_SPEC.md
-    - WORKFLOW_COVERAGE.md
+    - docs/RESEARCH_CONTROL_PLANE_SPEC.md
+    - docs/WORKFLOW_COVERAGE.md
 ---
 # ADR 0014: Portable Project Document Contracts
 
@@ -115,12 +115,34 @@ the same path with identical bytes. The static core accepts directory inputs;
 GitHub Actions, another CI system, or an editor integration decides how a
 baseline is materialized.
 
-During the first policy-adoption PR, the trusted baseline may not have any
-document policy. Only for that exact `document_policy_missing` case, baseline
-frozen scanning uses the subject policy's route shape against the old tree and
-accepts an absent old document root. An invalid, shadowed, or unsafe baseline
-policy still fails closed, as does a missing baseline root after policy adoption.
-This permits first adoption without weakening later baseline-policy validation.
+The baseline reader is deliberately narrower than current-policy validation.
+It reads only the baseline's standalone `root` or managed
+`document_layout.root`, validates that repository-relative path, and scans every
+Markdown file below it for raw `validity: frozen` frontmatter. It does not parse
+the baseline's routes or validate them against the currently installed policy
+schema. Therefore adding a required policy field cannot block the PR that
+upgrades an older baseline, while the trusted base checkout alone still decides
+which bytes were frozen. The subject/PR policy cannot hide a previously frozen
+file by changing a route.
+
+During first policy adoption, a baseline with no policy uses the subject root
+only as a discovery fallback and may omit that root. A present malformed,
+shadowed, symlinked, or unsafe baseline policy fails closed. Malformed
+frontmatter inside the baseline root also fails closed, as does a missing root
+after policy adoption. This permits schema migration without weakening frozen
+document enforcement.
+
+Manual provenance values are exact display strings and must occur verbatim in
+the Markdown body. Numeric-looking YAML values must therefore be quoted so
+significant digits survive. Every declared source must be used and unknown
+source keys are rejected with the offending keys named. Source locations and
+document relations are both repository-root relative; the linter diagnoses the
+old document-root-relative relation form with its exact replacement.
+
+Human-readable validation errors are part of the Agent interface. Pydantic
+failures print every field location and, when source YAML is available, its line
+and column; JSON output preserves the same structured details. Remediation names
+the real route-aware command, `researchctl doc check PATH`.
 
 Structured YAML is canonical source for design documents, project status
 summaries, and analysis briefs. Its Markdown pair is deterministic generated
@@ -200,4 +222,6 @@ frontmatter/path agreement, relations, deterministic render pairs and index,
 project-owned frontmatter preservation around generated bodies, machine artifact
 separation, frozen baseline comparison, standalone CLI use, deterministic Agent
 guide insertion and drift detection, manager-only policy proposals, protected
-field-scope replay, CODEOWNERS, and the exact-head source workflow contract.
+field-scope replay, legacy-policy baseline migration, malformed baseline
+fail-closed behavior, human field/line diagnostics, CODEOWNERS, and the
+exact-head source workflow contract.

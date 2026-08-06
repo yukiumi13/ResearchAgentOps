@@ -235,3 +235,21 @@ requirements so traceability does not silently stop at that boundary.
   missing policy, remote/default-branch drift, and PR receipts authored by a
   different login. No real rule apply is claimed. Pre-create App token
   provenance and post-merge Manager-review verification remain deployment gates.
+
+## REQ-20260806-001 - Baseline enforcement survives policy-schema migration
+
+- Source: standalone canary CI migration deadlock and schema-diagnostic feedback,
+  2026-08-06.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc tree --baseline-project` does not validate an historical
+  policy against the complete current `DocumentLayoutPolicy` schema. It reads
+  only a safe historical document root and identifies frozen documents from raw
+  baseline frontmatter, independent of subject routes. A baseline missing a
+  newly required route field therefore permits the migration PR, while modified
+  or deleted frozen bytes still fail. Malformed or unsafe baseline policy,
+  malformed baseline frontmatter, symlinks, and an unexpectedly missing adopted
+  root fail closed. Human schema errors name every invalid field and available
+  YAML line/column by default, use an existing remediation command, and retain
+  equivalent machine details under `--json`. Manual provenance values remain
+  strict quoted display strings that occur verbatim in the body; source mismatch
+  diagnostics name keys, and source/relation paths share the repository root.

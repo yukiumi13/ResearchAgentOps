@@ -337,6 +337,19 @@ documents already marked `validity: frozen`:
 researchctl doc tree --project . --baseline-project /path/to/base-checkout
 ```
 
+The baseline checkout is inspected through a migration-compatible reader. RCP
+validates only its document-root path, then scans raw Markdown frontmatter below
+that root for `validity: frozen`; it does not require an old policy to satisfy
+the newest route schema. A policy-schema upgrade can therefore fix its own base
+without disabling byte protection. Unsafe policy paths, malformed baseline YAML
+or frontmatter, and changed or deleted frozen files still fail closed.
+
+Manual provenance `value` fields are exact display strings and must be quoted
+when they look numeric (`value: "91.20"`). Each must appear verbatim in the body.
+Both `sources[].location` and `relations.*` paths are repository-root relative.
+Human CLI errors include invalid field paths and available YAML line/column
+locations by default; `--json` exposes the same details for automation.
+
 The lexical label grammar is mandatory. Project policy separately bounds the
 number of namespace segments before `:` through `classification_depth`, whose
 defaults are `minimum: 2` and `maximum: 4`. Filesystem nesting below a mapped

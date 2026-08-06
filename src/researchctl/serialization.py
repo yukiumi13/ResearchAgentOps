@@ -221,6 +221,84 @@ def load_yaml(text: str) -> dict[str, Any]:
         ) from exc
 
 
+def _yaml_node_at_path(
+    text: str,
+    path: tuple[str | int, ...],
+) -> yaml.Node | None:
+    try:
+        node = yaml.compose(text, Loader=yaml.SafeLoader)
+    except (yaml.YAMLError, RecursionError):
+        return None
+    if node is None:
+        return None
+    for component in path:
+        if isinstance(node, yaml.MappingNode) and isinstance(component, str):
+            match = next(
+                (
+                    value_node
+                    for key_node, value_node in node.value
+                    if isinstance(key_node, yaml.ScalarNode)
+                    and key_node.value == component
+                ),
+                None,
+            )
+            if match is None:
+                break
+            node = match
+            continue
+        if isinstance(node, yaml.SequenceNode) and isinstance(component, int):
+            if component < 0 or component >= len(node.value):
+                break
+            node = node.value[component]
+            continue
+        break
+    return node
+
+
+def validation_error_details(
+    error: Any,
+    *,
+    source_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    details = error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    yaml_text: str | None = None
+    line_offset = 0
+    if source_path is not None:
+        try:
+            normalized = source_path.read_text(encoding="utf-8").replace(
+                "\r\n", "\n"
+            ).replace("\r", "\n")
+        except (OSError, UnicodeError):
+            normalized = ""
+        if source_path.suffix.lower() == ".md" and normalized.startswith("---\n"):
+            marker = normalized.find("\n---\n", 4)
+            if marker >= 0:
+                yaml_text = normalized[4:marker]
+                line_offset = 1
+        elif normalized:
+            yaml_text = normalized
+    rendered: list[dict[str, Any]] = []
+    for detail in details:
+        item = dict(detail)
+        location = tuple(
+            component
+            for component in item.get("loc", ())
+            if isinstance(component, (str, int)) and not isinstance(component, bool)
+        )
+        item["loc"] = list(location)
+        if yaml_text is not None:
+            node = _yaml_node_at_path(yaml_text, location)
+            if node is not None:
+                item["line"] = node.start_mark.line + 1 + line_offset
+                item["column"] = node.start_mark.column + 1
+        rendered.append(item)
+    return rendered
+
+
 def load_model(path: Path, model_type: type[ModelT]) -> ModelT:
     if path.stat().st_size > _MAX_YAML_BYTES:
         raise SerializationError(

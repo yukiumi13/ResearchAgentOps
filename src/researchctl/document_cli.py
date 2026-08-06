@@ -11,7 +11,7 @@ from re import sub
 from typing import Annotated, Literal, NoReturn
 
 import typer
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from researchctl.constants import PROJECT_POLICY_PATH
 from researchctl.domain.ids import new_id
@@ -26,11 +26,23 @@ from researchctl.domain.models import (
     ProjectPolicy,
     ProjectStatusSummary,
 )
+from researchctl.domain.types import RepositoryPath
 from researchctl.errors import RCPError
-from researchctl.output import dump_envelope, envelope, error_payload
+from researchctl.output import (
+    dump_envelope,
+    envelope,
+    error_payload,
+    human_error_detail_lines,
+)
 from researchctl.repository import current_head, discover_repository, safe_repository_path
 from researchctl.schema import generate_schema_files
-from researchctl.serialization import SerializationError, dump_yaml, load_model
+from researchctl.serialization import (
+    SerializationError,
+    dump_yaml,
+    load_model,
+    load_yaml,
+    validation_error_details,
+)
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
     permits_generated_markdown_replacement,
@@ -39,6 +51,7 @@ from researchctl.services.project_documents import (
     DocumentLintResult,
     DocumentTreeLintResult,
     agent_guide_markers,
+    inspect_document_relation_target,
     lint_document_tree,
     lint_project_document,
     load_markdown_frontmatter,
@@ -67,6 +80,7 @@ _DOCUMENT_CONTRACTS: tuple[DocumentSchema, ...] = (
     "design-document",
     "project-status-summary",
 )
+_REPOSITORY_PATH = TypeAdapter(RepositoryPath)
 
 
 def _stream_output(output_file: Path | None) -> bool:
@@ -77,21 +91,17 @@ def _stream_output(output_file: Path | None) -> bool:
     }
 
 
-def _error(exc: Exception) -> RCPError:
+def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
     if isinstance(exc, RCPError):
         return exc
     if isinstance(exc, ValidationError):
         return RCPError(
             code="validation_error",
             message="Document contract schema validation failed.",
-            remediation="Review the invalid fields and rerun document lint.",
-            context={
-                "details": exc.errors(
-                    include_url=False,
-                    include_context=False,
-                    include_input=False,
-                )
-            },
+            remediation=(
+                "Fix the listed fields and rerun `researchctl doc check PATH`."
+            ),
+            context={"details": validation_error_details(exc, source_path=source_path)},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
@@ -122,6 +132,8 @@ def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
         )
     else:
         typer.echo(f"Error [{error.code}]: {error.message}", err=True)
+        for line in human_error_detail_lines(error):
+            typer.echo(line, err=True)
         if error.remediation:
             typer.echo(f"Next: {error.remediation}", err=True)
     raise typer.Exit(code=2)
@@ -436,9 +448,26 @@ def _repository_and_policy(
     project: Path,
     policy_file: Path | None,
 ) -> tuple[Path, DocumentLayoutPolicy]:
+    def policy_validation_error(error: ValidationError, path: Path) -> RCPError:
+        return RCPError(
+            code="validation_error",
+            message=f"Document policy schema validation failed in {path}.",
+            remediation=(
+                "Fix the listed policy fields and rerun "
+                "`researchctl doc tree --project PROJECT`."
+            ),
+            context={
+                "path": str(path),
+                "details": validation_error_details(error, source_path=path),
+            },
+        )
+
     repository = discover_repository(project).root
     if policy_file is not None:
-        policy = load_model(policy_file, DocumentLayoutPolicy)
+        try:
+            policy = load_model(policy_file, DocumentLayoutPolicy)
+        except ValidationError as error:
+            raise policy_validation_error(error, policy_file) from error
         require_adopted_document_policy(policy)
         return repository, policy
     managed_policy = repository / PROJECT_POLICY_PATH
@@ -449,11 +478,17 @@ def _repository_and_policy(
                 code="document_policy_shadowed",
                 message="Managed projects cannot also define a standalone document policy.",
             )
-        policy = load_model(managed_policy, ProjectPolicy).document_layout
+        try:
+            policy = load_model(managed_policy, ProjectPolicy).document_layout
+        except ValidationError as error:
+            raise policy_validation_error(error, managed_policy) from error
         require_adopted_document_policy(policy)
         return repository, policy
     if standalone_policy.is_file() and not standalone_policy.is_symlink():
-        policy = load_model(standalone_policy, DocumentLayoutPolicy)
+        try:
+            policy = load_model(standalone_policy, DocumentLayoutPolicy)
+        except ValidationError as error:
+            raise policy_validation_error(error, standalone_policy) from error
         require_adopted_document_policy(policy)
         return repository, policy
     if standalone_policy.is_symlink():
@@ -469,6 +504,74 @@ def _repository_and_policy(
             "researchctl init."
         ),
     )
+
+
+def _baseline_repository_and_document_root(
+    project: Path,
+    *,
+    fallback_root: str,
+) -> tuple[Path, str, bool]:
+    """Read only the baseline policy field needed to protect frozen documents."""
+
+    repository = discover_repository(project).root
+    try:
+        managed_policy = safe_repository_path(repository, PROJECT_POLICY_PATH)
+        standalone_policy = safe_repository_path(repository, _STANDALONE_POLICY)
+    except RCPError as error:
+        raise RCPError(
+            code="document_baseline_policy_invalid",
+            message="Baseline document policy path cannot contain symbolic links.",
+        ) from error
+    managed_exists = managed_policy.exists() or managed_policy.is_symlink()
+    standalone_exists = standalone_policy.exists() or standalone_policy.is_symlink()
+    if managed_exists and standalone_exists:
+        raise RCPError(
+            code="document_policy_shadowed",
+            message="Managed projects cannot also define a standalone document policy.",
+        )
+    if not managed_exists and not standalone_exists:
+        return repository, fallback_root, True
+
+    policy_path = managed_policy if managed_exists else standalone_policy
+    if not policy_path.is_file():
+        raise RCPError(
+            code="document_baseline_policy_invalid",
+            message="Baseline document policy must be a regular non-symlink file.",
+            context={"path": policy_path.relative_to(repository).as_posix()},
+        )
+    try:
+        payload = load_yaml(policy_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, SerializationError) as error:
+        raise RCPError(
+            code="document_baseline_policy_invalid",
+            message=f"Baseline document policy cannot be read safely: {error}",
+            remediation="Repair the baseline policy syntax before enforcing frozen documents.",
+            context={"path": policy_path.relative_to(repository).as_posix()},
+        ) from error
+
+    if policy_path == managed_policy:
+        document_layout = payload.get("document_layout", {})
+        if not isinstance(document_layout, dict):
+            raise RCPError(
+                code="document_baseline_policy_invalid",
+                message="Baseline managed policy document_layout must be a mapping.",
+                context={"path": PROJECT_POLICY_PATH},
+            )
+        raw_root = document_layout.get("root", "docs")
+    else:
+        raw_root = payload.get("root", "docs")
+    try:
+        document_root = _REPOSITORY_PATH.validate_python(raw_root)
+    except ValidationError as error:
+        raise RCPError(
+            code="document_baseline_policy_invalid",
+            message="Baseline document root is not a safe repository-relative path.",
+            context={
+                "path": policy_path.relative_to(repository).as_posix(),
+                "details": validation_error_details(error),
+            },
+        ) from error
+    return repository, document_root, False
 
 
 def _document_relative_path(repository: Path, document_file: Path) -> tuple[Path, str]:
@@ -606,9 +709,27 @@ def _scaffold_for_route(
                 "relations": relations,
             }
         )
+        contract_example = (
+            "# Provenance example (uncomment and replace as one complete block):\n"
+            "# sources:\n"
+            "# - key: result-log\n"
+            "#   kind: repository_path\n"
+            "#   location: data/results.json\n"
+            "# provenance:\n"
+            "# - key: measured-count\n"
+            "#   value: \"11677\"  # Quote numeric-looking display text.\n"
+            "#   basis: derived\n"
+            "#   source_keys: [result-log]\n"
+            "#   method: Sum the per-shard counts.\n"
+            "# The value must occur verbatim in the Markdown body.\n"
+            "# Relation paths are repository-root relative, for example:\n"
+            "# relations:\n"
+            "#   see_also: [docs/runbooks/evaluation.md]\n"
+        )
         return (
             "---\n"
             + dump_yaml(frontmatter)
+            + contract_example
             + "---\n\n"
             + f"# {title}\n\n"
             + "Replace this paragraph with the governed document body.\n"
@@ -878,9 +999,11 @@ def doc_check_command(
     """Validate one source by dispatching through its accepted route contract."""
 
     command = "doc.check"
+    validation_source: Path | None = None
     try:
         repository, policy = _repository_and_policy(project, policy_file)
         source, relative = _document_relative_path(repository, document_file)
+        validation_source = source
         route = _route_for_relative(policy, relative)
         nested = PurePosixPath(relative).relative_to(route.directory)
         findings: list[dict[str, str]] = []
@@ -941,17 +1064,30 @@ def doc_check_command(
                     )
             for relation in ("supersedes", "derived_from", "see_also"):
                 for target in getattr(frontmatter.relations, relation):
-                    target_path = safe_repository_path(repository, f"{policy.root}/{target}")
-                    if target_path.is_symlink() or not target_path.is_file():
+                    status, resolved = inspect_document_relation_target(
+                        repository,
+                        document_root=policy.root,
+                        target=target,
+                    )
+                    if status == "legacy":
+                        findings.append(
+                            {
+                                "kind": "invalid",
+                                "code": "document_relation_path_legacy",
+                                "path": f"{relative}:relations.{relation}",
+                                "message": (
+                                    "Relation paths are repository-root relative; "
+                                    f"replace {target!r} with {resolved!r}."
+                                ),
+                            }
+                        )
+                    elif status == "missing":
                         findings.append(
                             {
                                 "kind": "invalid",
                                 "code": "document_relation_target_missing",
                                 "path": f"{relative}:relations.{relation}",
-                                "message": (
-                                    "Relation target does not exist: "
-                                    f"{policy.root}/{target}."
-                                ),
+                                "message": f"Relation target does not exist: {resolved}.",
                             }
                         )
         elif route.contract == "analysis-brief":
@@ -1028,7 +1164,11 @@ def doc_check_command(
         if prose is not None:
             data["prose"] = prose
     except Exception as exc:
-        _abort(_error(exc), command=command, json_output=json_output)
+        _abort(
+            _error(exc, source_path=validation_source),
+            command=command,
+            json_output=json_output,
+        )
     if json_output:
         typer.echo(dump_envelope(envelope(command=command, success=passed, data=data)))
     else:
@@ -1067,7 +1207,11 @@ def doc_lint_command(
         document = load_project_document(document_file)
         result = lint_project_document(document, policy=policy)
     except Exception as exc:
-        _abort(_error(exc), command="doc.lint", json_output=json_output)
+        _abort(
+            _error(exc, source_path=document_file),
+            command="doc.lint",
+            json_output=json_output,
+        )
     _emit_lint(result, command="doc.lint", json_output=json_output)
 
 
@@ -1134,7 +1278,11 @@ def doc_render_command(
             preserved_frontmatter_fields=frontmatter_fields,
         )
     except Exception as exc:
-        _abort(_error(exc), command="doc.render", json_output=False)
+        _abort(
+            _error(exc, source_path=document_file),
+            command="doc.render",
+            json_output=False,
+        )
 
 
 @doc_app.command("tree")
@@ -1158,25 +1306,22 @@ def doc_tree_command(
     try:
         repository, policy = _repository_and_policy(project, policy_file)
         baseline_repository: Path | None = None
-        baseline_policy: DocumentLayoutPolicy | None = None
+        baseline_document_root: str | None = None
         baseline_policy_missing = False
         if baseline_project is not None:
-            try:
-                baseline_repository, baseline_policy = _repository_and_policy(
-                    baseline_project,
-                    None,
-                )
-            except RCPError as error:
-                if error.code != "document_policy_missing":
-                    raise
-                baseline_repository = discover_repository(baseline_project).root
-                baseline_policy = policy
-                baseline_policy_missing = True
+            (
+                baseline_repository,
+                baseline_document_root,
+                baseline_policy_missing,
+            ) = _baseline_repository_and_document_root(
+                baseline_project,
+                fallback_root=policy.root,
+            )
         result = lint_document_tree(
             repository,
             policy,
             baseline_root=baseline_repository,
-            baseline_policy=baseline_policy,
+            baseline_document_root=baseline_document_root,
             baseline_policy_missing=baseline_policy_missing,
         )
     except Exception as exc:
@@ -1262,7 +1407,11 @@ def doc_policy_lint_command(
             "max_depth": policy.max_depth,
         }
     except Exception as exc:
-        _abort(_error(exc), command=command, json_output=json_output)
+        _abort(
+            _error(exc, source_path=policy_file),
+            command=command,
+            json_output=json_output,
+        )
     if json_output:
         typer.echo(dump_envelope(envelope(command=command, success=True, data=data)))
     else:

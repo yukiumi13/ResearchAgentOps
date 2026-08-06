@@ -17,6 +17,7 @@ from researchctl.serialization import (
     dump_yaml,
     load_model,
     load_yaml,
+    validation_error_details,
 )
 
 
@@ -179,5 +180,10 @@ def test_load_model_applies_unknown_field_validation(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as raised:
         load_model(record_path, TaskRecord)
+
+    details = validation_error_details(raised.value, source_path=record_path)
+    unknown = next(detail for detail in details if detail["loc"] == ["unknown_field"])
+    assert unknown["line"] >= 1
+    assert unknown["column"] >= 1

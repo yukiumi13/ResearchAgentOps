@@ -344,8 +344,11 @@ def test_markdown_claim_provenance_is_keyed_and_distinguishes_estimates() -> Non
         load_markdown_frontmatter(without_method, path="docs/ledger/a.md")
 
     unknown_source = valid.replace("source_keys: [disk-model]", "source_keys: [missing]")
-    with pytest.raises(ValidationError, match="use every declared source"):
+    with pytest.raises(ValidationError) as raised:
         load_markdown_frontmatter(unknown_source, path="docs/ledger/a.md")
+    message = str(raised.value)
+    assert "unused declared sources: disk-model" in message
+    assert "undeclared source keys: missing" in message
 
 
 def test_document_contract_rejects_incomplete_design_and_unproven_status() -> None:
@@ -454,6 +457,41 @@ def test_tree_lint_enforces_frontmatter_type_path_and_references(tmp_path: Path)
     assert any(finding.code == "document_type_path_mismatch" for finding in invalid.findings)
 
 
+def test_document_relations_are_repository_root_relative_with_legacy_guidance(
+    tmp_path: Path,
+) -> None:
+    policy = _custom_policy()
+    (tmp_path / "docs/ledger").mkdir(parents=True)
+    (tmp_path / "docs/guide").mkdir()
+    (tmp_path / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    target = tmp_path / "docs/guide/target.md"
+    target.write_text(_frontmatter(document_type="guide"), encoding="utf-8")
+    source = tmp_path / "docs/ledger/source.md"
+    source.write_text(
+        _frontmatter().replace(
+            "  see_also: []",
+            "  see_also: [docs/guide/target.md]",
+        ),
+        encoding="utf-8",
+    )
+
+    assert lint_document_tree(tmp_path, policy).passed
+
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "docs/guide/target.md",
+            "guide/target.md",
+        ),
+        encoding="utf-8",
+    )
+    legacy = lint_document_tree(tmp_path, policy)
+
+    finding = next(
+        item for item in legacy.findings if item.code == "document_relation_path_legacy"
+    )
+    assert "replace 'guide/target.md' with 'docs/guide/target.md'" in finding.message
+
+
 def test_tree_lint_rejects_unknown_paths_and_orphan_generated_markdown(
     tmp_path: Path,
 ) -> None:
@@ -554,6 +592,34 @@ def test_tree_lint_compares_frozen_documents_with_explicit_baseline(
     )
 
 
+def test_tree_lint_fails_closed_for_malformed_baseline_frontmatter(
+    tmp_path: Path,
+) -> None:
+    policy = _custom_policy()
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    (current / "docs").mkdir(parents=True)
+    (current / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (baseline / "docs/reference").mkdir(parents=True)
+    (baseline / "docs/reference/locked.md").write_text(
+        "---\nvalidity: [frozen\n---\n# Locked\n",
+        encoding="utf-8",
+    )
+
+    result = lint_document_tree(
+        current,
+        policy,
+        baseline_root=baseline,
+        baseline_document_root="docs",
+    )
+
+    finding = next(
+        item for item in result.findings if item.code == "document_baseline_invalid"
+    )
+    assert finding.path == "docs/reference/locked.md"
+    assert "line 1, column" in finding.message
+
+
 def test_tree_lint_requires_each_configured_root_file(tmp_path: Path) -> None:
     policy = _custom_policy()
     (tmp_path / "docs/ledger").mkdir(parents=True)
@@ -627,6 +693,28 @@ def test_doc_cli_works_in_uninitialized_repository_with_standalone_policy(
     assert f"researchctl-renderer:{DOCUMENT_INDEX_RENDERER_ID}" in index.stdout
 
 
+def test_doc_tree_human_policy_error_names_file_field_and_yaml_location(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    payload = _custom_policy().model_dump(mode="json")
+    payload["routes"][0].pop("rationale")
+    policy_path = tmp_path / ".researchctl-docs.yaml"
+    policy_path.write_text(dump_yaml(payload), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "tree", "--project", str(tmp_path)],
+    )
+
+    assert result.exit_code == 2
+    assert f"Document policy schema validation failed in {policy_path}" in result.stderr
+    assert "invalid: routes.0.rationale [validation_error]" in result.stderr
+    assert "Field required" in result.stderr
+    assert "line " in result.stderr and "column " in result.stderr
+    assert "researchctl doc tree --project PROJECT" in result.stderr
+
+
 def test_doc_cli_uses_current_policy_for_a_pre_policy_baseline(
     tmp_path: Path,
 ) -> None:
@@ -657,6 +745,145 @@ def test_doc_cli_uses_current_policy_for_a_pre_policy_baseline(
     assert result.exit_code == 0
     assert '"success": true' in result.stdout
     assert not (baseline / ".research").exists()
+
+
+def test_doc_cli_reads_legacy_baseline_policy_without_current_schema_validation(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    policy = _custom_policy()
+    legacy_payload = policy.model_dump(mode="json")
+    for route in legacy_payload["routes"]:
+        route.pop("rationale")
+
+    for repository in (current, baseline):
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        (repository / "docs/reference").mkdir(parents=True)
+        (repository / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+        (repository / "docs/reference/locked.md").write_text(
+            _frontmatter(document_type="reference", validity="frozen"),
+            encoding="utf-8",
+        )
+    (current / ".researchctl-docs.yaml").write_text(
+        dump_yaml(policy),
+        encoding="utf-8",
+    )
+    (baseline / ".researchctl-docs.yaml").write_text(
+        dump_yaml(legacy_payload),
+        encoding="utf-8",
+    )
+
+    passed = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(current),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert passed.exit_code == 0, passed.stdout
+    assert '"success": true' in passed.stdout
+
+    (current / "docs/reference/locked.md").write_text(
+        _frontmatter(document_type="reference", validity="frozen") + "changed\n",
+        encoding="utf-8",
+    )
+    rejected = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(current),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert rejected.exit_code == 2
+    assert "frozen_document_modified" in rejected.stdout
+
+
+@pytest.mark.parametrize(
+    "baseline_policy",
+    (
+        "root: [docs\n",
+        "root: ../docs\n",
+    ),
+)
+def test_doc_cli_fails_closed_for_unsafe_baseline_policy(
+    tmp_path: Path,
+    baseline_policy: str,
+) -> None:
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    for repository in (current, baseline):
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (current / "docs").mkdir()
+    (current / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (current / ".researchctl-docs.yaml").write_text(
+        dump_yaml(_custom_policy()),
+        encoding="utf-8",
+    )
+    (baseline / ".researchctl-docs.yaml").write_text(
+        baseline_policy,
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(current),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "document_baseline_policy_invalid" in result.stdout
+
+
+def test_doc_cli_fails_closed_for_symlinked_baseline_policy(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    baseline = tmp_path / "baseline"
+    for repository in (current, baseline):
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    (current / "docs").mkdir()
+    (current / "docs/README.md").write_text("# Index\n", encoding="utf-8")
+    (current / ".researchctl-docs.yaml").write_text(
+        dump_yaml(_custom_policy()),
+        encoding="utf-8",
+    )
+    target = baseline / "policy.yaml"
+    target.write_text("root: docs\n", encoding="utf-8")
+    (baseline / ".researchctl-docs.yaml").symlink_to(target.name)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(current),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "document_baseline_policy_invalid" in result.stdout
 
 
 def test_doc_cli_renders_and_lints_policy_before_repository_adoption(
@@ -751,14 +978,56 @@ def test_doc_contract_discovery_schema_scaffold_and_route_dispatch(
     assert "canonical model JSON, not the YAML file bytes" in contracts.stdout
     assert schema.exit_code == 0
     assert '"pattern": "^(?:session:session_' in schema.stdout
+    assert "Always quote numeric-looking YAML values" in schema.stdout
     assert scaffold.exit_code == 0
     observed = runbook.read_text(encoding="utf-8")
     assert "owner: person:TODO" in observed
     assert "Operate Megatron's worker" in observed
     assert "sources: []" in observed
     assert "provenance: []" in observed
+    assert '#   value: "11677"' in observed
+    assert "#   see_also: [docs/runbooks/evaluation.md]" in observed
     assert checked.exit_code == 0
     assert '"contract": "markdown-frontmatter"' in checked.stdout
+
+    numeric_provenance = observed.replace(
+        "sources: []",
+        (
+            "sources:\n"
+            "  - key: count-log\n"
+            "    kind: repository_path\n"
+            "    location: data/count.json"
+        ),
+        1,
+    ).replace(
+        "provenance: []",
+        (
+            "provenance:\n"
+            "  - key: measured-count\n"
+            "    value: 11677\n"
+            "    basis: measured\n"
+            "    source_keys: [count-log]"
+        ),
+        1,
+    )
+    runbook.write_text(numeric_provenance, encoding="utf-8")
+    invalid_number = runner.invoke(
+        app,
+        ["doc", "check", str(runbook), "--project", str(tmp_path)],
+    )
+    assert invalid_number.exit_code == 2
+    assert "invalid: provenance.0.value [validation_error]" in invalid_number.stderr
+    assert "Input should be a valid string" in invalid_number.stderr
+    assert "line " in invalid_number.stderr and "column " in invalid_number.stderr
+    assert "researchctl doc check PATH" in invalid_number.stderr
+    tree_validation = lint_document_tree(tmp_path, _custom_policy())
+    tree_finding = next(
+        item
+        for item in tree_validation.findings
+        if item.code == "document_schema_validation_error"
+    )
+    assert tree_finding.path.endswith(":provenance.0.value")
+    assert "line " in tree_finding.message and "column " in tree_finding.message
 
     runbook.write_text(
         observed.replace(

@@ -220,7 +220,8 @@ complete policy template -> standalone policy lint -> manager-reviewed project p
 -> authors canonical source -> schema/path/relation/tree lint
 -> optional thin deterministic Markdown projection
 -> project-frontmatter envelope preservation and generated-body comparison
--> deterministic index comparison -> optional frozen baseline comparison
+-> deterministic index comparison -> compatibility-read trusted baseline root
+-> raw baseline frontmatter discovery -> frozen byte comparison
 -> local/editor/CI findings -> repository review
 ```
 

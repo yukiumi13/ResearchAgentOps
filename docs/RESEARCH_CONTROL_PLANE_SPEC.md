@@ -562,10 +562,23 @@ a reviewed project policy may explicitly tighten or widen the finite bounds.
 Manual Markdown begins with strict frontmatter. `validity` is `valid`, `invalid`,
 or `frozen`; only `invalid` has `invalid_reason`. When CI supplies a trusted
 baseline checkout, a baseline-frozen document cannot change bytes or disappear.
-On the first standalone-policy adoption, an otherwise valid baseline may have no
-policy or old document root; only then does frozen scanning apply the subject
-route shape to any old tree that exists. Any present-but-invalid, shadowed, or
-unsafe baseline policy fails closed, and later policy-owned roots cannot vanish.
+Baseline inspection does not validate the historical policy against the current
+complete schema. A compatibility reader extracts only its safe document root,
+then raw frontmatter scanning under that root identifies frozen paths and bytes
+without consulting subject routes. This prevents a newly required policy field
+from deadlocking its own migration PR and prevents a PR route change from hiding
+old frozen content. On first adoption, a policy-free baseline may use the subject
+root as a discovery fallback and omit that root. Malformed, shadowed, symlinked,
+or unsafe baseline policy, malformed baseline frontmatter, and later missing
+roots fail closed.
+
+Manual provenance values are strict exact display strings, numeric-looking
+values must be quoted, and each value must occur verbatim in the body. Source
+set mismatches name the unused or undeclared keys. Source locations and relation
+targets are both repository-root relative; legacy document-root-relative
+relations receive an exact replacement diagnostic. Human validation output
+prints schema field paths and available YAML line/column positions by default,
+matching the structured details retained in JSON output.
 Structured design, status, and brief YAML remains canonical while its Markdown
 is renderer-owned and visibly identifies its renderer version. A hidden
 provenance marker binds the canonical source digest and generated body digest.

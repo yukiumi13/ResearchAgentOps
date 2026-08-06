@@ -12,7 +12,12 @@ from researchctl.document_cli import doc_app
 from researchctl.errors import RCPError
 from researchctl.github_cli import github_app
 from researchctl.notification_cli import notification_app
-from researchctl.output import dump_envelope, envelope, error_payload
+from researchctl.output import (
+    dump_envelope,
+    envelope,
+    error_payload,
+    human_error_detail_lines,
+)
 from researchctl.phase2_cli import (
     bootstrap_app,
     inbox_app,
@@ -30,7 +35,7 @@ from researchctl.phase4_cli import (
     submit_command,
 )
 from researchctl.reconcile_cli import reconcile_command
-from researchctl.serialization import SerializationError
+from researchctl.serialization import SerializationError, validation_error_details
 from researchctl.services.doctor import doctor
 from researchctl.services.init_project import initialize_project
 from researchctl.services.upgrade import check_upgrade
@@ -89,13 +94,7 @@ def _known_error(exc: Exception) -> RCPError | None:
             code="validation_error",
             message="Protocol record validation failed.",
             remediation="Review invalid fields; strict records reject unknown values.",
-            context={
-                "details": exc.errors(
-                    include_url=False,
-                    include_context=False,
-                    include_input=False,
-                )
-            },
+            context={"details": validation_error_details(exc)},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
@@ -132,6 +131,8 @@ def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
         )
     else:
         typer.echo(f"Error [{error.code}]: {error.message}", err=True)
+        for line in human_error_detail_lines(error):
+            typer.echo(line, err=True)
         if error.remediation:
             typer.echo(f"Next: {error.remediation}", err=True)
     raise typer.Exit(code=error.exit_code)

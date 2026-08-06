@@ -20,7 +20,12 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 from researchctl.repository import safe_repository_path
-from researchctl.serialization import SerializationError, dump_yaml, load_yaml
+from researchctl.serialization import (
+    SerializationError,
+    dump_yaml,
+    load_yaml,
+    validation_error_details,
+)
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
     render_generated_markdown,
@@ -30,8 +35,8 @@ DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v2"
 PROJECT_STATUS_RENDERER_ID = "project-status-summary.v2"
 DOCUMENT_INDEX_RENDERER_ID = "project-document-index.v2"
 PROJECT_AGENT_GUIDE_RENDERER_IDS: dict[AgentGuideFormat, str] = {
-    "claude": "project-document-agent-guide.claude.v3",
-    "agents": "project-document-agent-guide.agents.v3",
+    "claude": "project-document-agent-guide.claude.v4",
+    "agents": "project-document-agent-guide.agents.v4",
 }
 TEMPLATE_ROUTE_RATIONALE_PREFIX = "TEMPLATE:"
 
@@ -54,6 +59,35 @@ class DocumentFinding:
             "path": self.path,
             "message": self.message,
         }
+
+
+def _schema_validation_findings(
+    error: ValidationError,
+    *,
+    source_path: Path,
+    relative_path: str,
+) -> tuple[DocumentFinding, ...]:
+    findings: list[DocumentFinding] = []
+    for detail in validation_error_details(error, source_path=source_path):
+        location = detail.get("loc", [])
+        field_path = ".".join(str(component) for component in location) or "$"
+        line = detail.get("line")
+        column = detail.get("column")
+        position = (
+            f" (line {line}, column {column})"
+            if isinstance(line, int) and isinstance(column, int)
+            else ""
+        )
+        findings.append(
+            DocumentFinding(
+                kind="invalid",
+                code="document_schema_validation_error",
+                path=f"{relative_path}:{field_path}",
+                message=str(detail.get("msg", "Field does not satisfy the schema."))
+                + position,
+            )
+        )
+    return tuple(findings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +362,10 @@ def render_project_agent_guide(
         "   Quantitative Markdown claims should declare keyed `sources` and a",
         "   `provenance` item whose basis distinguishes measured, estimated, derived,",
         "   or external values. Estimated and derived values require a method.",
+        "   Provenance values are exact display strings: quote numeric-looking YAML",
+        "   values and repeat that text verbatim in the body. Source locations and",
+        "   relation targets are repository-root-relative paths such as",
+        "   `data/results.json` and `docs/runbooks/evaluation.md`.",
         "4. Run `researchctl doc tree --project .` before committing to a proposal",
         "   branch and opening or updating its PR. Every content proposal still requires",
         "   the repository's CI, CODEOWNER review, and protected merge; an Agent-authored",
@@ -621,6 +659,26 @@ def _frontmatter_relation_values(frontmatter: MarkdownFrontmatter, kind: str) ->
     return getattr(frontmatter.relations, kind)
 
 
+def inspect_document_relation_target(
+    repository: Path,
+    *,
+    document_root: str,
+    target: str,
+) -> tuple[Literal["valid", "legacy", "missing"], str]:
+    direct = safe_repository_path(repository, target)
+    if not direct.is_symlink() and direct.is_file():
+        return "valid", target
+    target_parts = PurePosixPath(target).parts
+    root_parts = PurePosixPath(document_root).parts
+    if target_parts[: len(root_parts)] == root_parts:
+        return "missing", target
+    legacy_target = f"{document_root}/{target}"
+    legacy = safe_repository_path(repository, legacy_target)
+    if not legacy.is_symlink() and legacy.is_file():
+        return "legacy", legacy_target
+    return "missing", target
+
+
 def _is_within(path: str, directory: str) -> bool:
     path_parts = PurePosixPath(path).parts
     directory_parts = PurePosixPath(directory).parts
@@ -773,6 +831,7 @@ def lint_document_tree(
     *,
     baseline_root: Path | None = None,
     baseline_policy: DocumentLayoutPolicy | None = None,
+    baseline_document_root: str | None = None,
     baseline_policy_missing: bool = False,
 ) -> DocumentTreeLintResult:
     repository = Path(os.path.abspath(os.fspath(repository_root)))
@@ -895,11 +954,19 @@ def lint_document_tree(
                     file_path.read_text(encoding="utf-8"),
                     path=relative,
                 )
+            except ValidationError as error:
+                findings.extend(
+                    _schema_validation_findings(
+                        error,
+                        source_path=file_path,
+                        relative_path=relative,
+                    )
+                )
+                continue
             except (
                 OSError,
                 UnicodeError,
                 SerializationError,
-                ValidationError,
                 RCPError,
             ) as error:
                 findings.append(
@@ -994,7 +1061,16 @@ def lint_document_tree(
                 document: StructuredDocument = load_model(file_path, AnalysisBrief)
             else:
                 document = load_project_document(file_path)
-        except (OSError, UnicodeError, SerializationError, ValidationError, RCPError) as error:
+        except ValidationError as error:
+            findings.extend(
+                _schema_validation_findings(
+                    error,
+                    source_path=file_path,
+                    relative_path=relative,
+                )
+            )
+            continue
+        except (OSError, UnicodeError, SerializationError, RCPError) as error:
             findings.append(
                 DocumentFinding(
                     kind="invalid",
@@ -1137,14 +1213,30 @@ def lint_document_tree(
     for source_path, frontmatter in manual_documents.items():
         for relation_kind in ("supersedes", "derived_from", "see_also"):
             for target in _frontmatter_relation_values(frontmatter, relation_kind):
-                target_path = f"{policy.root}/{target}"
-                if target_path not in existing_paths:
+                status, resolved = inspect_document_relation_target(
+                    repository,
+                    document_root=policy.root,
+                    target=target,
+                )
+                if status == "legacy":
+                    findings.append(
+                        DocumentFinding(
+                            kind="invalid",
+                            code="document_relation_path_legacy",
+                            path=f"{source_path}:relations.{relation_kind}",
+                            message=(
+                                "Relation paths are repository-root relative; replace "
+                                f"{target!r} with {resolved!r}."
+                            ),
+                        )
+                    )
+                elif status == "missing":
                     findings.append(
                         DocumentFinding(
                             kind="invalid",
                             code="document_relation_target_missing",
                             path=f"{source_path}:relations.{relation_kind}",
-                            message=f"Relation target does not exist: {target_path}.",
+                            message=f"Relation target does not exist: {resolved}.",
                         )
                     )
 
@@ -1184,11 +1276,14 @@ def lint_document_tree(
 
     if baseline_root is not None:
         baseline_repository = Path(os.path.abspath(os.fspath(baseline_root)))
-        selected_baseline_policy = baseline_policy or policy
+        selected_baseline_root = (
+            baseline_document_root
+            or (baseline_policy.root if baseline_policy is not None else policy.root)
+        )
         _lint_frozen_documents(
             repository,
             baseline_repository,
-            selected_baseline_policy,
+            selected_baseline_root,
             findings,
             allow_missing_root=baseline_policy_missing,
         )
@@ -1204,17 +1299,31 @@ def lint_document_tree(
 def _lint_frozen_documents(
     repository: Path,
     baseline_repository: Path,
-    baseline_policy: DocumentLayoutPolicy,
+    baseline_document_root_path: str,
     findings: list[DocumentFinding],
     *,
     allow_missing_root: bool = False,
 ) -> None:
-    baseline_document_root = baseline_repository / baseline_policy.root
     if baseline_repository.is_symlink() or not baseline_repository.is_dir():
         raise RCPError(
             code="document_baseline_invalid",
             message="Document baseline must be an existing non-symlink directory.",
         )
+    try:
+        baseline_document_root = (
+            baseline_repository.resolve()
+            if baseline_document_root_path == "."
+            else safe_repository_path(
+                baseline_repository,
+                baseline_document_root_path,
+            )
+        )
+    except RCPError as error:
+        raise RCPError(
+            code="document_baseline_invalid",
+            message="Baseline document root cannot be inspected safely.",
+            context={"path": baseline_document_root_path},
+        ) from error
     if baseline_document_root.is_symlink() or not baseline_document_root.is_dir():
         if (
             allow_missing_root
@@ -1226,7 +1335,7 @@ def _lint_frozen_documents(
             DocumentFinding(
                 kind="invalid",
                 code="document_baseline_root_missing",
-                path=baseline_policy.root,
+                path=baseline_document_root_path,
                 message="Baseline document root is missing or not a regular directory.",
             )
         )
@@ -1245,27 +1354,51 @@ def _lint_frozen_documents(
         )
     for baseline_file in baseline_files:
         relative = baseline_file.relative_to(baseline_repository).as_posix()
-        route = _route_for_path(baseline_policy, relative)
-        if (
-            route is None
-            or route.contract != "markdown-frontmatter"
-            or baseline_file.suffix.lower() != ".md"
-        ):
+        if baseline_file.suffix.lower() != ".md":
             continue
         try:
-            frontmatter, _body = load_markdown_frontmatter(
-                baseline_file.read_text(encoding="utf-8"),
-                path=relative,
+            normalized = baseline_file.read_text(encoding="utf-8").replace(
+                "\r\n", "\n"
+            ).replace("\r", "\n")
+        except (OSError, UnicodeError) as error:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="document_baseline_invalid",
+                    path=relative,
+                    message=(
+                        "Baseline Markdown cannot be read safely: "
+                        f"{type(error).__name__}."
+                    ),
+                )
             )
-        except (
-            OSError,
-            UnicodeError,
-            SerializationError,
-            ValidationError,
-            RCPError,
-        ):
             continue
-        if frontmatter.validity != "frozen":
+        if not normalized.startswith("---\n"):
+            continue
+        marker = normalized.find("\n---\n", 4)
+        if marker < 0:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="document_baseline_invalid",
+                    path=relative,
+                    message="Baseline Markdown frontmatter has no closing delimiter.",
+                )
+            )
+            continue
+        try:
+            frontmatter = load_yaml(normalized[4:marker])
+        except SerializationError as error:
+            findings.append(
+                DocumentFinding(
+                    kind="invalid",
+                    code="document_baseline_invalid",
+                    path=relative,
+                    message=f"Baseline Markdown frontmatter is malformed: {error}",
+                )
+            )
+            continue
+        if frontmatter.get("validity") != "frozen":
             continue
         current_file = repository / relative
         try:
