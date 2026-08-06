@@ -19,6 +19,8 @@ EXPECTED_POST_EXPORT_REQUIREMENTS = (
     *(f"REQ-20260803-{number:03d}" for number in range(1, 13)),
     "REQ-20260804-001",
     "REQ-20260805-001",
+    "REQ-20260805-002",
+    "REQ-20260805-003",
 )
 
 _SCENARIO_HEADING = re.compile(r"^### (US-\d{3}) - .+$", re.MULTILINE)

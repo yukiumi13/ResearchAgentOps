@@ -21,15 +21,19 @@ from researchctl.domain.models import (
 from researchctl.errors import RCPError
 from researchctl.repository import safe_repository_path
 from researchctl.serialization import SerializationError, dump_yaml, load_yaml
+from researchctl.services.generated_markdown import (
+    inspect_project_frontmatter,
+    render_generated_markdown,
+)
 
-
-DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v1"
-PROJECT_STATUS_RENDERER_ID = "project-status-summary.v1"
-DOCUMENT_INDEX_RENDERER_ID = "project-document-index.v1"
+DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v2"
+PROJECT_STATUS_RENDERER_ID = "project-status-summary.v2"
+DOCUMENT_INDEX_RENDERER_ID = "project-document-index.v2"
 PROJECT_AGENT_GUIDE_RENDERER_IDS: dict[AgentGuideFormat, str] = {
-    "claude": "project-document-agent-guide.claude.v1",
-    "agents": "project-document-agent-guide.agents.v1",
+    "claude": "project-document-agent-guide.claude.v3",
+    "agents": "project-document-agent-guide.agents.v3",
 }
+TEMPLATE_ROUTE_RATIONALE_PREFIX = "TEMPLATE:"
 
 ProjectDocument = DesignDocument | ProjectStatusSummary
 StructuredDocument = ProjectDocument | AnalysisBrief
@@ -174,7 +178,7 @@ def lint_project_document(
 
 
 def _text(value: object) -> str:
-    rendered = html.escape(str(value), quote=True).replace("\r\n", "\n").replace("\r", "\n")
+    rendered = html.escape(str(value), quote=False).replace("\r\n", "\n").replace("\r", "\n")
     for character in ("\\", "`", "*", "_", "[", "]", "#", "|"):
         rendered = rendered.replace(character, f"\\{character}")
     return "<br>".join(rendered.split("\n"))
@@ -196,8 +200,8 @@ def render_document_index(policy: DocumentLayoutPolicy) -> bytes:
         "",
         _visible_marker(DOCUMENT_INDEX_RENDERER_ID),
         "",
-        "| Type | Classification | Contract | Directory | Required relations |",
-        "| --- | --- | --- | --- | --- |",
+        "| Type | Classification | Contract | Directory | Rationale | Required relations |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for route in policy.routes:
         relations = ", ".join(route.required_relations) or "-"
@@ -209,22 +213,58 @@ def render_document_index(policy: DocumentLayoutPolicy) -> bytes:
                     _code(route.classification),
                     _code(route.contract),
                     _code(route.directory),
+                    _text(route.rationale),
                     _text(relations),
                 )
             )
             + " |"
         )
-    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=DOCUMENT_INDEX_RENDERER_ID,
+        source=policy,
+    )
 
 
 def standalone_document_policy_template(
     guide_format: AgentGuideFormat,
 ) -> DocumentLayoutPolicy:
     guide_path = "CLAUDE.md" if guide_format == "claude" else "AGENTS.md"
-    return DocumentLayoutPolicy(
-        generated_index="docs/README.md",
+    policy = DocumentLayoutPolicy(
+        generated_index="docs/INDEX.md",
+        root_files=("docs/README.md", "docs/INDEX.md"),
         agent_guides=(AgentGuideTarget(path=guide_path, format=guide_format),),
     )
+    payload = policy.model_dump(mode="json")
+    routes = payload["routes"]
+    if not isinstance(routes, list):
+        raise AssertionError("document policy routes must serialize as a list")
+    for route in routes:
+        if not isinstance(route, dict):
+            raise AssertionError("document policy routes must serialize as mappings")
+        route["rationale"] = (
+            f"{TEMPLATE_ROUTE_RATIONALE_PREFIX} cite existing project artifacts that "
+            f"justify {route['classification']}."
+        )
+    return DocumentLayoutPolicy.model_validate(payload)
+
+
+def require_adopted_document_policy(policy: DocumentLayoutPolicy) -> None:
+    placeholders = [
+        route.classification
+        for route in policy.routes
+        if route.rationale.startswith(TEMPLATE_ROUTE_RATIONALE_PREFIX)
+    ]
+    if placeholders:
+        raise RCPError(
+            code="document_route_rationale_template",
+            message="Document routes still contain template rationale placeholders.",
+            remediation=(
+                "Inspect existing project artifacts and replace every TEMPLATE: route "
+                "rationale before adopting or using the policy."
+            ),
+            context={"classifications": placeholders},
+        )
 
 
 def render_standalone_document_policy_template(
@@ -232,6 +272,7 @@ def render_standalone_document_policy_template(
 ) -> bytes:
     header = (
         "# researchctl standalone document policy candidate\n"
+        "# Replace every TEMPLATE: rationale after inspecting existing project artifacts.\n"
         "# Customize routes for this project; manager/CODEOWNER review is required.\n"
     )
     return (
@@ -240,10 +281,10 @@ def render_standalone_document_policy_template(
 
 
 def agent_guide_markers(guide_format: AgentGuideFormat) -> tuple[str, str]:
-    renderer_id = PROJECT_AGENT_GUIDE_RENDERER_IDS[guide_format]
+    identity = f"project-document-agent-guide.{guide_format}"
     return (
-        f"<!-- researchctl-agent-guide:{renderer_id}:begin -->",
-        f"<!-- researchctl-agent-guide:{renderer_id}:end -->",
+        f"<!-- researchctl-agent-guide:{identity}:begin -->",
+        f"<!-- researchctl-agent-guide:{identity}:end -->",
     )
 
 
@@ -278,10 +319,20 @@ def render_project_agent_guide(
         "   type, contract, or directory as part of an ordinary document change.",
         "3. For `markdown-frontmatter`, write Markdown with the required strict",
         "   frontmatter. For a structured contract, edit its canonical YAML source and",
-        "   regenerate the paired Markdown; never edit generated Markdown directly.",
-        "4. Run `researchctl doc tree --project .` before proposing or committing the",
-        "   change. Use `researchctl doc tree --project . --json` when another tool or",
-        "   review agent will consume the findings.",
+        "   keep it tracked beside the same-stem generated Markdown as direct route",
+        "   children; never edit generated Markdown directly. The generated marker's",
+        "   source digest hashes canonical model JSON, not the YAML file bytes.",
+        "   A structured route may preserve project-owned YAML frontmatter around the",
+        "   generated body. The project schema owns those field meanings; researchctl",
+        "   checks configured key presence and the renderer-owned body independently.",
+        "   Quantitative Markdown claims should declare keyed `sources` and a",
+        "   `provenance` item whose basis distinguishes measured, estimated, derived,",
+        "   or external values. Estimated and derived values require a method.",
+        "4. Run `researchctl doc tree --project .` before committing to a proposal",
+        "   branch and opening or updating its PR. Every content proposal still requires",
+        "   the repository's CI, CODEOWNER review, and protected merge; an Agent-authored",
+        "   commit is not acceptance. Use `researchctl doc tree --project . --json`",
+        "   when review automation will consume the findings.",
         "5. If `researchctl` or the effective policy is unavailable, stop and report the",
         "   missing prerequisite instead of approximating the checks.",
         "",
@@ -290,13 +341,30 @@ def render_project_agent_guide(
         "proposal. Standalone linting does not require `researchctl init`, a Session,",
         "SQLite, or manager credentials.",
         "",
+        "Discover a contract before authoring with `researchctl doc contracts` and",
+        "`researchctl doc schema --contract CONTRACT`. Start a manual document with",
+        "`researchctl doc scaffold --type TYPE --title TITLE`, then validate any routed",
+        "source with `researchctl doc check PATH`. Structured sources are regenerated",
+        "with `researchctl doc render PATH --output-file PATH.md`. An AnalysisBrief may",
+        "also use `researchctl brief lint PATH` and `researchctl brief render PATH`",
+        "without a document policy; those standalone commands do not validate route or",
+        "tracked source/render placement.",
+        "",
         "### Accepted Routes",
         "",
-        "| Type | Classification | Contract | Directory | Required relations |",
-        "| --- | --- | --- | --- | --- |",
+        (
+            "| Type | Classification | Contract | Directory | Rationale | "
+            "Required relations | Generated frontmatter |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for route in policy.routes:
         relations = ", ".join(route.required_relations) or "-"
+        generated_frontmatter = (
+            ", ".join(route.generated_markdown_frontmatter.required_fields)
+            if route.generated_markdown_frontmatter is not None
+            else "-"
+        )
         lines.append(
             "| "
             + " | ".join(
@@ -305,13 +373,19 @@ def render_project_agent_guide(
                     _code(route.classification),
                     _code(route.contract),
                     _code(route.directory),
+                    _text(route.rationale),
                     _text(relations),
+                    _text(generated_frontmatter),
                 )
             )
             + " |"
         )
     lines.extend(["", end])
-    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=PROJECT_AGENT_GUIDE_RENDERER_IDS[guide_format],
+        source=policy,
+    )
 
 
 def _metadata(document: ProjectDocument) -> list[str]:
@@ -432,7 +506,11 @@ def render_design_document(document: DesignDocument) -> bytes:
         )
     else:
         lines.append("- None declared.")
-    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=DESIGN_DOCUMENT_RENDERER_ID,
+        source=document,
+    )
 
 
 def render_project_status_summary(document: ProjectStatusSummary) -> bytes:
@@ -500,7 +578,11 @@ def render_project_status_summary(document: ProjectStatusSummary) -> bytes:
         + (f" ({_code(source.digest)})" if source.digest is not None else "")
         for source in document.sources
     )
-    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=PROJECT_STATUS_RENDERER_ID,
+        source=document,
+    )
 
 
 def render_project_document(document: ProjectDocument) -> bytes:
@@ -653,6 +735,10 @@ def _lint_agent_guides(
             continue
         expected = render_project_agent_guide(policy, target.format).decode("utf-8")
         begin, end = agent_guide_markers(target.format)
+        marker_identity = begin.removeprefix("<!-- researchctl-agent-guide:").removesuffix(
+            ":begin -->"
+        )
+        marker_prefix = f"<!-- researchctl-agent-guide:{marker_identity}"
         begin_index = observed.find(begin)
         end_index = observed.find(end)
         if (
@@ -660,6 +746,7 @@ def _lint_agent_guides(
             or end_index < begin_index
             or observed.count(begin) != 1
             or observed.count(end) != 1
+            or observed.count(marker_prefix) != 2
         ):
             matches = False
         else:
@@ -715,7 +802,7 @@ def lint_document_tree(
     agent_guide_count = _lint_agent_guides(repository, policy, findings)
     root_files = set(policy.root_files)
     legacy = {item.path: item for item in policy.legacy_files}
-    structured_sources: dict[str, tuple[StructuredDocument, str]] = {}
+    structured_sources: dict[str, tuple[StructuredDocument, str, DocumentRoute]] = {}
     generated_paths: set[str] = set()
     manual_documents: dict[str, MarkdownFrontmatter] = {}
 
@@ -804,7 +891,7 @@ def lint_document_tree(
                 )
                 continue
             try:
-                frontmatter, _body = load_markdown_frontmatter(
+                frontmatter, body = load_markdown_frontmatter(
                     file_path.read_text(encoding="utf-8"),
                     path=relative,
                 )
@@ -844,6 +931,19 @@ def lint_document_tree(
                             code="document_required_relation_missing",
                             path=f"{relative}:relations.{relation}",
                             message=f"Route requires a non-empty {relation} relation.",
+                        )
+                    )
+            for item in frontmatter.provenance:
+                if item.value not in body:
+                    findings.append(
+                        DocumentFinding(
+                            kind="invalid",
+                            code="document_provenance_value_missing",
+                            path=f"{relative}:provenance.{item.key}",
+                            message=(
+                                f"Provenance value {item.value!r} does not occur in "
+                                "the Markdown body."
+                            ),
                         )
                     )
             for reference in frontmatter.references:
@@ -928,10 +1028,17 @@ def lint_document_tree(
                     message=f"Document classification and slug require path {expected}.",
                 )
             )
-        structured_sources[relative] = (document, relative.removesuffix(".yaml") + ".md")
+        structured_sources[relative] = (
+            document,
+            relative.removesuffix(".yaml") + ".md",
+            route,
+        )
 
-    expected_generated = {generated for _document, generated in structured_sources.values()}
-    for source_path, (document, generated_path) in structured_sources.items():
+    expected_generated = {
+        generated
+        for _document, generated, _route in structured_sources.values()
+    }
+    for source_path, (document, generated_path, route) in structured_sources.items():
         generated = repository / generated_path
         if generated_path not in generated_paths:
             findings.append(
@@ -951,7 +1058,7 @@ def lint_document_tree(
                 expected = render_analysis_brief(document)
             else:
                 expected = render_project_document(document)
-        except OSError as error:
+        except (OSError, UnicodeError, SerializationError, RCPError) as error:
             findings.append(
                 DocumentFinding(
                     kind="invalid",
@@ -961,7 +1068,54 @@ def lint_document_tree(
                 )
             )
             continue
-        if observed != expected:
+        observed_body = observed
+        if route.generated_markdown_frontmatter is not None:
+            try:
+                envelope = inspect_project_frontmatter(observed)
+            except (UnicodeError, SerializationError) as error:
+                findings.append(
+                    DocumentFinding(
+                        kind="invalid",
+                        code="document_generated_frontmatter_invalid",
+                        path=generated_path,
+                        message=(
+                            "Project frontmatter could not be parsed as strict YAML: "
+                            f"{type(error).__name__}."
+                        ),
+                    )
+                )
+                continue
+            if envelope is None:
+                findings.append(
+                    DocumentFinding(
+                        kind="invalid",
+                        code="document_generated_frontmatter_missing",
+                        path=generated_path,
+                        message="Generated Markdown has no configured project frontmatter.",
+                    )
+                )
+                continue
+            missing = tuple(
+                field
+                for field in route.generated_markdown_frontmatter.required_fields
+                if field not in envelope.values
+            )
+            if missing:
+                findings.append(
+                    DocumentFinding(
+                        kind="invalid",
+                        code="document_generated_frontmatter_invalid",
+                        path=generated_path,
+                        message=(
+                            "Project frontmatter is missing configured fields: "
+                            + ", ".join(missing)
+                            + "."
+                        ),
+                    )
+                )
+                continue
+            observed_body = envelope.body
+        if observed_body != expected:
             findings.append(
                 DocumentFinding(
                     kind="invalid",

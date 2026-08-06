@@ -20,7 +20,31 @@ _MAX_YAML_NODES = 100_000
 
 
 class SerializationError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        remediation: str | None = None,
+        error_type: str | None = None,
+        line: int | None = None,
+        column: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.remediation = remediation
+        self.error_type = error_type
+        self.line = line
+        self.column = column
+
+    def context(self) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in {
+                "error_type": self.error_type,
+                "line": self.line,
+                "column": self.column,
+            }.items()
+            if value is not None
+        }
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -37,7 +61,15 @@ def _construct_unique_mapping(
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
         if key in mapping:
-            raise SerializationError(f"duplicate YAML key: {key!r}")
+            line = key_node.start_mark.line + 1
+            column = key_node.start_mark.column + 1
+            raise SerializationError(
+                f"duplicate YAML key {key!r} at line {line}, column {column}",
+                remediation="Remove the duplicate mapping key at the reported location.",
+                error_type="DuplicateKeyError",
+                line=line,
+                column=column,
+            )
         mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
 
@@ -156,9 +188,37 @@ def load_yaml(text: str) -> dict[str, Any]:
         return _load_yaml_unchecked(text)
     except SerializationError:
         raise
+    except yaml.MarkedYAMLError as exc:
+        error_type = type(exc).__name__
+        mark = exc.problem_mark
+        line = mark.line + 1 if mark is not None else None
+        column = mark.column + 1 if mark is not None else None
+        location = (
+            f" at line {line}, column {column}"
+            if line is not None and column is not None
+            else ""
+        )
+        problem = " ".join((exc.problem or "invalid YAML syntax").split())
+        remediation = (
+            "Quote plain YAML text containing ': ' and fix the syntax at the "
+            "reported line and column."
+            if isinstance(exc, (yaml.scanner.ScannerError, yaml.parser.ParserError))
+            else "Fix the YAML construct at the reported line and column."
+        )
+        raise SerializationError(
+            f"invalid protocol YAML ({error_type}){location}: {problem}",
+            remediation=remediation,
+            error_type=error_type,
+            line=line,
+            column=column,
+        ) from exc
     except (yaml.YAMLError, RecursionError, TypeError, ValueError) as exc:
         error_type = type(exc).__name__
-        raise SerializationError(f"invalid protocol YAML ({error_type})") from exc
+        raise SerializationError(
+            f"invalid protocol YAML ({error_type})",
+            remediation="Fix the malformed canonical YAML and rerun validation.",
+            error_type=error_type,
+        ) from exc
 
 
 def load_model(path: Path, model_type: type[ModelT]) -> ModelT:

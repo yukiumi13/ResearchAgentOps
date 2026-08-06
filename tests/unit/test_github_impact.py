@@ -8,6 +8,7 @@ import pytest
 from researchctl.adapters._subprocess import CommandResult
 from researchctl.adapters.github_impact import GitHubImpactDelivery
 from researchctl.adapters.github_submission import GhSubmissionCommandResult
+from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.errors import RCPError
 
 
@@ -17,6 +18,22 @@ BRANCH = f"research/impact/{IMPACT_ID}"
 COMMIT = "b" * 40
 TITLE = "researchctl: overlap impact"
 BODY = "# Impact review\n"
+AUTHOR = "researchctl-agent[bot]"
+
+
+def _governance() -> GitHubGovernancePolicy:
+    return GitHubGovernancePolicy.model_validate(
+        {
+            "repository": "owner/project",
+            "default_branch": "main",
+            "agent_app": {
+                "app_id": 12,
+                "installation_id": 34,
+                "login": AUTHOR,
+            },
+            "managers": [{"kind": "user", "login": "manager"}],
+        }
+    )
 
 
 class _GitRunner:
@@ -69,6 +86,7 @@ class _GhRunner:
                 "title": payload["title"],
                 "body": payload["body"],
                 "merged_at": None,
+                "user": {"login": AUTHOR},
                 "head": {
                     "ref": BRANCH,
                     "sha": COMMIT,
@@ -90,6 +108,7 @@ def test_impact_delivery_pushes_only_fixed_branch_and_observes_exact_pr(
     gh = _GhRunner()
     delivery = GitHubImpactDelivery(
         accepted_remote_url=REMOTE_URL,
+        governance=_governance(),
         git_runner=git,
         gh_runner=gh,
         environment={"PATH": "/usr/bin", "GH_TOKEN": "test-token"},
@@ -134,6 +153,7 @@ def test_impact_delivery_rejects_caller_selected_branch_before_remote_calls(
     git = _GitRunner()
     delivery = GitHubImpactDelivery(
         accepted_remote_url=REMOTE_URL,
+        governance=_governance(),
         git_runner=git,
         gh_runner=_GhRunner(),
         environment={},

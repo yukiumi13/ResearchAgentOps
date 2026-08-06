@@ -15,6 +15,7 @@ from researchctl.adapters._subprocess import (
     CommandRunner,
     SubprocessCommandRunner,
 )
+from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.errors import RCPError
 from researchctl.services.submission_delivery import (
     SubmissionBranchDelivery,
@@ -117,6 +118,7 @@ class GitHubSubmissionDelivery:
         self,
         *,
         accepted_remote_url: str | None,
+        governance: GitHubGovernancePolicy | None,
         git_runner: CommandRunner | None = None,
         gh_runner: GhSubmissionCommandRunner | None = None,
         environment: Mapping[str, str] | None = None,
@@ -144,6 +146,7 @@ class GitHubSubmissionDelivery:
             if key in _GH_ENVIRONMENT_KEYS and value
         }
         self._accepted_remote_url = accepted_remote_url
+        self._governance = governance
         self._git_runner = git_runner or SubprocessCommandRunner()
         self._gh_runner = gh_runner or SubprocessGhSubmissionCommandRunner()
         self._timeout_seconds = timeout_seconds
@@ -238,6 +241,12 @@ class GitHubSubmissionDelivery:
         ):
             self._invalid_request()
         identity = self._identity()
+        governance = self._require_governance(identity)
+        if base_branch != governance.default_branch:
+            raise RCPError(
+                code="submission_github_policy_mismatch",
+                message="Submission base branch differs from accepted GitHub policy.",
+            )
         observed = self._observe_pull_request(
             identity=identity,
             branch=branch,
@@ -307,7 +316,7 @@ class GitHubSubmissionDelivery:
                 code="submission_github_not_configured",
                 message="Accepted Project configuration has no GitHub remote.",
             )
-        self._identity()
+        self._require_governance(self._identity())
         for arguments in (
             ("remote", "get-url", _REMOTE_NAME),
             ("remote", "get-url", "--push", _REMOTE_NAME),
@@ -429,6 +438,7 @@ class GitHubSubmissionDelivery:
         state = pull.get("state")
         observed_title = pull.get("title")
         observed_body = pull.get("body")
+        author = pull.get("user")
         head = pull.get("head")
         base = pull.get("base")
         if (
@@ -436,10 +446,21 @@ class GitHubSubmissionDelivery:
             or not isinstance(number, int)
             or number < 1
             or state not in {"open", "closed"}
+            or not isinstance(author, dict)
             or not isinstance(head, dict)
             or not isinstance(base, dict)
         ):
             self._invalid_response("GitHub pull request identity is invalid.")
+        author_login = author.get("login")
+        if not isinstance(author_login, str) or not author_login:
+            self._invalid_response("GitHub pull request author identity is invalid.")
+        governance = self._require_governance(identity)
+        if author_login.lower() != governance.agent_app.login.lower():
+            raise RCPError(
+                code="submission_pr_author_mismatch",
+                message="Submission pull request was not authored by the accepted Agent App.",
+                context={"number": number},
+            )
         head_repo = head.get("repo")
         base_repo = base.get("repo")
         if not isinstance(head_repo, dict) or not isinstance(base_repo, dict):
@@ -478,8 +499,27 @@ class GitHubSubmissionDelivery:
             base_branch=base_branch,
             head_branch=branch.branch,
             head_commit=branch.commit,
+            author_login=author_login,
             created=created,
         )
+
+    def _require_governance(
+        self,
+        identity: GitHubRepositoryIdentity,
+    ) -> GitHubGovernancePolicy:
+        policy = self._governance
+        if policy is None:
+            raise RCPError(
+                code="submission_github_governance_not_configured",
+                message="Accepted ProjectPolicy has no GitHub proposal identity policy.",
+                remediation="Accept a protected GitHub governance policy before submitting.",
+            )
+        if identity.repository.lower() != policy.repository.lower():
+            raise RCPError(
+                code="submission_github_policy_mismatch",
+                message="Accepted Git remote differs from GitHub governance policy.",
+            )
+        return policy
 
     def _identity(self) -> GitHubRepositoryIdentity:
         if self._accepted_remote_url is None:

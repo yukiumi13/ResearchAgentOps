@@ -1,7 +1,7 @@
 # Post-export Requirement Ledger
 
 Status: normative implementation input
-Updated: 2026-08-05
+Updated: 2026-08-06
 
 `USER_SCENARIOS.md` preserves anonymous anchors for all 77 prompts in the
 private historical research. This ledger gives stable identities to later
@@ -170,7 +170,7 @@ requirements so traceability does not silently stop at that boundary.
   depth discussion, 2026-08-05.
 - Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
 - Acceptance: `doc policy-template` emits a complete schema-valid candidate with
-  all policy sections explicit, while `doc policy-lint` validates it without a
+  all policy sections explicit, while `doc policy-lint` validates the customized candidate without a
   repository, managed state, or implicit taxonomy. Project policy may declare
   repository-local Claude or AGENTS guide targets. `doc agent-guide` writes only
   a declared target and deterministically inserts or replaces one visible,
@@ -183,3 +183,55 @@ requirements so traceability does not silently stop at that boundary.
   Skills and MCP adapters may reuse the workflow but are not required and cannot
   become a second taxonomy or validator. Adopting or changing the candidate
   policy remains a manager/CODEOWNER-reviewed operation.
+
+## REQ-20260805-002 - Standalone document authoring is self-discovering
+
+- Source: external Claude standalone adoption and authoring canary, 2026-08-05.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc contracts` names every built-in document contract, required
+  top-level fields, canonical source form, schema command, and renderer command;
+  `doc schema` exposes the complete generated JSON Schema without init;
+  `doc scaffold --type` emits a schema-valid route-specific Markdown or YAML
+  skeleton; and `doc check PATH --json` dispatches through the effective route.
+  Agent guides name these commands including AnalysisBrief. Routes carry a
+  structured non-empty rationale, and `policy-lint` rejects unchanged template
+  rationales. The template keeps human `docs/README.md` separate from generated
+  `docs/INDEX.md`. Generated Markdown binds renderer/source/body digests, allows
+  safe refresh only when the old body is unedited, and preserves apostrophes in
+  Markdown prose. The marker identifies its source digest as canonical model JSON
+  rather than raw YAML bytes. Structured routes may require and preserve a
+  project-owned frontmatter envelope while RCP checks only required key presence
+  and the renderer-owned body; project lint owns the envelope's value semantics.
+  The renderer remains an optional typed-model projection rather than a general
+  Markdown/HTML engine. AnalysisBrief schema and lint use canonical `answer`,
+  accept legacy `conclusion` only as an input alias, expose field prose limits,
+  preserve ordinary arrows, and require quoted display-sensitive decimals.
+  Prose output exposes observed/maximum English and CJK budgets.
+  Standalone `doctor` emits one mode explanation and document diagnostics rather
+  than managed generated-schema errors. Machine review evidence uses
+  `doc tree --json` rather than an unstructured summary.
+
+## REQ-20260805-003 - PR authorship and merge gates use distinct principals
+
+- Source: installed PR/branch-protection canary, 2026-08-05.
+- Maps to: `US-017`, `US-018`, `US-021`.
+- Acceptance: documentation distinguishes Action triggering from required status
+  checks. Branch rules require `researchctl/source-tests` and
+  `researchctl/exact-head`; those rules gate merge but do not trigger CI. An
+  Agent proposal is authored by a distinct GitHub App/bot principal and approved
+  by the human manager/CODEOWNER. The Agent cannot approve or merge. A
+  single-maintainer PR authored by the same GitHub user cannot satisfy its own
+  required approval and must not be placed behind an impossible rule without a
+  second author/reviewer principal. A bounded read-only `github doctor` command
+  audits classic protection and applicable active rulesets and returns a failed
+  machine envelope when any fixed merge gate is absent. It does not count a
+  green but non-required check as protection or mutate repository settings.
+  `ProjectPolicy.github` provides the strict non-secret identity contract and a
+  manager-owned field-specific proposal changes only that field. The separate
+  governance apply command defaults to read-only preview; mutation is bound to
+  the accepted-policy and observed-state digests, rejects Session/App authority,
+  verifies a configured human Manager through GitHub, supports only unambiguous
+  classic protection, and audits by read-back. Shared proposal delivery rejects
+  missing policy, remote/default-branch drift, and PR receipts authored by a
+  different login. No real rule apply is claimed. Pre-create App token
+  provenance and post-merge Manager-review verification remain deployment gates.

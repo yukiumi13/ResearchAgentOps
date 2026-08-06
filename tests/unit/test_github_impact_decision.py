@@ -8,12 +8,29 @@ from researchctl.adapters.github_impact_decision import (
     GitHubImpactDecisionDelivery,
 )
 from researchctl.adapters.github_submission import GhSubmissionCommandResult
+from researchctl.domain.models import GitHubGovernancePolicy
 
 
 REMOTE_URL = "git@github.example.invalid:owner/project.git"
 DECISION_ID = "decision_20260803T150000Z_" + "a" * 24
 BRANCH = f"research/impact-decision/{DECISION_ID}"
 COMMIT = "b" * 40
+AUTHOR = "researchctl-agent[bot]"
+
+
+def _governance() -> GitHubGovernancePolicy:
+    return GitHubGovernancePolicy.model_validate(
+        {
+            "repository": "owner/project",
+            "default_branch": "main",
+            "agent_app": {
+                "app_id": 12,
+                "installation_id": 34,
+                "login": AUTHOR,
+            },
+            "managers": [{"kind": "user", "login": "manager"}],
+        }
+    )
 
 
 class _GitRunner:
@@ -63,6 +80,7 @@ class _GhRunner:
                 "title": payload["title"],
                 "body": payload["body"],
                 "merged_at": None,
+                "user": {"login": AUTHOR},
                 "head": {
                     "ref": BRANCH,
                     "sha": COMMIT,
@@ -82,6 +100,7 @@ def test_manager_decision_delivery_uses_only_derived_branch(
 ) -> None:
     delivery = GitHubImpactDecisionDelivery(
         accepted_remote_url=REMOTE_URL,
+        governance=_governance(),
         git_runner=_GitRunner(),
         gh_runner=_GhRunner(),
         environment={"GH_TOKEN": "test-token"},

@@ -73,6 +73,7 @@ class _Delivery:
             base_branch=values["base_branch"],
             head_branch=branch.branch,
             head_commit=branch.commit,
+            author_login="researchctl-agent[bot]",
             created=created,
         )
 

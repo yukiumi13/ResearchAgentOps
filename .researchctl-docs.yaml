@@ -107,24 +107,29 @@ routes:
     contract: markdown-frontmatter
     directory: docs/adr
     document_type: adr
+    rationale: Existing ADR files record the project's accepted architectural decisions.
     required_relations: []
   - classification: design/architecture:proposal
     contract: design-document
     directory: docs/design
     document_type: design
+    rationale: Existing design specifications need structured options and validation evidence.
     required_relations: []
   - classification: operations/project:runbook
     contract: markdown-frontmatter
     directory: docs/runbooks
     document_type: runbook
+    rationale: Operational procedures require a dedicated command-oriented location.
     required_relations: []
   - classification: reference/project:document
     contract: markdown-frontmatter
     directory: docs/reference
     document_type: reference
+    rationale: Existing governance and requirement documents are long-lived references.
     required_relations: []
   - classification: status/project:snapshot
     contract: project-status-summary
     directory: docs/status
     document_type: status
+    rationale: Existing workflow coverage and assessment documents represent current state.
     required_relations: []

@@ -16,12 +16,12 @@ from researchctl.domain.models import (
 from researchctl.errors import RCPError
 
 
-LINEAR_RENDERER_ID = "linear.accepted-result.v1"
-LINEAR_RENDERER_VERSION = 1
+LINEAR_RENDERER_ID = "linear.accepted-result-markdown.v2"
+LINEAR_RENDERER_VERSION = 2
 
 
 def _text(value: object) -> str:
-    escaped = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    escaped = html.escape(str(value), quote=False).replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         escaped = escaped.replace(character, f"\\{character}")
     normalized = escaped.replace("\r\n", "\n").replace("\r", "\n")
@@ -66,7 +66,7 @@ def render_linear_accepted_result(
             message="Accepted Report, Decision, and Submission linkage is invalid.",
         )
     lines = [
-        "<!-- researchctl-renderer:linear.accepted-result.v1 -->",
+        f"<!-- researchctl-renderer:{LINEAR_RENDERER_ID} -->",
         "## Accepted research result",
         "",
         _text(report.claim),

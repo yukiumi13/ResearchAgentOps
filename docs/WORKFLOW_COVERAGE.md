@@ -1,7 +1,7 @@
 # Workflow and Use-Case Coverage
 
 Status: audited implementation checklist
-Updated: 2026-08-04
+Updated: 2026-08-06
 
 The private chat export is design research, not an executable contract. Its 77
 prompt anchors are normalized into the 33 stable scenarios in
@@ -144,6 +144,18 @@ plus protected-base dispatcher reading PR head as Git objects
 
 The workflows and validators are locally tested. Repository rules and a live
 pilot must still prove that required checks and approvals cannot be bypassed.
+The bounded read-only `github doctor` adapter now audits classic protection and
+applicable active rulesets for required PR review, CODEOWNER/latest-push
+approval, the two fixed checks, strict base currency, force-push denial, and
+deletion denial. It fails closed on missing gates and surfaces bypasses. The
+strict `ProjectPolicy.github` model, field-specific protected proposal, and
+project-bound audit are implemented. `github apply-governance` adds a
+Manager-authenticated, two-digest preview/apply/read-back path for classic
+protection and rejects ruleset or bypass-policy conflicts. Proposal deliveries
+require accepted policy before push and reject an observed PR whose author is
+not its configured App bot. Real rules remain unapplied; proving the token
+principal before PR creation, the proposal broker, and authenticated reviewer
+revalidation remain on the ADR 0015 deployment roadmap.
 
 ### WF-10 - Accepted-Merge Projection
 
@@ -206,7 +218,9 @@ complete policy template -> standalone policy lint -> manager-reviewed project p
 -> checked classification depth and classification/type/contract/directory routes
 -> deterministic project-local Agent guide -> human or Agent discovers policy
 -> authors canonical source -> schema/path/relation/tree lint
--> deterministic render/index comparison -> optional frozen baseline comparison
+-> optional thin deterministic Markdown projection
+-> project-frontmatter envelope preservation and generated-body comparison
+-> deterministic index comparison -> optional frozen baseline comparison
 -> local/editor/CI findings -> repository review
 ```
 
@@ -218,9 +232,10 @@ so prose can move to `docs/` without changing script-consumed `data/` paths.
 Configured Claude/AGENTS guide blocks expose the no-fallback workflow and current
 routes; tree lint rejects missing or stale instructions. Semantic namespace depth
 and route filesystem depth are separate bounded policy fields. Local policy-
-template/lint, schema/tree/index/guide/frozen checks, and source-workflow wiring
-are verified; an editor/language-server adapter and a protected-repository pilot
-remain open.
+template/lint, schema/tree/index/guide/frozen checks, structured-source discovery,
+project-frontmatter preservation, YAML diagnostics, and source-workflow wiring
+are verified. RCP does not replace Markdown-to-HTML or documentation-site tools;
+an editor/language-server adapter and a protected-repository pilot remain open.
 
 ## Scenario Checklist
 
@@ -243,11 +258,11 @@ remain open.
 | [x] | `US-015` | `verified_local` | `WF-15` | `WF-05`, `WF-06` | frontmatter/path/tree, frozen baseline, orphan render, and machine-root tests | cleanup pilot across long-lived repository |
 | [x] | `US-016` | `verified_local` | `WF-05` | `WF-06` | mismatch/failure evidence and submission checks | explicit failure-study policy workflow |
 | [x] | `US-017` | `partial` | `WF-06` | `WF-09`, `WF-10` | canonical Submission/renderers plus separate Plan/PlanReview evidence and deterministic CI replay | live PR and installed-rule pilot |
-| [x] | `US-018` | `partial` | `WF-06` | `WF-09` | fixed GitHub PR plus CLI/Git review artifacts | request-changes/reject/abandon end-to-end pilot |
+| [x] | `US-018` | `partial` | `WF-06` | `WF-09` | fixed GitHub PR plus CLI/Git review artifacts and distinct Agent-author/manager-reviewer deployment contract | GitHub App-authored PR and request-changes/reject/abandon pilot |
 | [x] | `US-019` | `partial` | `WF-08` | `WF-01`, `WF-06` | Git-owned accepted records and immutable refs | reachability-aware cleanup and retention apply |
 | [x] | `US-020` | `partial` | `WF-07` | `WF-05` | batch, typed receipts, fail-closed unresolved classification, effective status and explicit decisions | live providers/replay and protected-repository pilot |
-| [x] | `US-021` | `partial` | `WF-09` | `WF-05`, `WF-15` | secretless exact-head CI and baseline document lint separated from Runs | installed branch rules and authorized runner pilot |
-| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free policy template/lint, deterministic Claude/AGENTS guide, document checks, init/doctor/help, and core terminology | glossary golden tests and novice usability run |
+| [x] | `US-021` | `partial` | `WF-09` | `WF-05`, `WF-15` | secretless exact-head CI, baseline document lint, policy-bound governance audit, and Manager/digest-gated classic protection apply separated from Runs | execute reviewed rule apply, distinct App PR author, and authorized runner pilot |
+| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free policy template/lint, contract/schema discovery, route scaffold/check/render, deterministic Claude/AGENTS guide, standalone-aware doctor, and core terminology | glossary golden tests and novice usability run |
 | [x] | `US-023` | `verified_local` | `WF-03` | `WF-06`, `WF-09` | traversal/symlink/rename/protected path tests | hostile same-user isolation remains out of scope |
 | [x] | `US-024` | `designed` | `WF-08` | `WF-03`, `WF-07` | safe-point and conflict contract | preview/apply batch sync implementation |
 | [x] | `US-025` | `verified_local` | `WF-14` | `WF-00` | 77-prompt/33-scenario static traceability tests | executed acceptance results must stay separate |
@@ -256,7 +271,7 @@ remain open.
 | [x] | `US-028` | `partial` | `WF-03` | `WF-11` | deterministic local tmux and no daemon dependency | fixed SSH remote lifecycle |
 | [x] | `US-029` | `designed` | `WF-11` | `WF-05` | exact-input and ambiguity contracts | on-prem-to-cloud run and artifact return |
 | [x] | `US-030` | `deployment_pending` | `WF-10` | `WF-09` | stable outbox/receipt and crash-recovery fake-port tests | real Linear comment canary |
-| [x] | `US-031` | `partial` | `WF-01` | `WF-00`, `WF-15` | standalone document adoption plus dirty/idempotent init and bootstrap tests | explicit upgrade apply and realistic repo pilot |
+| [x] | `US-031` | `partial` | `WF-01` | `WF-00`, `WF-15` | standalone document adoption, required route rationales, machine-readable tree evidence, authoring scaffold/dispatch, and dirty/idempotent init tests | explicit upgrade apply and second realistic repo pilot |
 | [x] | `US-032` | `designed` | `WF-12` | `WF-11` | allocation safety ADR and state contract | controller, contention, quarantine, restore tests |
 | [x] | `US-033` | `deployment_pending` | `WF-10` | `WF-13` | Git-authoritative replay and ignored-mutation tests | outage/canary against real Linear transport |
 

@@ -16,6 +16,7 @@ from researchctl.domain.models import (
     DependencySet,
     DocumentLayoutPolicy,
     ExperimentPlan,
+    GitHubGovernancePolicy,
     LinearProjectionPolicy,
     ReportProposal,
     PlanReview,
@@ -85,6 +86,11 @@ class PlanReviewConfigureRequest(MutationRequest):
 class DocumentLayoutConfigureRequest(MutationRequest):
     expected_default_head: GitObjectId
     document_layout: DocumentLayoutPolicy
+
+
+class GitHubGovernanceConfigureRequest(MutationRequest):
+    expected_default_head: GitObjectId
+    governance: GitHubGovernancePolicy
 
 
 LinearDeliveryTopic = Literal[

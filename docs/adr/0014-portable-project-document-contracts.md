@@ -2,7 +2,7 @@
 type: adr
 title: Portable project document contracts
 owner: person:yl2708
-last_updated: 2026-08-04
+last_updated: 2026-08-06
 validity: valid
 tags: [documents, lint, ci, governance]
 references:
@@ -57,17 +57,27 @@ standalone nor managed policy exists, the CLI fails with
 `document_policy_missing`; built-in model defaults cannot silently classify a
 real repository.
 
-For first adoption, `doc policy-template` renders a complete strict policy
-candidate rather than asking an Agent to invent YAML fields. `doc policy-lint`
-validates that file without repository discovery or managed state. The template
-remains a proposal: adapting its routes and accepting it as
+For first adoption, `doc policy-template` renders a complete structural policy
+candidate rather than asking an Agent to invent YAML fields. Every route has a
+schema-owned `rationale`; template rationales are explicit placeholders that
+`doc policy-lint` rejects until backed by existing project artifacts. Validation
+does not require repository discovery or managed state. The template remains a
+proposal: adapting its routes and accepting it as
 `.researchctl-docs.yaml` still requires manager/CODEOWNER review.
 
-A route is the exact four-part mapping:
+A route is the exact five-part mapping:
 
 ```text
-classification + document_type + contract + directory
+classification + document_type + contract + directory + rationale
 ```
+
+The project policy maps a project-specific type to one contract from the closed
+built-in set; it is not a schema-definition language. For example, a project may
+map `experiment` to `analysis-brief`, but it cannot add, remove, or reinterpret
+`AnalysisBrief` fields in route YAML. Changing a built-in contract requires a
+versioned researchctl protocol/model, schema, linter, scaffold, renderer, and
+test change. Agents may author contract instances but cannot redefine their
+accepted shape from a project repository.
 
 Classifications use canonical `a/b:c` labels. Unknown labels, unknown paths,
 overlapping directories, type/path disagreement, excessive depth, missing
@@ -89,7 +99,9 @@ instructions. It can write only a configured target. The deterministic block
 points to the effective policy, states the no-fallback rule and authority
 boundary, gives the required author/render/lint sequence, and renders the
 current accepted route table. `doc tree` rejects missing or stale configured
-blocks, so policy and Agent instructions cannot silently diverge.
+blocks, so policy and Agent instructions cannot silently diverge. The block also
+points to contract/schema discovery, route-specific scaffolding, and unified
+check/render dispatch, including AnalysisBrief.
 
 `machine_artifact_roots` are separately configured. Each root has an explicit
 extension allowlist and can never permit Markdown. This lets a project retain
@@ -112,17 +124,43 @@ This permits first adoption without weakening later baseline-policy validation.
 
 Structured YAML is canonical source for design documents, project status
 summaries, and analysis briefs. Its Markdown pair is deterministic generated
-output and carries a visible versioned renderer marker. A configured generated
-index similarly binds the type, classification, schema, and directory table to
-the policy.
+output and carries a visible versioned renderer marker plus source/body digests.
+An unedited renderer-owned file can be refreshed atomically after source changes;
+a body digest mismatch still blocks replacement. The source digest covers the
+canonical validated model JSON, not the original YAML bytes; the marker declares
+that format so callers do not mistake it for `sha256sum SOURCE.yaml`. Governed
+routes keep the canonical YAML and generated Markdown tracked beside each other.
+A configured generated index similarly binds the type, classification, schema,
+and directory table to the policy.
+
+Rendering is a thin, optional projection, not a general Markdown engine. RCP
+owns typed-model validation, prose budgets, deterministic section/table layout,
+provenance markers, and byte comparison. It does not own Markdown-to-HTML,
+themes, extensions, or arbitrary Markdown parsing. Existing Markdown libraries
+solve those downstream concerns but do not replace the project-specific
+`typed model -> stable Markdown source` projection. Adding such a dependency
+would not remove the contract logic and would enlarge the compatibility surface,
+so no general Markdown framework is part of the core.
+
+Some repositories already require their own generated-document frontmatter. A
+structured route may declare `generated_markdown_frontmatter.required_fields`.
+The Markdown target must contain that project-owned envelope before its first
+routed render. RCP preserves it byte-for-byte, checks configured key presence,
+and validates or refreshes only the renderer-owned body. The project remains
+responsible for the fields' schema and semantics. This envelope mode is separate
+from the built-in `markdown-frontmatter` contract for manually authored
+Markdown; route policy cannot use it to redefine a built-in structured schema.
 
 ## Authority And Review
 
-Ordinary document content follows repository CODEOWNERS and branch protection.
-Changing `.researchctl-docs.yaml` in standalone mode changes what the linter
-accepts, so that file must be manager-owned through CODEOWNERS. In managed mode,
-adding a label, directory, contract, generated index, artifact root, or remapping
-an existing route requires the manager-only policy proposal. Adding or remapping
+An Agent may author an ordinary document instance and commit it only to a
+proposal branch. Every content proposal still follows repository CI,
+CODEOWNERS review, and protected merge; authorship or a passing document lint is
+not acceptance. Changing `.researchctl-docs.yaml` in standalone mode changes
+what the linter accepts, so that file must be manager-owned through CODEOWNERS.
+In managed mode, adding a label, directory, contract, generated index, artifact
+root, or remapping an existing route requires the manager-only policy proposal.
+Adding or remapping
 an Agent guide target is the same kind of policy change. Tags are descriptive
 metadata and never grant path or approval authority.
 
@@ -143,6 +181,11 @@ read-only and cannot acquire manager authority merely by acting as reviewer.
   policy changes rather than an Agent fallback.
 - Existing prose can migrate incrementally while machine artifact paths remain
   stable.
+- Existing project frontmatter can wrap generated bodies without duplicating or
+  weakening RCP's built-in document models.
+- RCP remains usable as a schema/lint engine when a project chooses another
+  Markdown/HTML presentation stack; only deterministic paired Markdown uses its
+  projection functions.
 - Baseline-free local lint cannot prove frozen immutability; CI must provide a
   trusted baseline checkout for that check.
 - The current CLI is the integration surface. A language-server/editor adapter
@@ -154,7 +197,7 @@ read-only and cannot acquire manager authority merely by acting as reviewer.
 
 Focused tests cover strict route policy, seven project-defined document types,
 frontmatter/path agreement, relations, deterministic render pairs and index,
-machine artifact separation, frozen baseline comparison, standalone CLI use,
-deterministic Agent guide insertion and drift detection, manager-only policy
-proposals, protected field-scope replay, CODEOWNERS, and the exact-head source
-workflow contract.
+project-owned frontmatter preservation around generated bodies, machine artifact
+separation, frozen baseline comparison, standalone CLI use, deterministic Agent
+guide insertion and drift detection, manager-only policy proposals, protected
+field-scope replay, CODEOWNERS, and the exact-head source workflow contract.

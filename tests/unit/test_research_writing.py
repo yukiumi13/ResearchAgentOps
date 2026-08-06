@@ -27,7 +27,7 @@ SOURCE_COMMIT = "2" * 40
 def _brief(**overrides: object) -> AnalysisBrief:
     payload: dict[str, object] = {
         "question": "Does BEST assignment drive selection accuracy?",
-        "conclusion": (
+        "answer": (
             "Random reassignment matches production within noise. "
             "The judge policy mainly changes claim calibration."
         ),
@@ -120,19 +120,34 @@ def test_analysis_brief_rejects_unused_sources() -> None:
         AnalysisBrief.model_validate(payload)
 
 
-def test_analysis_brief_lint_enforces_conclusion_budget() -> None:
-    brief = _brief(conclusion=" ".join(["word"] * 61) + ".")
+def test_analysis_brief_lint_enforces_answer_budget() -> None:
+    brief = _brief(answer=" ".join(["word"] * 61) + ".")
 
     result = lint_analysis_brief(brief)
 
     assert result.terminal_result == "invalid"
     assert any(
         finding.code == "prose_english_words_exceeded"
-        and finding.field_path == "conclusion"
+        and finding.field_path == "answer"
         for finding in result.findings
     )
     with pytest.raises(RCPError, match="concise writing contract"):
         render_analysis_brief(brief)
+
+
+def test_analysis_brief_accepts_legacy_conclusion_but_serializes_answer() -> None:
+    payload = _brief().model_dump(mode="json")
+    payload["conclusion"] = payload.pop("answer")
+
+    brief = AnalysisBrief.model_validate(payload)
+
+    assert brief.answer.startswith("Random reassignment")
+    assert "answer:" in dump_yaml(brief)
+    assert "conclusion:" not in dump_yaml(brief)
+
+    payload["answer"] = "Conflicting canonical answer."
+    with pytest.raises(ValidationError, match="both answer and conclusion"):
+        AnalysisBrief.model_validate(payload)
 
 
 def test_analysis_brief_renderer_is_fixed_and_uses_setting() -> None:
@@ -150,6 +165,51 @@ def test_analysis_brief_renderer_is_fixed_and_uses_setting() -> None:
     assert content.index("## Evidence") < content.index("## Interpretation")
     assert content.index("## Interpretation") < content.index("## Limits")
     assert content.index("## Limits") < content.index("## Sources")
+    assert "source-format=canonical-json-model" in content
+
+
+def test_analysis_brief_renderer_preserves_arrows_and_escapes_html_tags() -> None:
+    content = render_analysis_brief(
+        _brief(answer="Tokenizer -> metric while <think> remains literal text.")
+    ).decode("utf-8")
+
+    assert "Tokenizer -> metric" in content
+    assert "-&gt;" not in content
+    assert "&lt;think&gt;" in content
+
+
+def test_analysis_brief_requires_quoted_decimal_display_precision() -> None:
+    ambiguous = _brief()
+    payload = ambiguous.model_dump(mode="json")
+    evidence = payload["evidence"]
+    assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+    values = evidence[0]["values"]
+    assert isinstance(values, dict)
+    values["selection_acc"] = 0.20
+    ambiguous = AnalysisBrief.model_validate(payload)
+
+    result = lint_analysis_brief(ambiguous)
+
+    assert any(
+        finding.code == "brief_float_format_ambiguous"
+        and finding.field_path == "evidence.0.values.selection_acc"
+        for finding in result.findings
+    )
+    assert "'0.20'" in result.findings[-1].message
+    with pytest.raises(RCPError, match="concise writing contract"):
+        render_analysis_brief(ambiguous)
+
+    precise = _brief()
+    precise_payload = precise.model_dump(mode="json")
+    precise_evidence = precise_payload["evidence"]
+    assert isinstance(precise_evidence, list) and isinstance(precise_evidence[0], dict)
+    precise_values = precise_evidence[0]["values"]
+    assert isinstance(precise_values, dict)
+    precise_values["selection_acc"] = "0.20"
+    rendered = render_analysis_brief(
+        AnalysisBrief.model_validate(precise_payload)
+    ).decode("utf-8")
+    assert "| Production | 0.20 |" in rendered
 
 
 def test_research_update_lint_and_renderer_stay_linear_sized() -> None:
@@ -159,7 +219,7 @@ def test_research_update_lint_and_renderer_stay_linear_sized() -> None:
     content = render_research_update(update).decode("utf-8")
 
     assert result.terminal_result == "passed"
-    assert content.splitlines() == [
+    expected = [
         "**Completed · MAR-18 · best-reassignment**",
         "",
         "Random BEST reassignment matched production within noise.",
@@ -178,6 +238,10 @@ def test_research_update_lint_and_renderer_stay_linear_sized() -> None:
         "",
         f"> Renderer: `researchctl-renderer:{RESEARCH_UPDATE_RENDERER_ID}`",
     ]
+    assert content.splitlines()[:-1] == expected
+    assert content.splitlines()[-1].startswith(
+        f"<!-- researchctl-generated:{RESEARCH_UPDATE_RENDERER_ID};source=sha256:"
+    )
 
 
 def test_research_update_lint_rejects_verbose_summary() -> None:
@@ -214,10 +278,49 @@ def test_writing_cli_lints_and_renders_both_records(tmp_path: Path) -> None:
     assert f"researchctl-renderer:{RESEARCH_UPDATE_RENDERER_ID}" in update_render.stdout
 
 
+def test_renderer_refreshes_owned_output_but_rejects_manual_edits(tmp_path: Path) -> None:
+    source = tmp_path / "brief.yaml"
+    output = tmp_path / "brief.md"
+    source.write_text(dump_yaml(_brief()), encoding="utf-8")
+    runner = CliRunner()
+
+    first = runner.invoke(
+        app,
+        ["brief", "render", str(source), "--output-file", str(output)],
+    )
+    source.write_text(
+        dump_yaml(_brief(answer="Megatron's result remains within noise.")),
+        encoding="utf-8",
+    )
+    refreshed = runner.invoke(
+        app,
+        ["brief", "render", str(source), "--output-file", str(output)],
+    )
+
+    assert first.exit_code == 0
+    assert refreshed.exit_code == 0
+    assert "Updated:" in refreshed.stdout
+    rendered = output.read_text(encoding="utf-8")
+    assert "Megatron's result" in rendered
+    assert "Megatron&\\#x27;s" not in rendered
+
+    output.write_text(rendered.replace("within noise", "manually edited"), encoding="utf-8")
+    source.write_text(
+        dump_yaml(_brief(answer="A third deterministic answer.")),
+        encoding="utf-8",
+    )
+    rejected = runner.invoke(
+        app,
+        ["brief", "render", str(source), "--output-file", str(output)],
+    )
+    assert rejected.exit_code == 2
+    assert "writing_output_conflict" in rejected.stderr
+
+
 def test_writing_cli_returns_two_for_lint_failure(tmp_path: Path) -> None:
     brief_path = tmp_path / "brief.yaml"
     brief_path.write_text(
-        dump_yaml(_brief(conclusion=" ".join(["word"] * 61) + ".")),
+        dump_yaml(_brief(answer=" ".join(["word"] * 61) + ".")),
         encoding="utf-8",
     )
 
@@ -226,3 +329,24 @@ def test_writing_cli_returns_two_for_lint_failure(tmp_path: Path) -> None:
     assert result.exit_code == 2
     assert '"success": false' in result.stdout
     assert "prose_english_words_exceeded" in result.stdout
+
+
+def test_writing_cli_reports_yaml_scanner_location_and_specific_remediation(
+    tmp_path: Path,
+) -> None:
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text(
+        "question: Broken brief\n"
+        "answer: Results: evidence\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["brief", "lint", str(brief_path), "--json"])
+
+    assert result.exit_code == 2
+    payload = result.stdout
+    assert "ScannerError" in payload
+    assert '"line": 2' in payload
+    assert '"column": 16' in payload
+    assert "Quote plain YAML text" in payload
+    assert "duplicate keys or aliases" not in payload

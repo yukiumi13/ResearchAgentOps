@@ -9,10 +9,10 @@ from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 
 EXPECTED_FILE_SHA256 = {
     "analysis-brief.schema.json": (
-        "12ed5e47d2062c99e4f8c6ad729adf4a5d93ae4c5de3a3d61b953b5b5e7eb64c"
+        "158244a228a2a0f70c1fc1e112ab980722896286e9ac14dce4336975a2ce16b2"
     ),
     "ci-validation-attestation.schema.json": (
-        "28545c955f8732f6f07b0ace2655888c410a64bb6745d078de0fc8bf57165100"
+        "ce98a73fd821089804f269680a7f0da573a1bb6c29f946a065613fad43c2c638"
     ),
     "dependency-change-receipt.schema.json": (
         "9c84ab2efb3a14e72194aea7dc724d733492f44a111ed9da648c09ea9259517a"
@@ -21,25 +21,28 @@ EXPECTED_FILE_SHA256 = {
         "7957d08df38bd16c4200deab85293829ab275e3c4139932e8c68ff709b92ad13"
     ),
     "document-layout-policy.schema.json": (
-        "51abcc64f4e76bb98e55388ca5aaf6928f6ca5c7d5e1bab0586ad0fba1d2928f"
+        "bb40f5aaba5396bae75c255ce18a5d12c35a68f62039177326d952246f9dd01d"
     ),
     "experiment-plan.schema.json": (
         "ea9a9e6605cfeed351cb603ade19dab4c2a2e0050fad77742e1fa1c14e1eabd5"
+    ),
+    "github-governance-policy.schema.json": (
+        "496d354797d0fe37bf5623a1325174191057c25e93285628668eb9fb596d3f6f"
     ),
     "impact-decision.schema.json": (
         "c4b0de7410fdd75e3e14fbec15199cfab7b6e5940dce08d8687bf4e36ec4d311"
     ),
     "linear-projection-policy.schema.json": (
-        "1fe26641a13487c156e897b61dc57e728ecdb3e9ea933e96f6084710d11b2646"
+        "a41dd0bebb5fb3755589f9bb469fcedd5bd592ceefd23fccb4935bf7d4232ab2"
     ),
     "markdown-frontmatter.schema.json": (
-        "1929e4aa632a802d41eeb952365bd70997ca1c8dcd4be372c47d1055309376ec"
+        "a3b7d85bb4837fa4a0d70d710ee9a53a5632e1026fb4ca87166d73610f7ee0e2"
     ),
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
-    "policy.schema.json": "5aeafa6a514d7598f70ecc33e030bf63c3b18011de086e7d3b627928c687408c",
-    "manifest.json": "7229a4660670217d9220a8f84bffaa9339413fbac7f2468ad00a8ce911956b17",
+    "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
+    "manifest.json": "2d2d8ca056adb28866058e90c8379c56f7c6f09292ce11522fbf88176705baea",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
         "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"

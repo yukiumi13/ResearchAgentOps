@@ -514,13 +514,16 @@ Document linting is independently adoptable and does not require
 `.researchctl-docs.yaml` containing a strict `DocumentLayoutPolicy` and run:
 
 ```text
-researchctl doc lint DOCUMENT.yaml
+researchctl doc contracts
+researchctl doc schema --contract markdown-frontmatter
+researchctl doc scaffold --type runbook --title TITLE
+researchctl doc check DOCUMENT --json
 researchctl doc render DOCUMENT.yaml --output-file DOCUMENT.md
 researchctl doc policy-template --output-file .researchctl-docs.yaml
 researchctl doc policy-lint .researchctl-docs.yaml
-researchctl doc index --output-file docs/README.md
+researchctl doc index --output-file docs/INDEX.md
 researchctl doc agent-guide --output-file CLAUDE.md
-researchctl doc tree --project .
+researchctl doc tree --project . --json
 ```
 
 These commands do not open `.research`, SQLite, a Session, or a manager context.
@@ -528,11 +531,12 @@ The same policy can be used by an editor adapter, pre-commit hook, external Agen
 or arbitrary CI. Stable JSON findings are the machine integration contract.
 If no standalone, managed, or explicitly selected policy exists, the commands
 fail with `document_policy_missing`; they do not apply a guessed hierarchy.
-`doc policy-template` renders a complete strict candidate with all policy
-sections explicit, and `doc policy-lint` validates that candidate without
-repository discovery. The template is a starting proposal, not accepted project
-authority; its project-specific routes require ordinary manager/CODEOWNER
-review before adoption.
+`doc policy-template` renders a complete structural candidate with all policy
+sections explicit. Every route carries a `TEMPLATE:` rationale placeholder;
+`doc policy-lint` rejects an uninvestigated template until each placeholder is
+replaced with project-specific evidence. The template preserves a human-written
+`docs/README.md` and maps its generated index to `docs/INDEX.md`. The customized
+policy requires ordinary manager/CODEOWNER review before adoption.
 
 Managed projects store the same policy at
 `.research/policies/default.yaml.document_layout`. `doc.configure-layout` is
@@ -542,7 +546,7 @@ classification, contract, directory, generated index, or machine artifact root
 inside an ordinary document proposal.
 
 Each document route binds exactly one canonical `a/b:c` classification, short
-document type, schema contract, and directory. Directory overlap, unknown paths,
+document type, schema contract, directory, and non-empty rationale. Directory overlap, unknown paths,
 type/path disagreement, unknown fields, missing required relations, unsafe
 links, excessive nesting, orphan renders, and renderer byte drift fail closed.
 Existing files may bypass conversion only through finite per-file legacy entries
@@ -563,7 +567,10 @@ policy or old document root; only then does frozen scanning apply the subject
 route shape to any old tree that exists. Any present-but-invalid, shadowed, or
 unsafe baseline policy fails closed, and later policy-owned roots cannot vanish.
 Structured design, status, and brief YAML remains canonical while its Markdown
-is renderer-owned and visibly identifies its renderer version.
+is renderer-owned and visibly identifies its renderer version. A hidden
+provenance marker binds the canonical source digest and generated body digest.
+The renderer may atomically refresh an owned file only while its old body digest
+still matches; manual edits continue to fail closed.
 
 Standalone correctness also requires Agent discovery. `DocumentLayoutPolicy`
 may declare `agent_guides`, each binding a repository-relative Markdown path to
@@ -571,9 +578,16 @@ the `claude` or `agents` format. `doc agent-guide` inserts or replaces only its
 versioned managed block, preserves unrelated instructions in the file, and may
 write only a target explicitly declared by policy. The block identifies both
 policy locations, forbids hierarchy fallback, lists accepted routes, explains
-manual versus structured authoring, and requires `doc tree`. Tree lint rejects
+manual versus structured authoring, and requires `doc tree`. It points Agents to
+`doc contracts`, `doc schema`, `doc scaffold`, route-aware `doc check`, and
+route-aware `doc render`, including the AnalysisBrief workflow. Tree lint rejects
 a missing, malformed, symlinked, or byte-stale configured guide. The guide is a
 discovery projection of policy, not another authority.
+
+Top-level `doctor` detects standalone document mode when no managed markers are
+present. It reports managed records and generated schemas as not applicable and
+runs the effective policy/tree checks. If managed markers exist but required
+schemas are missing, the original managed-project errors remain mandatory.
 
 A shared Skill may describe the generic workflow and an MCP server may proxy
 diagnostics for remote clients, but neither is required for standalone use and
@@ -1020,7 +1034,30 @@ is the protected merge whose exact head has current required checks and
 CODEOWNER approval. The checked-in single-maintainer CODEOWNERS baseline does
 not install branch protection or prove reviewer policy; an administrator must
 configure and verify those controls before the checks become an operational
-merge gate.
+merge gate. Because GitHub does not count self-approval, the intended deployment
+uses a distinct Agent GitHub App/bot identity to author proposals and the human
+manager identity to review them. A manager-authored PR needs a second human
+reviewer or cannot be placed behind a required one-approval rule.
+
+A bounded read-only governance adapter and `researchctl github doctor` normalize
+classic protection plus active rulesets applicable to the target branch. The
+audit checks required PR/CODEOWNER/latest-push review, both fixed status checks,
+strict base currency, force-push denial, deletion denial, and visible bypasses.
+It exits nonzero on a missing required gate and never installs rules. With a
+managed project it binds the observation to accepted `ProjectPolicy.github`;
+without one it cannot certify proposal principals.
+
+The protected field-specific control proposal changes only that GitHub policy.
+`researchctl github apply-governance` is a separate deployment operation: by
+default it only previews and emits accepted-policy and observed-state digests.
+Explicit apply requires both digests, rejects a Session environment, verifies
+the live `gh` user against accepted human Manager users or active teams, refuses
+active ruleset or bypass-policy ambiguity, writes one bounded classic protection
+payload, and audits the effective result. Every uncertain result requires a new
+observation before retry. This command is implemented and locally tested, but
+has not applied rules to this repository. ADR 0015 retains the proposal broker,
+pre-create App credential proof, and authenticated post-merge identity checks
+as deployment work.
 
 Trusted post-merge automation revalidates an accepted merge and prepares one
 stable projection event. Credential-free `shadow` mode emits only a canonical

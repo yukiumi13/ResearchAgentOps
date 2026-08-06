@@ -10,6 +10,7 @@ from researchctl.ci_cli import ci_app
 from researchctl.constants import __version__
 from researchctl.document_cli import doc_app
 from researchctl.errors import RCPError
+from researchctl.github_cli import github_app
 from researchctl.notification_cli import notification_app
 from researchctl.output import dump_envelope, envelope, error_payload
 from researchctl.phase2_cli import (
@@ -57,6 +58,7 @@ app.add_typer(brief_app, name="brief")
 app.add_typer(update_app, name="update")
 app.add_typer(notification_app, name="notification")
 app.add_typer(ci_app, name="ci")
+app.add_typer(github_app, name="github")
 app.command("submit")(submit_command)
 app.command("impact")(impact_command)
 app.command("reconcile")(reconcile_command)
@@ -99,7 +101,8 @@ def _known_error(exc: Exception) -> RCPError | None:
         return RCPError(
             code="serialization_error",
             message=str(exc),
-            remediation="Use canonical YAML without duplicate keys or non-finite values.",
+            remediation=exc.remediation or "Fix the reported canonical YAML error.",
+            context=exc.context(),
         )
     if isinstance(exc, FileNotFoundError):
         return RCPError(
@@ -208,7 +211,7 @@ def init_command(
 def doctor_command(
     path: Annotated[
         Path,
-        typer.Argument(help="Managed Git repository to inspect."),
+        typer.Argument(help="Managed or standalone-document Git repository to inspect."),
     ] = Path("."),
     json_output: Annotated[
         bool,

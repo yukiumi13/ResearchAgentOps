@@ -10,19 +10,23 @@ from typer.testing import CliRunner
 from researchctl.cli import app
 from researchctl.constants import PROJECT_POLICY_PATH
 from researchctl.domain.enums import ProjectState
-from researchctl.domain.models import DocumentLayoutPolicy, ProjectPolicy, ProjectRecord
+from researchctl.domain.models import (
+    GitHubGovernancePolicy,
+    ProjectPolicy,
+    ProjectRecord,
+)
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml, load_model
 from researchctl.services.actor import ActorContext, ActorRole, CredentialKind
-from researchctl.services.control_document_layout_policy import (
-    ControlDocumentLayoutPolicyRepository,
+from researchctl.services.control_github_governance_policy import (
+    ControlGitHubGovernancePolicyRepository,
 )
 from researchctl.services.factory import open_application
-from researchctl.services.requests import DocumentLayoutConfigureRequest
+from researchctl.services.requests import GitHubGovernanceConfigureRequest
 
 
-OPERATION_ID = "operation_20260804T140000Z_" + "d" * 24
-OTHER_OPERATION_ID = "operation_20260804T140001Z_" + "e" * 24
+OPERATION_ID = "operation_20260805T150000Z_" + "a" * 24
+OTHER_OPERATION_ID = "operation_20260805T150001Z_" + "b" * 24
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -70,19 +74,19 @@ def _commit_managed(repository: Path) -> str:
     return _git(repository, "rev-parse", "HEAD").strip()
 
 
-def _layout() -> DocumentLayoutPolicy:
-    payload = DocumentLayoutPolicy().model_dump(mode="json")
-    payload["routes"].append(
+def _governance() -> GitHubGovernancePolicy:
+    return GitHubGovernancePolicy.model_validate(
         {
-            "classification": "research/evidence:ledger",
-            "document_type": "ledger",
-            "directory": "docs/ledger",
-            "contract": "markdown-frontmatter",
-            "rationale": "Existing evidence ledgers require this route.",
-            "required_relations": [],
+            "repository": "owner/project",
+            "default_branch": "main",
+            "agent_app": {
+                "app_id": 12345,
+                "installation_id": 67890,
+                "login": "researchctl-agent[bot]",
+            },
+            "managers": [{"kind": "user", "login": "manager"}],
         }
     )
-    return DocumentLayoutPolicy.model_validate(payload)
 
 
 def _control(
@@ -90,10 +94,10 @@ def _control(
     *,
     operation_id: str,
     expected_head: str,
-) -> ControlDocumentLayoutPolicyRepository:
+) -> ControlGitHubGovernancePolicyRepository:
     worktrees = repository / ".git" / "researchctl" / "worktrees"
     worktrees.mkdir(parents=True, exist_ok=True)
-    return ControlDocumentLayoutPolicyRepository(
+    return ControlGitHubGovernancePolicyRepository(
         repository_root=repository,
         worktrees_directory=worktrees,
         default_branch="main",
@@ -102,7 +106,7 @@ def _control(
     )
 
 
-def test_document_layout_policy_changes_only_project_policy_and_retry_is_stable(
+def test_github_policy_changes_only_project_policy_and_retry_is_stable(
     initialized_repository: Path,
 ) -> None:
     base = _commit_managed(initialized_repository)
@@ -110,7 +114,7 @@ def test_document_layout_policy_changes_only_project_policy_and_retry_is_stable(
         initialized_repository / PROJECT_POLICY_PATH,
         ProjectPolicy,
     )
-    requested = _layout()
+    requested = _governance()
 
     first = _control(
         initialized_repository,
@@ -123,7 +127,7 @@ def test_document_layout_policy_changes_only_project_policy_and_retry_is_stable(
         expected_head=base,
     ).configure(requested)
 
-    expected = accepted.model_copy(update={"document_layout": requested})
+    expected = accepted.model_copy(update={"github": requested})
     assert first.project_policy == expected
     assert first.proposal.effect_applied is True
     assert repeated.proposal.changed is False
@@ -134,7 +138,7 @@ def test_document_layout_policy_changes_only_project_policy_and_retry_is_stable(
         "-s",
         "--format=%B",
         first.proposal.commit,
-    ).rstrip("\n") == f"researchctl: doc.configure-layout {OPERATION_ID}"
+    ).rstrip("\n") == f"researchctl: github.configure-governance {OPERATION_ID}"
     assert _git(
         initialized_repository,
         "show",
@@ -142,27 +146,27 @@ def test_document_layout_policy_changes_only_project_policy_and_retry_is_stable(
     ) == dump_yaml(expected)
 
 
-def test_application_journals_manager_layout_policy_and_denies_agent(
+def test_application_journals_manager_github_policy_and_denies_agent(
     initialized_repository: Path,
 ) -> None:
     base = _commit_managed(initialized_repository)
-    request = DocumentLayoutConfigureRequest(
+    request = GitHubGovernanceConfigureRequest(
         operation_id=OPERATION_ID,
-        idempotency_key="document-layout-configure",
+        idempotency_key="github-governance-configure",
         expected_default_head=base,
-        document_layout=_layout(),
+        governance=_governance(),
     )
     options = {
         "local_host": "host-a",
         "environment": {},
-        "document_layout_operation_id": request.operation_id,
-        "document_layout_expected_default_head": base,
+        "github_governance_operation_id": request.operation_id,
+        "github_governance_expected_default_head": base,
     }
 
     with open_application(initialized_repository, **options) as handle:
-        first = handle.service.document_layout_configure(request, handle.actor)
+        first = handle.service.github_governance_configure(request, handle.actor)
     with open_application(initialized_repository, **options) as handle:
-        repeated = handle.service.document_layout_configure(request, handle.actor)
+        repeated = handle.service.github_governance_configure(request, handle.actor)
 
     assert repeated == first
     assert first.terminal_result == "proposal_prepared"
@@ -171,36 +175,36 @@ def test_application_journals_manager_layout_policy_and_denies_agent(
     denied_request = request.model_copy(
         update={
             "operation_id": OTHER_OPERATION_ID,
-            "idempotency_key": "document-layout-agent-denied",
+            "idempotency_key": "github-governance-agent-denied",
         }
     )
     agent = ActorContext(
         actor_id="agent-session-test",
         role=ActorRole.AGENT,
         credential_kind=CredentialKind.SESSION_CAPABILITY,
-        bound_session_id="session_20260804T140000Z_" + "f" * 24,
+        bound_session_id="session_20260805T150000Z_" + "c" * 24,
     )
     with open_application(
         initialized_repository,
         local_host="host-a",
         environment={},
-        document_layout_operation_id=OTHER_OPERATION_ID,
-        document_layout_expected_default_head=base,
+        github_governance_operation_id=OTHER_OPERATION_ID,
+        github_governance_expected_default_head=base,
     ) as handle:
         with pytest.raises(RCPError) as denied:
-            handle.service.document_layout_configure(denied_request, agent)
+            handle.service.github_governance_configure(denied_request, agent)
     assert denied.value.code == "authorization_denied"
 
 
-def test_document_layout_cli_has_human_and_json_idempotent_outputs(
+def test_github_governance_cli_has_human_and_json_idempotent_outputs(
     initialized_repository: Path,
 ) -> None:
     base = _commit_managed(initialized_repository)
-    policy_file = initialized_repository / "document-layout.yaml"
-    policy_file.write_text(dump_yaml(_layout()), encoding="utf-8")
+    policy_file = initialized_repository / "github-governance.yaml"
+    policy_file.write_text(dump_yaml(_governance()), encoding="utf-8")
     arguments = [
-        "doc",
-        "configure-layout",
+        "github",
+        "configure-governance",
         "--policy-file",
         str(policy_file),
         "--expected-default-head",
@@ -210,7 +214,7 @@ def test_document_layout_cli_has_human_and_json_idempotent_outputs(
         "--operation-id",
         OPERATION_ID,
         "--idempotency-key",
-        "document-layout-cli",
+        "github-governance-cli",
     ]
 
     human = CliRunner().invoke(app, arguments)
@@ -220,5 +224,5 @@ def test_document_layout_cli_has_human_and_json_idempotent_outputs(
     assert f"Operation: {OPERATION_ID}" in human.stdout
     assert "Outcome: proposal_prepared" in human.stdout
     assert machine.exit_code == 0, machine.stdout
-    assert '"command": "doc.configure-layout"' in machine.stdout
+    assert '"command": "github.configure-governance"' in machine.stdout
     assert '"terminal_result": "proposal_prepared"' in machine.stdout

@@ -6,6 +6,7 @@ from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -48,6 +49,10 @@ from researchctl.domain.types import (
     DocumentId,
     DocumentLabel,
     DocumentSlug,
+    GitBranchName,
+    GitHubAccountLogin,
+    GitHubRepository,
+    GitHubTeamSlug,
     GitObjectId,
     HumanKey,
     ImpactId,
@@ -176,12 +181,45 @@ DocumentRelationKind = Literal["supersedes", "derived_from", "see_also"]
 AgentGuideFormat = Literal["claude", "agents"]
 
 
+class GeneratedMarkdownFrontmatterPolicy(StrictModel):
+    required_fields: Annotated[
+        tuple[HumanKey, ...],
+        Field(
+            min_length=1,
+            max_length=32,
+            description=(
+                "Project-owned YAML frontmatter keys preserved around a generated "
+                "Markdown body. The project remains responsible for field semantics."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def require_unique_fields(self) -> GeneratedMarkdownFrontmatterPolicy:
+        if len(self.required_fields) != len(set(self.required_fields)):
+            raise ValueError("generated Markdown frontmatter fields must be unique")
+        return self
+
+
 class DocumentRoute(StrictModel):
     classification: DocumentLabel
     document_type: DocumentSlug
     directory: RepositoryPath
     contract: DocumentSchema
+    rationale: ShortText
     required_relations: tuple[DocumentRelationKind, ...] = ()
+    generated_markdown_frontmatter: GeneratedMarkdownFrontmatterPolicy | None = None
+
+    @model_validator(mode="after")
+    def constrain_generated_frontmatter(self) -> DocumentRoute:
+        if (
+            self.contract == "markdown-frontmatter"
+            and self.generated_markdown_frontmatter is not None
+        ):
+            raise ValueError(
+                "manual markdown-frontmatter routes cannot add a generated body envelope"
+            )
+        return self
 
 
 class LegacyDocumentPath(StrictModel):
@@ -245,30 +283,35 @@ def _default_document_routes() -> tuple[DocumentRoute, ...]:
             document_type="adr",
             directory="docs/adr",
             contract="markdown-frontmatter",
+            rationale="Architecture decisions use the established docs/adr history.",
         ),
         DocumentRoute(
             classification="design/architecture:proposal",
             document_type="design",
             directory="docs/design",
             contract="design-document",
+            rationale="Design proposals require structured alternatives and validation.",
         ),
         DocumentRoute(
             classification="operations/project:runbook",
             document_type="runbook",
             directory="docs/runbooks",
             contract="markdown-frontmatter",
+            rationale="Operational procedures need a stable executable location.",
         ),
         DocumentRoute(
             classification="reference/project:document",
             document_type="reference",
             directory="docs/reference",
             contract="markdown-frontmatter",
+            rationale="Long-lived references are separate from current project status.",
         ),
         DocumentRoute(
             classification="status/project:snapshot",
             document_type="status",
             directory="docs/status",
             contract="project-status-summary",
+            rationale="Current project snapshots require traceable structured evidence.",
         ),
     )
 
@@ -386,6 +429,114 @@ class DocumentLayoutPolicy(StrictModel):
         )
 
 
+class GitHubAgentAppPrincipal(StrictModel):
+    app_id: Annotated[StrictInt, Field(ge=1)]
+    installation_id: Annotated[StrictInt, Field(ge=1)]
+    login: GitHubAccountLogin
+
+    @model_validator(mode="after")
+    def require_bot_login(self) -> GitHubAgentAppPrincipal:
+        if not self.login.endswith("[bot]"):
+            raise ValueError("GitHub Agent App login must use the canonical [bot] account")
+        return self
+
+
+class GitHubUserManagerPrincipal(StrictModel):
+    kind: Literal["user"] = "user"
+    login: GitHubAccountLogin
+
+    @model_validator(mode="after")
+    def forbid_bot_manager(self) -> GitHubUserManagerPrincipal:
+        if self.login.endswith("[bot]"):
+            raise ValueError("GitHub Manager user must be a human account")
+        return self
+
+
+class GitHubTeamManagerPrincipal(StrictModel):
+    kind: Literal["team"] = "team"
+    organization: GitHubAccountLogin
+    slug: GitHubTeamSlug
+
+    @model_validator(mode="after")
+    def forbid_bot_organization(self) -> GitHubTeamManagerPrincipal:
+        if self.organization.endswith("[bot]"):
+            raise ValueError("GitHub Manager team must belong to an organization")
+        return self
+
+
+GitHubManagerPrincipal = Annotated[
+    GitHubUserManagerPrincipal | GitHubTeamManagerPrincipal,
+    Field(discriminator="kind"),
+]
+
+
+class GitHubBypassActorPolicy(StrictModel):
+    actor_type: Literal["Integration", "RepositoryRole", "Team"]
+    actor_id: Annotated[StrictInt, Field(ge=1)]
+    bypass_mode: Literal["always", "pull_request"]
+    rationale: NonEmptyStr
+
+
+class GitHubGovernancePolicy(StrictModel):
+    repository: GitHubRepository
+    default_branch: GitBranchName
+    agent_app: GitHubAgentAppPrincipal
+    managers: Annotated[tuple[GitHubManagerPrincipal, ...], Field(min_length=1)]
+    required_status_checks: tuple[
+        Literal["researchctl/exact-head", "researchctl/source-tests"], ...
+    ] = ("researchctl/exact-head", "researchctl/source-tests")
+    required_approvals: Annotated[StrictInt, Field(ge=1, le=6)] = 1
+    require_code_owner_review: StrictBool = True
+    dismiss_stale_reviews: StrictBool = True
+    require_last_push_approval: StrictBool = True
+    strict_status_checks: StrictBool = True
+    block_force_pushes: StrictBool = True
+    block_deletions: StrictBool = True
+    bypass_actors: tuple[GitHubBypassActorPolicy, ...] = ()
+
+    @model_validator(mode="after")
+    def require_protected_acceptance(self) -> GitHubGovernancePolicy:
+        expected_checks = (
+            "researchctl/exact-head",
+            "researchctl/source-tests",
+        )
+        if self.required_status_checks != expected_checks:
+            raise ValueError(
+                "GitHub governance requires the two fixed status checks in canonical order"
+            )
+        required_flags = (
+            self.require_code_owner_review,
+            self.dismiss_stale_reviews,
+            self.require_last_push_approval,
+            self.strict_status_checks,
+            self.block_force_pushes,
+            self.block_deletions,
+        )
+        if not all(required_flags):
+            raise ValueError("GitHub governance cannot disable a protected merge gate")
+        manager_keys = tuple(
+            ("user", item.login)
+            if isinstance(item, GitHubUserManagerPrincipal)
+            else ("team", f"{item.organization}/{item.slug}")
+            for item in self.managers
+        )
+        if manager_keys != tuple(sorted(manager_keys)):
+            raise ValueError("GitHub Manager principals must be canonically sorted")
+        if len(manager_keys) != len(set(manager_keys)):
+            raise ValueError("GitHub Manager principals must be unique")
+        if ("user", self.agent_app.login) in manager_keys:
+            raise ValueError("GitHub Agent App cannot also be an accepting Manager")
+        bypass_keys = tuple(
+            (item.actor_type, item.actor_id, item.bypass_mode)
+            for item in self.bypass_actors
+        )
+        if bypass_keys != tuple(sorted(bypass_keys)):
+            raise ValueError("GitHub bypass actors must be canonically sorted")
+        if len(bypass_keys) != len(set(bypass_keys)):
+            raise ValueError("GitHub bypass actors must be unique")
+        return self
+
+
 class ProjectPolicy(ProtocolRecord):
     agent: AgentPolicy
     impact: ImpactPolicy = Field(default_factory=ImpactPolicy)
@@ -394,6 +545,7 @@ class ProjectPolicy(ProtocolRecord):
     plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
     plan_review: PlanReviewPolicy | None = None
     document_layout: DocumentLayoutPolicy = Field(default_factory=DocumentLayoutPolicy)
+    github: GitHubGovernancePolicy | None = None
 
     @model_validator(mode="after")
     def require_unique_execution_domains(self) -> ProjectPolicy:
@@ -986,7 +1138,18 @@ class BriefSource(StrictModel):
 
 class BriefEvidence(StrictModel):
     setting: ShortText
-    values: Annotated[dict[HumanKey, BriefValue], Field(min_length=1, max_length=5)]
+    values: Annotated[
+        dict[HumanKey, BriefValue],
+        Field(
+            min_length=1,
+            max_length=5,
+            description=(
+                "Display values keyed by declared metric. Quote measured decimal "
+                "values such as '0.20' because YAML numeric parsing does not retain "
+                "significant trailing zeros."
+            ),
+        ),
+    ]
     source_keys: Annotated[tuple[HumanKey, ...], Field(min_length=1, max_length=4)]
 
     @model_validator(mode="after")
@@ -1058,6 +1221,22 @@ class MarkdownDocumentReference(StrictModel):
     digest: Sha256Digest | None = None
 
 
+class MarkdownClaimProvenance(StrictModel):
+    key: HumanKey
+    value: ShortText
+    basis: Literal["measured", "estimated", "derived", "external"]
+    source_keys: Annotated[tuple[HumanKey, ...], Field(min_length=1, max_length=8)]
+    method: ShortText | None = None
+
+    @model_validator(mode="after")
+    def require_traceable_claim(self) -> MarkdownClaimProvenance:
+        if len(self.source_keys) != len(set(self.source_keys)):
+            raise ValueError("Markdown provenance source_keys must be unique")
+        if self.basis in {"estimated", "derived"} and self.method is None:
+            raise ValueError("estimated and derived Markdown provenance requires method")
+        return self
+
+
 class DocumentRelations(StrictModel):
     supersedes: tuple[RepositoryPath, ...] = ()
     derived_from: tuple[RepositoryPath, ...] = ()
@@ -1094,6 +1273,8 @@ class MarkdownFrontmatter(StrictModel):
     invalid_reason: ShortText | None = None
     tags: tuple[HumanKey, ...] = ()
     references: tuple[MarkdownDocumentReference, ...] = ()
+    sources: tuple[DocumentReference, ...] = ()
+    provenance: tuple[MarkdownClaimProvenance, ...] = ()
     relations: DocumentRelations = Field(default_factory=DocumentRelations)
 
     @model_validator(mode="after")
@@ -1104,6 +1285,21 @@ class MarkdownFrontmatter(StrictModel):
             )
         if len(self.tags) != len(set(self.tags)):
             raise ValueError("document frontmatter tags must be unique")
+        source_keys = tuple(source.key for source in self.sources)
+        if len(source_keys) != len(set(source_keys)):
+            raise ValueError("document frontmatter source keys must be unique")
+        provenance_keys = tuple(item.key for item in self.provenance)
+        if len(provenance_keys) != len(set(provenance_keys)):
+            raise ValueError("document frontmatter provenance keys must be unique")
+        used_source_keys = {
+            source_key
+            for item in self.provenance
+            for source_key in item.source_keys
+        }
+        if used_source_keys != set(source_keys):
+            raise ValueError(
+                "Markdown provenance must use every declared source and no unknown source"
+            )
         return self
 
 
@@ -1293,13 +1489,37 @@ class ProjectStatusSummary(DocumentEnvelope):
 
 class AnalysisBrief(ProtocolRecord):
     question: ShortText
-    conclusion: ShortText
+    answer: Annotated[
+        ShortText,
+        Field(
+            validation_alias=AliasChoices("answer", "conclusion"),
+            description=(
+                "Evidence-supported answer; at most 2 sentences, 60 English words, "
+                "or 140 CJK characters under researchctl lint. Legacy input may use "
+                "conclusion, but canonical output uses answer."
+            ),
+            json_schema_extra={
+                "x-researchctl-prose": {
+                    "max_sentences": 2,
+                    "max_english_words": 60,
+                    "max_cjk_characters": 140,
+                }
+            },
+        ),
+    ]
     protocol: ShortText
     metrics: Annotated[tuple[BriefMetric, ...], Field(min_length=1, max_length=5)]
     evidence: Annotated[tuple[BriefEvidence, ...], Field(min_length=1, max_length=8)]
     interpretation: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
     limitations: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
     sources: Annotated[tuple[BriefSource, ...], Field(min_length=1, max_length=16)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_ambiguous_answer_alias(cls, value: object) -> object:
+        if isinstance(value, dict) and "answer" in value and "conclusion" in value:
+            raise ValueError("analysis brief cannot define both answer and conclusion")
+        return value
 
     @model_validator(mode="after")
     def require_rectangular_traceable_evidence(self) -> AnalysisBrief:
@@ -1807,8 +2027,10 @@ class LinearProjectionPolicy(ProtocolRecord):
     team_id: LinearUuid
     project_id: LinearUuid | None = None
     notification_author_ids: tuple[LinearUuid, ...] = ()
-    renderer_id: Literal["linear.accepted-result.v1"] = "linear.accepted-result.v1"
-    renderer_version: Literal[1] = 1
+    renderer_id: Literal["linear.accepted-result-markdown.v2"] = (
+        "linear.accepted-result-markdown.v2"
+    )
+    renderer_version: Literal[2] = 2
 
     @model_validator(mode="after")
     def require_unique_notification_authors(self) -> LinearProjectionPolicy:
@@ -1833,8 +2055,8 @@ class LinearProjectionConfigured(StrictModel):
     team_id: LinearUuid
     project_id: LinearUuid | None = None
     issue_id: LinearUuid
-    renderer_id: Literal["linear.accepted-result.v1"]
-    renderer_version: Literal[1]
+    renderer_id: Literal["linear.accepted-result-markdown.v2"]
+    renderer_version: Literal[2]
     payload_digest: Sha256Digest
 
 
@@ -1883,8 +2105,8 @@ class CIValidationAttestation(ProtocolRecord):
     report_revision: Annotated[StrictInt, Field(ge=1)] | None = None
     report_digest: Sha256Digest | None = None
     report_preview_digest: Sha256Digest
-    report_renderer_id: Literal["research-report.v1"] = "research-report.v1"
-    report_renderer_version: Literal[1] = 1
+    report_renderer_id: Literal["research-report.v2"] = "research-report.v2"
+    report_renderer_version: Literal[2] = 2
     projection: LinearProjectionPreview
     generated_at: UtcDateTime
     artifact_digest: Sha256Digest

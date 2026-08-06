@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import re
 from dataclasses import dataclass
@@ -8,12 +7,16 @@ from typing import Literal
 
 from researchctl.domain.models import AnalysisBrief, ResearchUpdate
 from researchctl.errors import RCPError
+from researchctl.services.generated_markdown import render_generated_markdown
 
-
-ANALYSIS_BRIEF_RENDERER_ID = "research-analysis-brief.v2"
-ANALYSIS_BRIEF_RENDERER_VERSION = 2
-RESEARCH_UPDATE_RENDERER_ID = "linear.research-update.v2"
-RESEARCH_UPDATE_RENDERER_VERSION = 2
+ANALYSIS_BRIEF_RENDERER_ID = "research-analysis-brief.v4"
+ANALYSIS_BRIEF_RENDERER_VERSION = 4
+RESEARCH_UPDATE_RENDERER_ID = "linear.research-update.v3"
+RESEARCH_UPDATE_RENDERER_VERSION = 3
+ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT = 350
+ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT = 700
+RESEARCH_UPDATE_ENGLISH_WORD_LIMIT = 100
+RESEARCH_UPDATE_CJK_CHARACTER_LIMIT = 220
 
 _ENGLISH_WORD = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*")
 _CJK_CHARACTER = re.compile(
@@ -55,6 +58,8 @@ class WritingLintResult:
     kind: Literal["analysis_brief", "research_update"]
     findings: tuple[WritingFinding, ...]
     prose: ProseMeasure
+    max_english_words: int
+    max_cjk_characters: int
 
     @property
     def passed(self) -> bool:
@@ -69,6 +74,10 @@ class WritingLintResult:
             "kind": self.kind,
             "terminal_result": self.terminal_result,
             "prose": self.prose.as_dict(),
+            "prose_limits": {
+                "max_english_words": self.max_english_words,
+                "max_cjk_characters": self.max_cjk_characters,
+            },
             "findings": [finding.as_dict() for finding in self.findings],
         }
 
@@ -144,8 +153,8 @@ def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
         ),
         _add_text_findings(
             findings,
-            field_path="conclusion",
-            value=brief.conclusion,
+            field_path="answer",
+            value=brief.answer,
             max_english_words=60,
             max_cjk_characters=140,
             max_sentences=2,
@@ -166,26 +175,39 @@ def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
                     max_sentences=2,
                 )
             )
+    for row_index, row in enumerate(brief.evidence):
+        for metric_key, value in row.values.items():
+            if isinstance(value, float):
+                findings.append(
+                    WritingFinding(
+                        code="brief_float_format_ambiguous",
+                        field_path=f"evidence.{row_index}.values.{metric_key}",
+                        message=(
+                            "YAML numeric parsing cannot retain significant trailing "
+                            "zeros; quote measured decimal display values such as '0.20'."
+                        ),
+                    )
+                )
     prose = _sum_measures(measures)
-    if prose.english_words > 350:
+    if prose.english_words > ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT:
         findings.append(
             WritingFinding(
                 code="brief_english_words_exceeded",
                 field_path="$",
                 message=(
                     f"Analysis brief has {prose.english_words} English prose words; "
-                    "maximum is 350."
+                    f"maximum is {ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT}."
                 ),
             )
         )
-    if prose.cjk_characters > 700:
+    if prose.cjk_characters > ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT:
         findings.append(
             WritingFinding(
                 code="brief_cjk_characters_exceeded",
                 field_path="$",
                 message=(
                     f"Analysis brief has {prose.cjk_characters} CJK prose characters; "
-                    "maximum is 700."
+                    f"maximum is {ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT}."
                 ),
             )
         )
@@ -193,6 +215,8 @@ def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
         kind="analysis_brief",
         findings=tuple(findings),
         prose=prose,
+        max_english_words=ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT,
+        max_cjk_characters=ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT,
     )
 
 
@@ -231,25 +255,25 @@ def lint_research_update(update: ResearchUpdate) -> WritingLintResult:
             )
         )
     prose = _sum_measures(measures)
-    if prose.english_words > 100:
+    if prose.english_words > RESEARCH_UPDATE_ENGLISH_WORD_LIMIT:
         findings.append(
             WritingFinding(
                 code="update_english_words_exceeded",
                 field_path="$",
                 message=(
                     f"Research update has {prose.english_words} English prose words; "
-                    "maximum is 100."
+                    f"maximum is {RESEARCH_UPDATE_ENGLISH_WORD_LIMIT}."
                 ),
             )
         )
-    if prose.cjk_characters > 220:
+    if prose.cjk_characters > RESEARCH_UPDATE_CJK_CHARACTER_LIMIT:
         findings.append(
             WritingFinding(
                 code="update_cjk_characters_exceeded",
                 field_path="$",
                 message=(
                     f"Research update has {prose.cjk_characters} CJK prose characters; "
-                    "maximum is 220."
+                    f"maximum is {RESEARCH_UPDATE_CJK_CHARACTER_LIMIT}."
                 ),
             )
         )
@@ -257,6 +281,8 @@ def lint_research_update(update: ResearchUpdate) -> WritingLintResult:
         kind="research_update",
         findings=tuple(findings),
         prose=prose,
+        max_english_words=RESEARCH_UPDATE_ENGLISH_WORD_LIMIT,
+        max_cjk_characters=RESEARCH_UPDATE_CJK_CHARACTER_LIMIT,
     )
 
 
@@ -272,7 +298,13 @@ def _require_passing(result: WritingLintResult) -> None:
 
 
 def _text(value: object) -> str:
-    escaped = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    escaped = str(value).replace("&", "&amp;")
+    escaped = re.sub(
+        r"<(?=[A-Za-z/!?])([^>\n]*)>",
+        lambda match: f"&lt;{match.group(1)}&gt;",
+        escaped,
+    )
+    escaped = escaped.replace("<", "&lt;").replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         escaped = escaped.replace(character, f"\\{character}")
     return "<br>".join(escaped.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
@@ -307,7 +339,7 @@ def render_analysis_brief(brief: AnalysisBrief) -> bytes:
         "",
         "## Answer",
         "",
-        _text(brief.conclusion),
+        _text(brief.answer),
         "",
         "## Evidence",
         "",
@@ -331,7 +363,12 @@ def render_analysis_brief(brief: AnalysisBrief) -> bytes:
         lines.extend(f"- {_text(value)}" for value in brief.limitations)
     lines.extend(["", "## Sources", ""])
     lines.extend(f"- {_code(source.key)}: {_code(source.location)}" for source in brief.sources)
-    return ("\n".join(lines) + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=ANALYSIS_BRIEF_RENDERER_ID,
+        source=brief,
+        source_format="canonical-json-model",
+    )
 
 
 def render_research_update(update: ResearchUpdate) -> bytes:
@@ -369,4 +406,8 @@ def render_research_update(update: ResearchUpdate) -> bytes:
     if update.next_action is not None:
         lines.extend(["", f"Next: {_text(update.next_action)}"])
     lines.extend(["", _visible_marker(RESEARCH_UPDATE_RENDERER_ID)])
-    return ("\n".join(lines) + "\n").encode("utf-8")
+    return render_generated_markdown(
+        lines,
+        renderer_id=RESEARCH_UPDATE_RENDERER_ID,
+        source=update,
+    )

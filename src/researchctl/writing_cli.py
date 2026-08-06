@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -11,6 +12,10 @@ from researchctl.domain.models import AnalysisBrief, ResearchUpdate
 from researchctl.errors import RCPError
 from researchctl.output import dump_envelope, envelope, error_payload
 from researchctl.serialization import SerializationError, load_model
+from researchctl.services.generated_markdown import (
+    atomic_replace_bytes,
+    permits_generated_markdown_replacement,
+)
 from researchctl.services.research_writing import (
     WritingLintResult,
     lint_analysis_brief,
@@ -18,7 +23,6 @@ from researchctl.services.research_writing import (
     render_analysis_brief,
     render_research_update,
 )
-
 
 brief_app = typer.Typer(
     help="Lint and render concise analysis briefs.",
@@ -50,7 +54,8 @@ def _error(exc: Exception) -> RCPError:
         return RCPError(
             code="serialization_error",
             message=str(exc),
-            remediation="Use canonical YAML without duplicate keys or aliases.",
+            remediation=exc.remediation or "Fix the reported canonical YAML error.",
+            context=exc.context(),
         )
     if isinstance(exc, (OSError, ValueError)):
         return RCPError(
@@ -100,8 +105,8 @@ def _emit_lint(
         typer.echo(f"Outcome: {result.terminal_result}")
         typer.echo(
             "Prose: "
-            f"{result.prose.english_words} English words, "
-            f"{result.prose.cjk_characters} CJK characters"
+            f"{result.prose.english_words}/{result.max_english_words} English words, "
+            f"{result.prose.cjk_characters}/{result.max_cjk_characters} CJK characters"
         )
         for finding in result.findings:
             typer.echo(
@@ -113,7 +118,7 @@ def _emit_lint(
 
 
 def _write_or_echo(content: bytes, output_file: Path | None) -> None:
-    if output_file is None:
+    if output_file is None or str(output_file) in {"-", "/dev/stdout", "/proc/self/fd/1"}:
         typer.echo(content.decode("utf-8"), nl=False)
         return
     if not output_file.parent.is_dir() or output_file.parent.is_symlink():
@@ -123,17 +128,27 @@ def _write_or_echo(content: bytes, output_file: Path | None) -> None:
             context={"path": str(output_file)},
         )
     if output_file.exists() or output_file.is_symlink():
-        if (
-            output_file.is_file()
-            and not output_file.is_symlink()
-            and output_file.read_bytes() == content
-        ):
+        regular_file = output_file.is_file() and not output_file.is_symlink()
+        if regular_file and output_file.read_bytes() == content:
             typer.echo(f"Unchanged: {output_file}")
             return
+        if regular_file:
+            observed = output_file.read_bytes()
+            if permits_generated_markdown_replacement(observed, content):
+                atomic_replace_bytes(
+                    output_file,
+                    content,
+                    stat.S_IMODE(output_file.stat().st_mode),
+                )
+                typer.echo(f"Updated: {output_file}")
+                return
         raise RCPError(
             code="writing_output_conflict",
             message="Writing output path already contains different content.",
-            remediation="Choose a new path or remove the stale generated file explicitly.",
+            remediation=(
+                "Choose a new path, or restore an unedited renderer-owned output before "
+                "refreshing it."
+            ),
             context={"path": str(output_file)},
         )
     descriptor = os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)

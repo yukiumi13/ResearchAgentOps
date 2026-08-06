@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from researchctl.config import load_project_config
 from researchctl.constants import PROJECT_CONFIG_NAME, PROJECT_DIR_NAME, PROTOCOL_VERSION
 from researchctl.domain.models import (
+    DocumentLayoutPolicy,
     ImpactDecision,
     ProjectPolicy,
     ProjectRecord,
@@ -20,13 +21,19 @@ from researchctl.domain.models import (
     RunSpec,
     TaskRecord,
 )
+from researchctl.errors import RCPError
 from researchctl.repository import (
+    GitRepository,
     discover_repository,
     safe_repository_path,
     status_porcelain,
 )
 from researchctl.schema import generate_schema_files, schema_manifest_digest
 from researchctl.serialization import SerializationError, load_model, load_yaml
+from researchctl.services.project_documents import (
+    lint_document_tree,
+    require_adopted_document_policy,
+)
 
 CheckStatus = Literal["pass", "warn", "error"]
 
@@ -559,9 +566,101 @@ def _managed_record_checks(root: Path) -> tuple[DoctorCheck, ...]:
     return tuple(checks)
 
 
+def _standalone_document_report(
+    root: Path,
+    repository: GitRepository,
+) -> DoctorReport:
+    checks = [
+        DoctorCheck(
+            name="mode:standalone-documents",
+            status="pass",
+            message=(
+                "Standalone document mode is valid without researchctl init; managed "
+                "Project, Session, record, and generated-schema checks do not apply."
+            ),
+        )
+    ]
+    policy_path = safe_repository_path(root, ".researchctl-docs.yaml")
+    try:
+        if policy_path.is_symlink() or not policy_path.is_file():
+            raise ValueError("standalone policy is not a regular non-symlink file")
+        policy = load_model(policy_path, DocumentLayoutPolicy)
+        require_adopted_document_policy(policy)
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        ValidationError,
+        SerializationError,
+        RCPError,
+    ) as exc:
+        checks.append(
+            DoctorCheck(
+                name="document-policy",
+                status="error",
+                message=f"Standalone document policy is invalid: {exc}",
+                remediation="Run researchctl doc policy-lint .researchctl-docs.yaml.",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                name="document-policy",
+                status="pass",
+                message="Standalone document policy is structurally valid and adopted.",
+            )
+        )
+        tree = lint_document_tree(root, policy)
+        checks.append(
+            DoctorCheck(
+                name="document-tree",
+                status="pass" if tree.passed else "error",
+                message=(
+                    f"Document tree passed across {tree.checked_files} checked files."
+                    if tree.passed
+                    else (
+                        "Document tree has "
+                        f"{sum(item.kind == 'invalid' for item in tree.findings)} "
+                        "invalid finding(s)."
+                    )
+                ),
+                remediation=(
+                    None
+                    if tree.passed
+                    else "Run researchctl doc tree --project . --json for exact findings."
+                ),
+            )
+        )
+    dirty = status_porcelain(repository)
+    checks.append(
+        DoctorCheck(
+            name="git-worktree",
+            status="warn" if dirty else "pass",
+            message=(
+                f"Git worktree has {len(dirty)} changed or untracked path(s)."
+                if dirty
+                else "Git worktree is clean."
+            ),
+            remediation="Review changes before proposing the document change." if dirty else None,
+        )
+    )
+    return DoctorReport(repository=root, checks=tuple(checks))
+
+
 def doctor(path: Path) -> DoctorReport:
     repository = discover_repository(path)
     root = repository.root
+    standalone_policy = root / ".researchctl-docs.yaml"
+    managed_config = root / PROJECT_CONFIG_NAME
+    managed_root = root / PROJECT_DIR_NAME
+    if (
+        (standalone_policy.exists() or standalone_policy.is_symlink())
+        and not managed_config.exists()
+        and not managed_config.is_symlink()
+        and not managed_root.exists()
+        and not managed_root.is_symlink()
+    ):
+        return _standalone_document_report(root, repository)
     checks: list[DoctorCheck] = []
     schema_files = generate_schema_files()
     expected_manifest_digest = schema_manifest_digest(schema_files)

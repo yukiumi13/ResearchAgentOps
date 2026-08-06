@@ -41,9 +41,20 @@ ADRs. This plan controls sequencing, not semantics.
   ordinary source PR is `not_applicable` only to exact-head protocol validation
   while the source workflow tests its exact head. The dispatcher also validates
   that `plan.configure-review` changes only the ProjectPolicy `plan_review`
-  field. Branch rules, reviewer-policy
-  verification, GitHub credential installation, and a live PR pilot remain
-  deployment work.
+  field. A bounded read-only GitHub governance audit now normalizes classic
+  protection and active applicable rulesets and fails when the intended merge
+  gates are absent. `ProjectPolicy.github` now strictly binds repository,
+  default branch, Agent App/installation/login, human Managers, fixed checks,
+  required gates, and explicit bypasses. Submission, Impact, and ImpactDecision
+  deliveries fail before push without that policy and reject PR receipts whose
+  author is not the configured App bot. A protected field-specific proposal path
+  changes only `ProjectPolicy.github`. The separate rule command defaults to a
+  digest-bearing preview; explicit apply requires matching policy/observation
+  digests and an authenticated configured human Manager, writes only bounded
+  classic protection, and audits by read-back. No live rule was applied during
+  implementation. Pre-create App token proof, approving-reviewer verification,
+  GitHub App credential installation, the constrained proposal broker, and a
+  live protected PR pilot remain deployment work under ADR 0015.
 - Phase 8's durable repository core is implemented and fake-port tested:
   credential-free preview, accepted-result and Session-reply delivery, Session
   inbox/outbox, fixed ingress grammar, verified receipts, claim/lease/retry/dead

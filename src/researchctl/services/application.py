@@ -16,6 +16,7 @@ from researchctl.domain.models import (
     CIValidationAttestation,
     DocumentLayoutPolicy,
     ExperimentPlan,
+    GitHubGovernancePolicy,
     LinearProjectionPolicy,
     ProjectPolicy,
     PlanReview,
@@ -38,6 +39,9 @@ from researchctl.services.actor import ActorContext, ActorRole
 from researchctl.services.control_document_layout_policy import (
     DocumentLayoutPolicyWriteResult,
 )
+from researchctl.services.control_github_governance_policy import (
+    GitHubGovernancePolicyWriteResult,
+)
 from researchctl.services.control_linear_policy import LinearPolicyWriteResult
 from researchctl.services.control_plan_review_policy import PlanReviewPolicyWriteResult
 from researchctl.services.linear_delivery_read import (
@@ -49,6 +53,7 @@ from researchctl.services.requests import (
     BootstrapAcceptRequest,
     BootstrapProposalRequest,
     DocumentLayoutConfigureRequest,
+    GitHubGovernanceConfigureRequest,
     InboxAckRequest,
     InboxListRequest,
     InboxResolveRequest,
@@ -377,6 +382,13 @@ class DocumentLayoutPolicyControl(Protocol):
     ) -> DocumentLayoutPolicyWriteResult: ...
 
 
+class GitHubGovernancePolicyControl(Protocol):
+    def configure(
+        self,
+        policy: GitHubGovernancePolicy,
+    ) -> GitHubGovernancePolicyWriteResult: ...
+
+
 class PostMergeAutomationResult(Protocol):
     state: str
 
@@ -431,6 +443,7 @@ class ApplicationService:
         linear_policy_control: LinearPolicyControl | None = None,
         plan_review_policy_control: PlanReviewPolicyControl | None = None,
         document_layout_policy_control: DocumentLayoutPolicyControl | None = None,
+        github_governance_policy_control: GitHubGovernancePolicyControl | None = None,
         linear_worker: LinearAutomation | None = None,
         post_merge: PostMergeAutomation | None = None,
         clock: Callable[[], datetime] = utc_now,
@@ -452,6 +465,7 @@ class ApplicationService:
         self.linear_policy_control = linear_policy_control
         self.plan_review_policy_control = plan_review_policy_control
         self.document_layout_policy_control = document_layout_policy_control
+        self.github_governance_policy_control = github_governance_policy_control
         self._linear_worker = linear_worker
         self._post_merge = post_merge
         self._clock = clock
@@ -1113,6 +1127,80 @@ class ApplicationService:
         )
         data = {
             "document_layout": written.document_layout.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+            "previous_policy_digest": written.previous_policy_digest,
+            "policy_digest": written.policy_digest,
+            "path": relative_path,
+            "changed": written.proposal.effect_applied,
+            "proposal": proposal,
+        }
+        return self._finish(
+            operation,
+            (
+                "proposal_prepared"
+                if written.proposal.effect_applied
+                else "no_change"
+            ),
+            data,
+        )
+
+    @_journaled_mutation("github.configure-governance")
+    def github_governance_configure(
+        self,
+        request: GitHubGovernanceConfigureRequest,
+        actor: ActorContext,
+    ) -> ServiceResult:
+        command = "github.configure-governance"
+        operation = self._claim(command, request, actor)
+        if operation.state == "terminal":
+            return self._replay(operation)
+        self._authorize(operation, actor, ActorRole.MANAGER)
+        if self.github_governance_policy_control is None:
+            raise RCPError(
+                code="github_governance_policy_control_not_configured",
+                message="GitHub governance proposal preparation is not configured.",
+            )
+        written = self.github_governance_policy_control.configure(
+            request.governance
+        )
+        proposal = written.proposal.as_dict()
+        try:
+            relative_path = written.path.relative_to(
+                written.proposal.worktree
+            ).as_posix()
+        except ValueError as error:
+            raise RCPError(
+                code="github_governance_policy_control_receipt_mismatch",
+                message="GitHub governance receipt path is outside its worktree.",
+            ) from error
+        expected_branch = f"research/control/{request.operation_id}"
+        if (
+            written.governance != request.governance
+            or written.project_policy.github != request.governance
+            or written.base_commit != request.expected_default_head
+            or written.policy_digest != canonical_digest(written.project_policy)
+            or written.proposal.branch != expected_branch
+            or relative_path != PROJECT_POLICY_PATH
+        ):
+            raise RCPError(
+                code="github_governance_policy_control_receipt_mismatch",
+                message="GitHub governance receipt does not bind the configure request.",
+            )
+        self.runtime.append_operation_event(
+            operation.operation_id,
+            "github_governance_policy_observed",
+            self._clock(),
+            {
+                "base_commit": written.base_commit,
+                "previous_policy_digest": written.previous_policy_digest,
+                "policy_digest": written.policy_digest,
+                "proposal_commit": written.proposal.commit,
+            },
+        )
+        data = {
+            "github_governance": written.governance.model_dump(
                 mode="json",
                 exclude_none=True,
             ),
