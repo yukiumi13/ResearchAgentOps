@@ -19,6 +19,8 @@ _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _CONTROL_COMMANDS = frozenset({"task.create", "task.update", "task.cancel"})
 _LINEAR_COMMAND = "linear.configure"
 _PLAN_REVIEW_COMMAND = "plan.configure-review"
+_DOCUMENT_LAYOUT_COMMAND = "doc.configure-layout"
+_GITHUB_GOVERNANCE_COMMAND = "github.configure-governance"
 _POLICY_CONTROLS = {
     _LINEAR_COMMAND: (
         LINEAR_PROJECTION_POLICY_PATH,
@@ -29,6 +31,16 @@ _POLICY_CONTROLS = {
         PROJECT_POLICY_PATH,
         "Plan review policy",
         "control_plan_review",
+    ),
+    _DOCUMENT_LAYOUT_COMMAND: (
+        PROJECT_POLICY_PATH,
+        "Document layout policy",
+        "control_document_layout",
+    ),
+    _GITHUB_GOVERNANCE_COMMAND: (
+        PROJECT_POLICY_PATH,
+        "GitHub governance policy",
+        "control_github_governance",
     ),
 }
 _TASK_PATH = re.compile(

@@ -30,6 +30,7 @@ from researchctl.services.linear_delivery import (
 
 _ACCEPTED_TOPIC = "linear.accepted-result.v1"
 _REPLY_TOPIC = "linear.session-reply.v1"
+LINEAR_SESSION_REPLY_RENDERER_ID = "linear.session-reply-markdown.v2"
 LinearDeliveryState = Literal["delivered", "retryable", "dead_letter"]
 LinearWorkerState = Literal["idle", "delivered", "retryable", "dead_letter"]
 _LINEAR_UUID = re.compile(
@@ -115,7 +116,7 @@ class LinearWorkerResult:
 
 
 def _escaped(value: object) -> str:
-    text = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    text = html.escape(str(value), quote=False).replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         text = text.replace(character, f"\\{character}")
     return "<br>\n".join(text.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
@@ -211,7 +212,7 @@ def build_linear_session_reply_event(
     reply_id = str(values["reply_id"])
     report_id = str(report) if report is not None else None
     renderer_payload = (
-        "<!-- researchctl-renderer:linear.session-reply.v1 -->\n"
+        f"<!-- researchctl-renderer:{LINEAR_SESSION_REPLY_RENDERER_ID} -->\n"
         f"{_escaped(values['body'])}\n\n"
         f"- Agent: `{agent_id}`\n"
         f"- Session: `{session_id}`\n"

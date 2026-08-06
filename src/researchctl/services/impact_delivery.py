@@ -42,6 +42,7 @@ class ImpactPullRequestReceipt:
     base_branch: str
     head_branch: str
     head_commit: str
+    author_login: str
     created: bool
 
     def as_dict(self) -> dict[str, object]:
@@ -54,6 +55,7 @@ class ImpactPullRequestReceipt:
             "base_branch": self.base_branch,
             "head_branch": self.head_branch,
             "head_commit": self.head_commit,
+            "author_login": self.author_login,
             "created": self.created,
         }
 

@@ -65,6 +65,12 @@ class GitHubImpactDelivery(GitHubSubmissionDelivery):
         ):
             self._invalid_request()
         identity = self._identity()
+        governance = self._require_governance(identity)
+        if base_branch != governance.default_branch:
+            raise RCPError(
+                code="impact_github_policy_mismatch",
+                message="Impact base branch differs from accepted GitHub policy.",
+            )
         observed = self._observe_pull_request(
             identity=identity,
             branch=branch,  # type: ignore[arg-type]
@@ -131,6 +137,7 @@ class GitHubImpactDelivery(GitHubSubmissionDelivery):
             base_branch=observed.base_branch,
             head_branch=observed.head_branch,
             head_commit=observed.head_commit,
+            author_login=observed.author_login,
             created=observed.created,
         )
 

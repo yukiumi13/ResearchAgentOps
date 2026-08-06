@@ -30,8 +30,8 @@ from researchctl.services.dependency_impact import (
 
 
 IMPACT_ANALYZER_ID = "researchctl.report-impact.v3"
-IMPACT_RENDERER_ID = "research-impact-report.v2"
-IMPACT_RENDERER_VERSION = 2
+IMPACT_RENDERER_ID = "research-impact-report.v3"
+IMPACT_RENDERER_VERSION = 3
 _UTC_DATETIME_ADAPTER = TypeAdapter(UtcDateTime)
 
 
@@ -596,7 +596,7 @@ class ReportImpactBatchBuilder:
 
 
 def _text(value: object) -> str:
-    escaped = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    escaped = html.escape(str(value), quote=False).replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         escaped = escaped.replace(character, f"\\{character}")
     return escaped.replace("\r\n", "\n").replace("\r", "\n").replace(

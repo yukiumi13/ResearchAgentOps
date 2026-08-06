@@ -311,6 +311,104 @@ def test_execution_domain_policy_rejects_ambiguous_or_empty_mappings(
         ProjectPolicy.model_validate(_project_policy_payload(execution_domains))
 
 
+def _github_governance_payload() -> dict[str, Any]:
+    return {
+        "repository": "yukiumi13/ResearchAgentOps",
+        "default_branch": "main",
+        "agent_app": {
+            "app_id": 12345,
+            "installation_id": 67890,
+            "login": "researchctl-agent[bot]",
+        },
+        "managers": [{"kind": "user", "login": "yukiumi13"}],
+        "required_status_checks": [
+            "researchctl/exact-head",
+            "researchctl/source-tests",
+        ],
+        "required_approvals": 1,
+        "require_code_owner_review": True,
+        "dismiss_stale_reviews": True,
+        "require_last_push_approval": True,
+        "strict_status_checks": True,
+        "block_force_pushes": True,
+        "block_deletions": True,
+        "bypass_actors": [],
+    }
+
+
+def test_project_policy_binds_distinct_github_agent_and_manager_principals() -> None:
+    payload = _project_policy_payload([])
+    payload["github"] = _github_governance_payload()
+
+    policy = ProjectPolicy.model_validate(payload)
+
+    assert policy.github is not None
+    assert policy.github.agent_app.login == "researchctl-agent[bot]"
+    assert policy.github.managers[0].kind == "user"
+    assert policy.github.required_status_checks == (
+        "researchctl/exact-head",
+        "researchctl/source-tests",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("require_code_owner_review", False),
+        ("dismiss_stale_reviews", False),
+        ("require_last_push_approval", False),
+        ("strict_status_checks", False),
+        ("block_force_pushes", False),
+        ("block_deletions", False),
+        ("required_approvals", 0),
+        ("required_status_checks", ["researchctl/source-tests"]),
+    ],
+)
+def test_github_governance_policy_cannot_weaken_fixed_merge_gates(
+    field: str,
+    value: object,
+) -> None:
+    github = _github_governance_payload()
+    github[field] = value
+    payload = _project_policy_payload([])
+    payload["github"] = github
+
+    with pytest.raises(ValidationError):
+        ProjectPolicy.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("default_branch", "../main"),
+        ("managers", []),
+        ("managers", [{"kind": "user", "login": "another[bot]"}]),
+        (
+            "managers",
+            [
+                {
+                    "kind": "team",
+                    "organization": "another[bot]",
+                    "slug": "research-managers",
+                }
+            ],
+        ),
+        ("agent_app", {"app_id": 1, "installation_id": 2, "login": "human"}),
+    ],
+)
+def test_github_governance_policy_rejects_invalid_identity_or_branch(
+    field: str,
+    value: object,
+) -> None:
+    github = _github_governance_payload()
+    github[field] = value
+    payload = _project_policy_payload([])
+    payload["github"] = github
+
+    with pytest.raises(ValidationError):
+        ProjectPolicy.model_validate(payload)
+
+
 def test_task_records_domain_scope_deliverables_and_parent_metadata(
     task_payload: PayloadFactory,
 ) -> None:

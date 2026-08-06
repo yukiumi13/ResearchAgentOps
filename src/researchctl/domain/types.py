@@ -52,6 +52,31 @@ def _validate_repo_path(value: str) -> str:
     return normalized
 
 
+def _validate_git_branch(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Git branch must be a string")
+    branch = value.strip()
+    forbidden = frozenset(" ~^:?*[\\")
+    if (
+        not branch
+        or len(branch.encode("utf-8")) > 255
+        or branch in {"@", "."}
+        or branch.startswith(("/", "."))
+        or branch.endswith(("/", "."))
+        or "//" in branch
+        or ".." in branch
+        or "@{" in branch
+        or any(ord(character) < 32 or ord(character) == 127 for character in branch)
+        or any(character in forbidden for character in branch)
+        or any(
+            component.startswith(".") or component.endswith(".lock")
+            for component in branch.split("/")
+        )
+    ):
+        raise ValueError("Git branch is not a canonical branch name")
+    return branch
+
+
 def _record_id_pattern(kind: str) -> str:
     return rf"^{kind}_\d{{8}}T\d{{6}}Z_[0-9a-f]{{24}}$"
 
@@ -63,6 +88,7 @@ UtcDateTime = Annotated[
     PlainSerializer(_serialize_utc, return_type=str),
 ]
 RepositoryPath = Annotated[str, BeforeValidator(_validate_repo_path)]
+GitBranchName = Annotated[str, BeforeValidator(_validate_git_branch)]
 NonEmptyStr = Annotated[
     str,
     StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=4096),
@@ -86,6 +112,10 @@ TaskId = Annotated[
 SessionId = Annotated[
     str,
     StringConstraints(strict=True, pattern=_record_id_pattern("session")),
+]
+DocumentId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=_record_id_pattern("document")),
 ]
 OperationId = Annotated[
     str,
@@ -154,6 +184,52 @@ NotificationReplyId = Annotated[
 HumanKey = Annotated[
     str,
     StringConstraints(strict=True, pattern=r"^[A-Za-z][A-Za-z0-9._-]{0,63}$"),
+]
+GitHubRepository = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=(
+            r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?/"
+            r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9_.-])?$"
+        ),
+        max_length=201,
+    ),
+]
+GitHubAccountLogin = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?(?:\[bot\])?$",
+        max_length=105,
+    ),
+]
+GitHubTeamSlug = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$",
+        max_length=100,
+    ),
+]
+DocumentSlug = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+        max_length=80,
+    ),
+]
+DocumentLabel = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        pattern=(
+            r"^[a-z][a-z0-9-]*(?:/[a-z][a-z0-9-]*)*"
+            r":[a-z][a-z0-9-]*$"
+        ),
+        max_length=128,
+    ),
 ]
 Sha256Digest = Annotated[
     str,

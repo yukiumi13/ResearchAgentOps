@@ -41,6 +41,10 @@ from researchctl.services.linear_notification_ingress import (
     AuthenticatedLinearNotificationEvent,
     LinearNotificationIngressFacade,
 )
+from researchctl.services.linear_preview import (
+    LINEAR_RENDERER_ID,
+    LINEAR_RENDERER_VERSION,
+)
 from researchctl.services.linear_worker import (
     LinearReplyTarget,
     LinearReplyTargetObservation,
@@ -304,7 +308,7 @@ class FakeLinearWorkerPort:
 
 def _accepted_event() -> LinearAcceptedResultEvent:
     renderer_payload = (
-        "<!-- researchctl-renderer:linear.accepted-result.v1 -->\n"
+        f"<!-- researchctl-renderer:{LINEAR_RENDERER_ID} -->\n"
         "Accepted result.\n\n"
         f"- Agent: `agent-{SESSION_ID}`\n"
         f"- Session: `{SESSION_ID}`\n"
@@ -357,12 +361,12 @@ def _accepted_event() -> LinearAcceptedResultEvent:
             team_id=TEAM_ID,
             project_id=LINEAR_PROJECT_ID,
             issue_id=ISSUE_ID,
-            renderer_id="linear.accepted-result.v1",
-            renderer_version=1,
+            renderer_id=LINEAR_RENDERER_ID,
+            renderer_version=LINEAR_RENDERER_VERSION,
             payload_digest=payload_digest,
         ),
-        renderer_id="linear.accepted-result.v1",
-        renderer_version=1,
+        renderer_id=LINEAR_RENDERER_ID,
+        renderer_version=LINEAR_RENDERER_VERSION,
         payload_digest=payload_digest,
         renderer_payload=renderer_payload,
         marker=marker,

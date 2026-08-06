@@ -1,0 +1,135 @@
+generated_index: null
+classification_depth:
+  minimum: 2
+  maximum: 4
+agent_guides:
+  - path: CLAUDE.md
+    format: claude
+legacy_files:
+  - classification: reference/project:document
+    migration_target: docs/reference/codeowners-contract.md
+    path: docs/CODEOWNERS_CONTRACT.md
+    reason: Pre-contract governance document.
+  - classification: status/project:snapshot
+    migration_target: docs/status/design-assessment.yaml
+    path: docs/DESIGN_ASSESSMENT.md
+    reason: Pre-contract status document awaiting structured source.
+  - classification: reference/project:document
+    migration_target: docs/reference/historical-prompt-manifest.json
+    path: docs/HISTORICAL_PROMPT_MANIFEST.json
+    reason: Pre-contract provenance manifest.
+  - classification: reference/project:document
+    migration_target: docs/reference/implementation-plan.md
+    path: docs/IMPLEMENTATION_PLAN.md
+    reason: Pre-contract planning document.
+  - classification: reference/project:document
+    migration_target: docs/reference/mutation-contracts.md
+    path: docs/MUTATION_CONTRACTS.md
+    reason: Pre-contract governance document.
+  - classification: reference/project:document
+    migration_target: docs/reference/requirement-ledger.md
+    path: docs/REQUIREMENT_LEDGER.md
+    reason: Pre-contract requirement ledger.
+  - classification: design/architecture:proposal
+    migration_target: docs/design/research-control-plane.yaml
+    path: docs/RESEARCH_CONTROL_PLANE_SPEC.md
+    reason: Pre-contract design specification awaiting structured source.
+  - classification: reference/project:document
+    migration_target: docs/reference/traceability-matrix.md
+    path: docs/TRACEABILITY_MATRIX.md
+    reason: Pre-contract traceability document.
+  - classification: reference/project:document
+    migration_target: docs/reference/user-scenarios.md
+    path: docs/USER_SCENARIOS.md
+    reason: Pre-contract scenario catalog.
+  - classification: status/project:snapshot
+    migration_target: docs/status/workflow-coverage.yaml
+    path: docs/WORKFLOW_COVERAGE.md
+    reason: Pre-contract status document awaiting structured source.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0001-authority-boundaries.md
+    path: docs/adr/0001-authority-boundaries.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0002-run-record-lifecycle.md
+    path: docs/adr/0002-run-record-lifecycle.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0003-atomic-human-acceptance.md
+    path: docs/adr/0003-atomic-human-acceptance.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0004-task-session-ownership.md
+    path: docs/adr/0004-task-session-ownership.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0005-report-scope-and-impact.md
+    path: docs/adr/0005-report-scope-and-impact.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0006-resource-allocation-safety.md
+    path: docs/adr/0006-resource-allocation-safety.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0007-agent-threat-model.md
+    path: docs/adr/0007-agent-threat-model.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0008-canonical-data-and-upgrades.md
+    path: docs/adr/0008-canonical-data-and-upgrades.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0009-operation-journal-and-reconcile.md
+    path: docs/adr/0009-operation-journal-and-reconcile.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0010-ci-attestation-and-linear-delivery.md
+    path: docs/adr/0010-ci-attestation-and-linear-delivery.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0011-execution-domains-and-write-scope.md
+    path: docs/adr/0011-execution-domains-and-write-scope.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0012-session-addressing-and-linear-ingress.md
+    path: docs/adr/0012-session-addressing-and-linear-ingress.md
+    reason: Pre-frontmatter ADR.
+  - classification: decision/architecture:adr
+    migration_target: docs/adr/0013-dependency-impact-providers.md
+    path: docs/adr/0013-dependency-impact-providers.md
+    reason: Pre-frontmatter ADR.
+machine_artifact_roots: []
+max_depth: 4
+root: docs
+root_files: []
+routes:
+  - classification: decision/architecture:adr
+    contract: markdown-frontmatter
+    directory: docs/adr
+    document_type: adr
+    rationale: Existing ADR files record the project's accepted architectural decisions.
+    required_relations: []
+  - classification: design/architecture:proposal
+    contract: design-document
+    directory: docs/design
+    document_type: design
+    rationale: Existing design specifications need structured options and validation evidence.
+    required_relations: []
+  - classification: operations/project:runbook
+    contract: markdown-frontmatter
+    directory: docs/runbooks
+    document_type: runbook
+    rationale: Operational procedures require a dedicated command-oriented location.
+    required_relations: []
+  - classification: reference/project:document
+    contract: markdown-frontmatter
+    directory: docs/reference
+    document_type: reference
+    rationale: Existing governance and requirement documents are long-lived references.
+    required_relations: []
+  - classification: status/project:snapshot
+    contract: project-status-summary
+    directory: docs/status
+    document_type: status
+    rationale: Existing workflow coverage and assessment documents represent current state.
+    required_relations: []

@@ -87,13 +87,50 @@ For an ordinary source-only PR, exact-head returns `not_applicable`. That means
 no governed RCP protocol path changed. It is not a source test, and cannot
 replace `researchctl/source-tests`.
 
+Repository administrators can inspect whether those checks are actually merge
+gates with a bounded read-only audit:
+
+```bash
+researchctl github doctor \
+  --repository OWNER/REPOSITORY \
+  --json
+```
+
+For a managed repository with accepted `ProjectPolicy.github`, use
+`researchctl github doctor --project . --json`; the command derives the bound
+repository/default branch and compares the observed gates with that policy.
+
+The command reads classic branch protection and active applicable branch
+rulesets, checks the review, latest-head, status-check, force-push, and deletion
+requirements, and exits `2` when a required gate is missing. It does not modify
+GitHub or install an App. Project mode binds the audit to the accepted Agent App
+and Manager policy, but proposal delivery still proves authorship only from the
+created PR receipt; pre-create credential proof and accepting-reviewer proof
+remain deployment work.
+
+The rule installer is intentionally a different command. Its default invocation
+is a read-only preview that emits the accepted-policy and current-observation
+digests:
+
+```bash
+researchctl github apply-governance --project . --json
+```
+
+Only a human Manager may rerun it with `--apply` and both reviewed digests. The
+command verifies the live `gh` user, rejects Session/App authority and ambiguous
+ruleset/bypass configurations, applies the bounded classic protection payload,
+and audits by read-back. No real GitHub rule was applied during repository
+implementation.
+
 The protected-base dispatcher currently recognizes Submission, generated Task
 control, manager-owned Plan reviewer policy control, Report Impact, explicit
 ImpactDecision, bootstrap proposal/acceptance, and manager-owned Linear policy
 control changes. Unknown or mixed protocol mutations fail closed. Review the installed
 single-maintainer CODEOWNERS baseline, require both checks, dismiss stale
 approvals, and restrict protected-branch updates before treating merge as an
-acceptance boundary.
+acceptance boundary. Required checks gate merge but do not trigger Actions. For
+required review, use a distinct Agent GitHub App/bot as PR author and the human
+manager as CODEOWNER; GitHub will not count the author's own approval.
 
 ## Plans Before Runs
 
@@ -137,6 +174,207 @@ drift, missing local review receipt, Plan/Task/policy digest drift, or a
 non-passing opinion blocks compilation or execution. Plan-backed Submissions
 carry separate `plan.yaml` and `plan-review.yaml` evidence, and protected CI
 reruns deterministic validation from the protected Task and Project policy.
+
+## Concise Research Writing
+
+`AnalysisBrief` and `ResearchUpdate` are presentation contracts, not accepted
+research authority. They keep Agent-authored analysis and operational updates
+short before those texts enter a review document or Linear comment.
+
+An `AnalysisBrief` contains one question, one `answer`, one protocol, up to
+five metrics, up to eight `setting` rows, at most three interpretation points,
+at most three material limitations, and explicit source references. Every
+setting supplies the same metrics and references declared sources. Legacy YAML
+may still use `conclusion`, but canonical schema and serialization use `answer`;
+defining both is invalid. The generated JSON Schema exposes the answer's
+2-sentence, 60-English-word, and 140-CJK-character lint limits. Display-sensitive
+decimals such as `0.20` must be quoted because YAML numeric parsing cannot retain
+trailing-zero precision.
+
+```bash
+researchctl brief lint analysis-brief.yaml
+researchctl brief render analysis-brief.yaml --output-file analysis-brief.md
+```
+
+The Markdown renderer fixes the order to Answer, Evidence, Interpretation,
+Limits, and Sources. Lint output reports both observed and maximum prose budgets,
+for example `230/350 English words, 0/700 CJK characters`. The two language
+measures are independent limits, not a shared converted budget. Generated output
+carries renderer, source, and body digests. The source marker explicitly hashes
+canonical validated model JSON, not the raw YAML file bytes. Re-rendering may
+refresh an unedited renderer-owned file, while a body-digest mismatch still
+rejects a manual edit.
+
+`ResearchUpdate` represents exactly one operational delta: started, completed,
+failed, or conclusion changed. It allows no more than two evidence values and
+renders a compact heading/bullet update with a visible renderer marker:
+
+```bash
+researchctl update lint research-update.yaml
+researchctl update render research-update.yaml
+```
+
+The update renderer produces a deterministic Linear-sized preview. Delivery
+policy, issue binding, credentials, and accepted Report projection remain
+separate concerns; passing writing lint does not authorize publication or make
+the update canonical research truth.
+
+## Portable Project Documents
+
+Document contracts can be adopted without `researchctl init`. Put a strict
+`DocumentLayoutPolicy` in `.researchctl-docs.yaml`, protect that file with
+CODEOWNERS, and run the same static checks locally or in any CI:
+
+```bash
+researchctl doc policy-template --agent-format claude \
+  --output-file .researchctl-docs.yaml
+# Inspect the repository, customize routes, and replace every TEMPLATE: rationale.
+researchctl doc policy-lint .researchctl-docs.yaml
+mkdir -p docs
+researchctl doc agent-guide --project . --output-file CLAUDE.md
+researchctl doc index --project . --output-file docs/INDEX.md
+researchctl doc tree --project .
+researchctl doc tree --project . --json
+```
+
+`policy-template` is an explicit, schema-valid starting proposal, not an accepted
+universal taxonomy. Every route contains a structured `rationale` placeholder.
+`policy-lint` rejects those template values until the author cites the existing
+project artifacts that justify each retained or replacement route. The default
+generated index is `docs/INDEX.md`, leaving a human-authored `docs/README.md`
+alone. Put the customized policy through manager/CODEOWNER review. `policy-lint`
+needs neither a Git repository nor `researchctl init`.
+
+After adoption, Agents can discover and use every writing contract without
+reading the installed Python package:
+
+```bash
+researchctl doc contracts
+researchctl doc schema --contract markdown-frontmatter
+researchctl doc scaffold --type runbook --title "Operate the evaluation worker" \
+  --output-file docs/runbooks/evaluation-worker.md
+researchctl doc check docs/runbooks/evaluation-worker.md --json
+
+# analysis-brief, design-document, and project-status-summary routes use YAML.
+researchctl doc check docs/brief/memory.yaml --json
+researchctl doc render docs/brief/memory.yaml --output-file docs/brief/memory.md
+researchctl doc tree --project . --json
+```
+
+`doc contracts` reports each contract's canonical source format, required
+top-level fields, schema command, and render command. `doc scaffold` selects a
+project route by `document_type`; `doc check` dispatches by the path's route, so
+an Agent does not need to memorize the legacy `brief lint` versus `doc tree`
+command split. For a standalone AnalysisBrief without document policy, use
+`brief lint` and `brief render`; those commands validate the model but do not
+validate repository routing or tracked same-stem source/render placement.
+
+RCP's renderer is deliberately a thin optional projection from a validated
+typed model to stable Markdown source. It owns deterministic section order,
+tables, provenance markers, and source/body consistency. It is not a general
+Markdown parser, HTML renderer, theme system, or documentation-site framework;
+projects may use mature Markdown tooling for those downstream jobs while RCP
+remains the schema/lint authority.
+
+An existing project may preserve its own frontmatter around a generated body by
+configuring a structured route:
+
+```yaml
+generated_markdown_frontmatter:
+  required_fields: [type, name, last_update, status, sources, summary]
+```
+
+Create the target `.md` with that project-owned frontmatter before the first
+`doc render`. RCP checks those keys and preserves the envelope, but the project's
+own linter owns their value semantics. RCP owns only the generated body and its
+digest. This option does not apply to manual `markdown-frontmatter` routes.
+
+The policy-adoption PR should attach the exact `doc policy-lint` result and the
+`doc tree --json` envelope. Review automation should consume that JSON rather
+than a manually paraphrased pass/fail statement.
+
+Standalone Agents also need a repository-local discovery surface. Declare one
+or more generated guide targets in the same policy:
+
+```yaml
+agent_guides:
+  - path: CLAUDE.md
+    format: claude
+  # - path: AGENTS.md
+  #   format: agents
+```
+
+The `agent-guide` step inserts or refreshes the deterministic managed block
+without overwriting other project instructions:
+
+The guide tells the Agent to read the effective policy, select an accepted
+route, use canonical YAML/render pairs where required, fail instead of guessing
+when the tool or policy is absent, and run `doc tree`. It includes the current
+route table and a visible renderer marker. `doc tree` fails when a configured
+guide is missing, malformed, or stale, so CI checks the instructions and the
+documents together. Output writes are limited to targets explicitly declared in
+the protected policy. The `agents` format provides the same contract for an
+`AGENTS.md` target.
+
+`researchctl doctor` recognizes a standalone policy when neither `.research`
+nor `.researchctl.toml` exists. In that valid mode it runs policy/tree checks and
+marks managed Project, Session, record, and generated-schema checks as not
+applicable instead of emitting missing-schema errors.
+
+The policy is required in standalone mode. If neither it nor a managed Project
+policy exists, commands fail with `document_policy_missing`; `researchctl` does
+not silently choose a repository hierarchy. A one-off caller may instead pass
+an explicit `--policy-file`.
+
+The command does not open `.research`, SQLite, a Session, or manager state. It
+checks canonical `a/b:c` classification routes, frontmatter schemas, type/path
+agreement, required relations, directory depth, links, structured YAML/Markdown
+pairs, renderer bytes, optional generated index freshness, and finite legacy
+exceptions. An optional baseline checkout also enforces byte immutability for
+documents already marked `validity: frozen`:
+
+```bash
+researchctl doc tree --project . --baseline-project /path/to/base-checkout
+```
+
+The baseline checkout is inspected through a migration-compatible reader. RCP
+validates only its document-root path, then scans raw Markdown frontmatter below
+that root for `validity: frozen`; it does not require an old policy to satisfy
+the newest route schema. A policy-schema upgrade can therefore fix its own base
+without disabling byte protection. Unsafe policy paths, malformed baseline YAML
+or frontmatter, and changed or deleted frozen files still fail closed.
+
+Manual provenance `value` fields are exact display strings and must be quoted
+when they look numeric (`value: "91.20"`). Each must appear verbatim in the body.
+Both `sources[].location` and `relations.*` paths are repository-root relative.
+Human CLI errors include invalid field paths and available YAML line/column
+locations by default; `--json` exposes the same details for automation.
+
+The lexical label grammar is mandatory. Project policy separately bounds the
+number of namespace segments before `:` through `classification_depth`, whose
+defaults are `minimum: 2` and `maximum: 4`. Filesystem nesting below a mapped
+route uses the independent `max_depth` field (`1..8`, default `4`). A project
+may explicitly tighten or widen these bounded values; every route must comply.
+
+Projects can keep stable machine inputs under paths such as `data/` by declaring
+`machine_artifact_roots` with explicit extension allowlists. Those roots can
+never allow Markdown, so prose moves to `docs/` without forcing scripts to change
+their data paths. `researchctl doc index` deterministically renders the configured
+type/classification/contract/directory table.
+
+After initialization, the identical policy lives under
+`.research/policies/default.yaml.document_layout`. Changing a label, directory,
+contract, index, artifact root, or route mapping then uses manager-only
+`researchctl doc configure-layout`; protected-base CI verifies that no other
+Project policy field changed. Ordinary tags never affect routing or authority.
+
+Generated schemas include `document-layout-policy`, `markdown-frontmatter`,
+`design-document`, `project-status-summary`, and `analysis-brief`. Editor and
+Agent integrations should consume `doc schema`, `doc check --json`, or
+`doc tree --json` rather than implementing a second validator. A reusable Skill may teach the generic command
+workflow, and an MCP adapter may expose it remotely, but project taxonomy remains
+in the repository policy and enforcement remains in the CLI/CI core. The exact
+decision is recorded in ADR 0014.
 
 ## Session Addressing
 
@@ -233,6 +471,9 @@ Implemented and tested locally:
   no-fallback lint, explicit manager-owned reviewer policy control, independent
   ephemeral review, deterministic RunSpec compilation, Run gating, separate
   Submission evidence, and protected-CI replay;
+- portable standalone/managed project-document schemas, classification routes,
+  frontmatter/tree lint, deterministic render/index checks, frozen-baseline
+  enforcement, machine-artifact boundaries, and manager-owned layout control;
 - Submission, Decision, deterministic Report rendering, manager acceptance,
   constrained Agent-authored GitHub PR delivery, protected-base dispatch,
   exact-head validation, and source tests;
@@ -248,9 +489,9 @@ Implemented and tested locally:
 
 Still gated deployment or later-phase work:
 
-- branch rules and reviewer-policy verification for the installed CODEOWNERS
-  baseline, GitHub Submission/post-merge credential installation, a live PR
-  pilot, and trusted scheduling;
+- executing and canarying the reviewed branch-rule preview for the installed
+  CODEOWNERS baseline, GitHub App proposal/post-merge credential installation,
+  a live App-authored PR pilot, and trusted scheduling;
 - live Codex/Claude Plan-review invocation and credential/configuration canary
   against the explicitly selected deployment models;
 - real Linear transport under the deployment credential and a measured shadow

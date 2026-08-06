@@ -8,9 +8,16 @@ from pydantic import ValidationError
 
 from researchctl.ci_cli import ci_app
 from researchctl.constants import __version__
+from researchctl.document_cli import doc_app
 from researchctl.errors import RCPError
+from researchctl.github_cli import github_app
 from researchctl.notification_cli import notification_app
-from researchctl.output import dump_envelope, envelope, error_payload
+from researchctl.output import (
+    dump_envelope,
+    envelope,
+    error_payload,
+    human_error_detail_lines,
+)
 from researchctl.phase2_cli import (
     bootstrap_app,
     inbox_app,
@@ -28,10 +35,11 @@ from researchctl.phase4_cli import (
     submit_command,
 )
 from researchctl.reconcile_cli import reconcile_command
-from researchctl.serialization import SerializationError
+from researchctl.serialization import SerializationError, validation_error_details
 from researchctl.services.doctor import doctor
 from researchctl.services.init_project import initialize_project
 from researchctl.services.upgrade import check_upgrade
+from researchctl.writing_cli import brief_app, update_app
 
 app = typer.Typer(
     name="researchctl",
@@ -50,8 +58,12 @@ app.add_typer(plan_app, name="plan")
 app.add_typer(linear_app, name="linear")
 app.add_typer(review_app, name="review")
 app.add_typer(report_app, name="report")
+app.add_typer(doc_app, name="doc")
+app.add_typer(brief_app, name="brief")
+app.add_typer(update_app, name="update")
 app.add_typer(notification_app, name="notification")
 app.add_typer(ci_app, name="ci")
+app.add_typer(github_app, name="github")
 app.command("submit")(submit_command)
 app.command("impact")(impact_command)
 app.command("reconcile")(reconcile_command)
@@ -82,19 +94,14 @@ def _known_error(exc: Exception) -> RCPError | None:
             code="validation_error",
             message="Protocol record validation failed.",
             remediation="Review invalid fields; strict records reject unknown values.",
-            context={
-                "details": exc.errors(
-                    include_url=False,
-                    include_context=False,
-                    include_input=False,
-                )
-            },
+            context={"details": validation_error_details(exc)},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
             code="serialization_error",
             message=str(exc),
-            remediation="Use canonical YAML without duplicate keys or non-finite values.",
+            remediation=exc.remediation or "Fix the reported canonical YAML error.",
+            context=exc.context(),
         )
     if isinstance(exc, FileNotFoundError):
         return RCPError(
@@ -124,6 +131,8 @@ def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
         )
     else:
         typer.echo(f"Error [{error.code}]: {error.message}", err=True)
+        for line in human_error_detail_lines(error):
+            typer.echo(line, err=True)
         if error.remediation:
             typer.echo(f"Next: {error.remediation}", err=True)
     raise typer.Exit(code=error.exit_code)
@@ -203,7 +212,7 @@ def init_command(
 def doctor_command(
     path: Annotated[
         Path,
-        typer.Argument(help="Managed Git repository to inspect."),
+        typer.Argument(help="Managed or standalone-document Git repository to inspect."),
     ] = Path("."),
     json_output: Annotated[
         bool,

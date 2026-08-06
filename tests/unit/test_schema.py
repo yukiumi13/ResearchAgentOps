@@ -8,27 +8,45 @@ from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 
 
 EXPECTED_FILE_SHA256 = {
+    "analysis-brief.schema.json": (
+        "158244a228a2a0f70c1fc1e112ab980722896286e9ac14dce4336975a2ce16b2"
+    ),
     "ci-validation-attestation.schema.json": (
-        "28545c955f8732f6f07b0ace2655888c410a64bb6745d078de0fc8bf57165100"
+        "ce98a73fd821089804f269680a7f0da573a1bb6c29f946a065613fad43c2c638"
     ),
     "dependency-change-receipt.schema.json": (
         "9c84ab2efb3a14e72194aea7dc724d733492f44a111ed9da648c09ea9259517a"
     ),
+    "design-document.schema.json": (
+        "7957d08df38bd16c4200deab85293829ab275e3c4139932e8c68ff709b92ad13"
+    ),
+    "document-layout-policy.schema.json": (
+        "bb40f5aaba5396bae75c255ce18a5d12c35a68f62039177326d952246f9dd01d"
+    ),
     "experiment-plan.schema.json": (
         "ea9a9e6605cfeed351cb603ade19dab4c2a2e0050fad77742e1fa1c14e1eabd5"
+    ),
+    "github-governance-policy.schema.json": (
+        "496d354797d0fe37bf5623a1325174191057c25e93285628668eb9fb596d3f6f"
     ),
     "impact-decision.schema.json": (
         "c4b0de7410fdd75e3e14fbec15199cfab7b6e5940dce08d8687bf4e36ec4d311"
     ),
     "linear-projection-policy.schema.json": (
-        "1fe26641a13487c156e897b61dc57e728ecdb3e9ea933e96f6084710d11b2646"
+        "a41dd0bebb5fb3755589f9bb469fcedd5bd592ceefd23fccb4935bf7d4232ab2"
+    ),
+    "markdown-frontmatter.schema.json": (
+        "26d3ccc7a4c427c07ec5902c309047e41364883967351dbf234ff9e7ffec0dc8"
     ),
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
-    "policy.schema.json": "9f50cdae7e15d3ff7ad43269a45d72ee1070064ed9e482e51c84602613c23c69",
-    "manifest.json": "4025543d5e1205375aef5dbb361bacef99cee4074e61aa82ac676714952737e0",
+    "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
+    "manifest.json": "3a4c32dea8baa0ef34b71f56dda3a07dfc60cc4f765d5599fbaf902bd2763826",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
+    "project-status-summary.schema.json": (
+        "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"
+    ),
     "report-proposal.schema.json": (
         "4208f055cfc0429fb10f6d33b9b82d5b9bd6716eeae712974023bb8c52be75c6"
     ),
@@ -41,6 +59,9 @@ EXPECTED_FILE_SHA256 = {
     "report.schema.json": "6c2ba291f310a5c0e4f17683b41ebc4337b8ad40c61852e016717f4e7fdf62ae",
     "research-submission.schema.json": (
         "9194a5383e9323596ee51a900c5633376f48bfaf589424027f9ab236244d0c39"
+    ),
+    "research-update.schema.json": (
+        "3faa7a548a30ffa72bc3b51194e6340dc52a5d6c7caa947b9263951453b2f3fb"
     ),
     "review-decision.schema.json": (
         "e5de29722548b47f2f005399911caa5d60a2dca9d393ddb58305ac621b635cad"

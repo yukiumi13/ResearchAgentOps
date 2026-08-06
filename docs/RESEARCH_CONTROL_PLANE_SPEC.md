@@ -507,6 +507,112 @@ The command adds the explicit Project transition and selected classifications
 to the same PR. CI verifies deterministic rendering. Only then may the manager
 merge and enter managed.
 
+### 10.1 Portable project document contracts
+
+Document linting is independently adoptable and does not require
+`researchctl init`. An uninitialized Git repository may define one protected
+`.researchctl-docs.yaml` containing a strict `DocumentLayoutPolicy` and run:
+
+```text
+researchctl doc contracts
+researchctl doc schema --contract markdown-frontmatter
+researchctl doc scaffold --type runbook --title TITLE
+researchctl doc check DOCUMENT --json
+researchctl doc render DOCUMENT.yaml --output-file DOCUMENT.md
+researchctl doc policy-template --output-file .researchctl-docs.yaml
+researchctl doc policy-lint .researchctl-docs.yaml
+researchctl doc index --output-file docs/INDEX.md
+researchctl doc agent-guide --output-file CLAUDE.md
+researchctl doc tree --project . --json
+```
+
+These commands do not open `.research`, SQLite, a Session, or a manager context.
+The same policy can be used by an editor adapter, pre-commit hook, external Agent,
+or arbitrary CI. Stable JSON findings are the machine integration contract.
+If no standalone, managed, or explicitly selected policy exists, the commands
+fail with `document_policy_missing`; they do not apply a guessed hierarchy.
+`doc policy-template` renders a complete structural candidate with all policy
+sections explicit. Every route carries a `TEMPLATE:` rationale placeholder;
+`doc policy-lint` rejects an uninvestigated template until each placeholder is
+replaced with project-specific evidence. The template preserves a human-written
+`docs/README.md` and maps its generated index to `docs/INDEX.md`. The customized
+policy requires ordinary manager/CODEOWNER review before adoption.
+
+Managed projects store the same policy at
+`.research/policies/default.yaml.document_layout`. `doc.configure-layout` is
+manager-only and prepares one fixed control proposal. Protected-base CI compares
+the old and new ProjectPolicy field by field; no Agent can introduce or remap a
+classification, contract, directory, generated index, or machine artifact root
+inside an ordinary document proposal.
+
+Each document route binds exactly one canonical `a/b:c` classification, short
+document type, schema contract, directory, and non-empty rationale. Directory overlap, unknown paths,
+type/path disagreement, unknown fields, missing required relations, unsafe
+links, excessive nesting, orphan renders, and renderer byte drift fail closed.
+Existing files may bypass conversion only through finite per-file legacy entries
+with declared migration targets.
+
+`DocumentLabel` enforces lowercase slash-separated namespaces and one `:`
+category. `classification_depth` independently bounds the number of namespace
+segments before `:`; defaults are two through four. Filesystem `max_depth`
+bounds nesting below a mapped route, is constrained to `1..8`, and defaults to
+four. Thus `a/b:c` is the shortest default label shape, not advisory prose, but
+a reviewed project policy may explicitly tighten or widen the finite bounds.
+
+Manual Markdown begins with strict frontmatter. `validity` is `valid`, `invalid`,
+or `frozen`; only `invalid` has `invalid_reason`. When CI supplies a trusted
+baseline checkout, a baseline-frozen document cannot change bytes or disappear.
+Baseline inspection does not validate the historical policy against the current
+complete schema. A compatibility reader extracts only its safe document root,
+then raw frontmatter scanning under that root identifies frozen paths and bytes
+without consulting subject routes. This prevents a newly required policy field
+from deadlocking its own migration PR and prevents a PR route change from hiding
+old frozen content. On first adoption, a policy-free baseline may use the subject
+root as a discovery fallback and omit that root. Malformed, shadowed, symlinked,
+or unsafe baseline policy, malformed baseline frontmatter, and later missing
+roots fail closed.
+
+Manual provenance values are strict exact display strings, numeric-looking
+values must be quoted, and each value must occur verbatim in the body. Source
+set mismatches name the unused or undeclared keys. Source locations and relation
+targets are both repository-root relative; legacy document-root-relative
+relations receive an exact replacement diagnostic. Human validation output
+prints schema field paths and available YAML line/column positions by default,
+matching the structured details retained in JSON output.
+Structured design, status, and brief YAML remains canonical while its Markdown
+is renderer-owned and visibly identifies its renderer version. A hidden
+provenance marker binds the canonical source digest and generated body digest.
+The renderer may atomically refresh an owned file only while its old body digest
+still matches; manual edits continue to fail closed.
+
+Standalone correctness also requires Agent discovery. `DocumentLayoutPolicy`
+may declare `agent_guides`, each binding a repository-relative Markdown path to
+the `claude` or `agents` format. `doc agent-guide` inserts or replaces only its
+versioned managed block, preserves unrelated instructions in the file, and may
+write only a target explicitly declared by policy. The block identifies both
+policy locations, forbids hierarchy fallback, lists accepted routes, explains
+manual versus structured authoring, and requires `doc tree`. It points Agents to
+`doc contracts`, `doc schema`, `doc scaffold`, route-aware `doc check`, and
+route-aware `doc render`, including the AnalysisBrief workflow. Tree lint rejects
+a missing, malformed, symlinked, or byte-stale configured guide. The guide is a
+discovery projection of policy, not another authority.
+
+Top-level `doctor` detects standalone document mode when no managed markers are
+present. It reports managed records and generated schemas as not applicable and
+runs the effective policy/tree checks. If managed markers exist but required
+schemas are missing, the original managed-project errors remain mandatory.
+
+A shared Skill may describe the generic workflow and an MCP server may proxy
+diagnostics for remote clients, but neither is required for standalone use and
+neither may own project taxonomy or implement different validation semantics.
+The repository policy, generated guide block, and CI form the portable baseline.
+
+Projects may declare `machine_artifact_roots`, for example `data/` with an
+extension allowlist of `.csv`, `.json`, `.jsonl`, `.xlsx`, and `.py`. Markdown
+can never be allowed in such a root. This enforces the human-readable `docs/`
+versus machine-consumed `data/` boundary without moving stable script inputs.
+See ADR 0014 for the complete authority and integration decision.
+
 ## 11. Session and attention workflow
 
 researchctl start creates or observes a unique session branch, worktree, tmux
@@ -941,7 +1047,30 @@ is the protected merge whose exact head has current required checks and
 CODEOWNER approval. The checked-in single-maintainer CODEOWNERS baseline does
 not install branch protection or prove reviewer policy; an administrator must
 configure and verify those controls before the checks become an operational
-merge gate.
+merge gate. Because GitHub does not count self-approval, the intended deployment
+uses a distinct Agent GitHub App/bot identity to author proposals and the human
+manager identity to review them. A manager-authored PR needs a second human
+reviewer or cannot be placed behind a required one-approval rule.
+
+A bounded read-only governance adapter and `researchctl github doctor` normalize
+classic protection plus active rulesets applicable to the target branch. The
+audit checks required PR/CODEOWNER/latest-push review, both fixed status checks,
+strict base currency, force-push denial, deletion denial, and visible bypasses.
+It exits nonzero on a missing required gate and never installs rules. With a
+managed project it binds the observation to accepted `ProjectPolicy.github`;
+without one it cannot certify proposal principals.
+
+The protected field-specific control proposal changes only that GitHub policy.
+`researchctl github apply-governance` is a separate deployment operation: by
+default it only previews and emits accepted-policy and observed-state digests.
+Explicit apply requires both digests, rejects a Session environment, verifies
+the live `gh` user against accepted human Manager users or active teams, refuses
+active ruleset or bypass-policy ambiguity, writes one bounded classic protection
+payload, and audits the effective result. Every uncertain result requires a new
+observation before retry. This command is implemented and locally tested, but
+has not applied rules to this repository. ADR 0015 retains the proposal broker,
+pre-create App credential proof, and authenticated post-merge identity checks
+as deployment work.
 
 Trusted post-merge automation revalidates an accepted merge and prepares one
 stable projection event. Credential-free `shadow` mode emits only a canonical

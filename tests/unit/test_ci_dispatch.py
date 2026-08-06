@@ -12,7 +12,9 @@ from researchctl.domain.enums import ImpactDisposition, ProjectState
 from researchctl.domain.models import (
     CIValidationAttestation,
     CIValidationCheck,
+    DocumentLayoutPolicy,
     GeneratedOutputDigest,
+    GitHubGovernancePolicy,
     LinearProjectionDisabled,
     LinearProjectionPolicy,
     PlanReviewPolicy,
@@ -43,6 +45,12 @@ from researchctl.services.ci_validation import (
     CIValidationResult,
 )
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
+from researchctl.services.control_document_layout_policy import (
+    ControlDocumentLayoutPolicyRepository,
+)
+from researchctl.services.control_github_governance_policy import (
+    ControlGitHubGovernancePolicyRepository,
+)
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
 from researchctl.services.control_plan_review_policy import (
     ControlPlanReviewPolicyRepository,
@@ -66,6 +74,8 @@ ACCEPT_OPERATION_ID = "operation_20260803T120001Z_" + "d" * 24
 TASK_OPERATION_ID = "operation_20260803T120002Z_" + "e" * 24
 LINEAR_OPERATION_ID = "operation_20260803T120003Z_" + "f" * 24
 PLAN_REVIEW_OPERATION_ID = "operation_20260803T120003Z_" + "0" * 24
+DOCUMENT_LAYOUT_OPERATION_ID = "operation_20260803T120003Z_" + "9" * 24
+GITHUB_GOVERNANCE_OPERATION_ID = "operation_20260803T120003Z_" + "8" * 24
 GENERATED_AT = "2026-08-03T12:00:00Z"
 IMPACT_ID = "impact_20260803T120004Z_" + "1" * 24
 IMPACT_OPERATION_ID = "operation_20260803T120004Z_" + "2" * 24
@@ -237,6 +247,21 @@ def _linear_policy() -> LinearProjectionPolicy:
     )
 
 
+def _github_governance_policy() -> GitHubGovernancePolicy:
+    return GitHubGovernancePolicy.model_validate(
+        {
+            "repository": "owner/project",
+            "default_branch": "main",
+            "agent_app": {
+                "app_id": 12345,
+                "installation_id": 67890,
+                "login": "researchctl-agent[bot]",
+            },
+            "managers": [{"kind": "user", "login": "manager"}],
+        }
+    )
+
+
 def test_generated_linear_policy_control_is_validated_without_network(
     initialized_repository: Path,
 ) -> None:
@@ -345,6 +370,148 @@ def test_plan_review_policy_control_rejects_other_project_policy_changes(
         )
 
     assert raised.value.code == "ci_plan_review_policy_scope_invalid"
+
+
+def test_document_layout_policy_control_is_field_scoped_and_exact_head(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
+    worktrees.mkdir(parents=True, exist_ok=True)
+    control = ControlDocumentLayoutPolicyRepository(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+        operation_id=DOCUMENT_LAYOUT_OPERATION_ID,
+        expected_default_head=base,
+    )
+    payload = DocumentLayoutPolicy().model_dump(mode="json")
+    payload["routes"].append(
+        {
+            "classification": "research/evidence:ledger",
+            "document_type": "ledger",
+            "directory": "docs/ledger",
+            "contract": "markdown-frontmatter",
+            "rationale": "Existing evidence ledgers require this route.",
+            "required_relations": [],
+        }
+    )
+    written = control.configure(DocumentLayoutPolicy.model_validate(payload))
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=base,
+            head=written.proposal.commit,
+            head_ref=control.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "document_layout_policy_control"
+    assert {item.name for item in result.attestation.checks} == {
+        "document_layout_policy",
+        "project_policy_transition",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+
+
+def test_document_layout_policy_control_rejects_other_policy_changes(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    branch = f"research/control/{DOCUMENT_LAYOUT_OPERATION_ID}"
+    _git(initialized_repository, "checkout", "-b", branch)
+    path = initialized_repository / ".research" / "policies" / "default.yaml"
+    policy = load_model(path, ProjectPolicy)
+    replacement = policy.model_copy(
+        update={
+            "document_layout": policy.document_layout.model_copy(
+                update={"max_depth": 3}
+            ),
+            "plan_choices": {"smuggled": True},
+        }
+    )
+    path.write_text(dump_yaml(replacement), encoding="utf-8")
+    head = _commit(
+        initialized_repository,
+        f"researchctl: doc.configure-layout {DOCUMENT_LAYOUT_OPERATION_ID}",
+        ".research/policies/default.yaml",
+    )
+
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(base=base, head=head, head_ref=branch),
+        )
+
+    assert raised.value.code == "ci_document_layout_policy_scope_invalid"
+
+
+def test_github_governance_policy_control_is_field_scoped_and_exact_head(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
+    worktrees.mkdir(parents=True, exist_ok=True)
+    control = ControlGitHubGovernancePolicyRepository(
+        repository_root=initialized_repository,
+        worktrees_directory=worktrees,
+        default_branch="main",
+        operation_id=GITHUB_GOVERNANCE_OPERATION_ID,
+        expected_default_head=base,
+    )
+    written = control.configure(_github_governance_policy())
+
+    result = ProtectedBasePRDispatcher().validate(
+        initialized_repository,
+        _request(
+            base=base,
+            head=written.proposal.commit,
+            head_ref=control.branch,
+        ),
+    )
+
+    assert result.attestation.pr_type == "github_governance_policy_control"
+    assert {item.name for item in result.attestation.checks} == {
+        "github_governance_policy",
+        "project_policy_transition",
+        "pr_type_dispatch",
+        "trusted_base",
+    }
+
+
+def test_github_governance_policy_control_rejects_other_policy_changes(
+    initialized_repository: Path,
+) -> None:
+    base = _promote_test_project(initialized_repository)
+    branch = f"research/control/{GITHUB_GOVERNANCE_OPERATION_ID}"
+    _git(initialized_repository, "checkout", "-b", branch)
+    path = initialized_repository / ".research" / "policies" / "default.yaml"
+    policy = load_model(path, ProjectPolicy)
+    replacement = policy.model_copy(
+        update={
+            "github": _github_governance_policy(),
+            "plan_choices": {"smuggled": True},
+        }
+    )
+    path.write_text(dump_yaml(replacement), encoding="utf-8")
+    head = _commit(
+        initialized_repository,
+        (
+            "researchctl: github.configure-governance "
+            f"{GITHUB_GOVERNANCE_OPERATION_ID}"
+        ),
+        ".research/policies/default.yaml",
+    )
+
+    with pytest.raises(RCPError) as raised:
+        ProtectedBasePRDispatcher().validate(
+            initialized_repository,
+            _request(base=base, head=head, head_ref=branch),
+        )
+
+    assert raised.value.code == "ci_github_governance_policy_scope_invalid"
 
 
 @pytest.mark.parametrize(

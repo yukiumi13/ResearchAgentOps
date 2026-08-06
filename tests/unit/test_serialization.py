@@ -17,6 +17,7 @@ from researchctl.serialization import (
     dump_yaml,
     load_model,
     load_yaml,
+    validation_error_details,
 )
 
 
@@ -97,8 +98,31 @@ def test_yaml_dump_is_sorted_and_byte_stable() -> None:
     ],
 )
 def test_yaml_load_rejects_duplicate_keys(document: str) -> None:
-    with pytest.raises(SerializationError, match="duplicate YAML key"):
+    with pytest.raises(SerializationError, match="duplicate YAML key") as caught:
         load_yaml(document)
+
+    assert caught.value.line is not None
+    assert caught.value.column is not None
+    assert caught.value.error_type == "DuplicateKeyError"
+    assert caught.value.remediation is not None
+
+
+def test_yaml_scanner_error_retains_problem_mark_and_specific_remediation() -> None:
+    document = (
+        "question: Does it work?\n"
+        "answer: Results: evidence\n"
+    )
+
+    with pytest.raises(SerializationError) as caught:
+        load_yaml(document)
+
+    error = caught.value
+    assert error.error_type == "ScannerError"
+    assert error.line == 2
+    assert error.column == 16
+    assert "line 2, column 16" in str(error)
+    assert error.remediation is not None
+    assert "Quote plain YAML text" in error.remediation
 
 
 @pytest.mark.parametrize(
@@ -156,5 +180,10 @@ def test_load_model_applies_unknown_field_validation(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as raised:
         load_model(record_path, TaskRecord)
+
+    details = validation_error_details(raised.value, source_path=record_path)
+    unknown = next(detail for detail in details if detail["loc"] == ["unknown_field"])
+    assert unknown["line"] >= 1
+    assert unknown["column"] >= 1

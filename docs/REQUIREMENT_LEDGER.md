@@ -1,7 +1,7 @@
 # Post-export Requirement Ledger
 
 Status: normative implementation input
-Updated: 2026-08-04
+Updated: 2026-08-06
 
 `USER_SCENARIOS.md` preserves anonymous anchors for all 77 prompts in the
 private historical research. This ledger gives stable identities to later
@@ -146,3 +146,110 @@ requirements so traceability does not silently stop at that boundary.
   and disposition-specific inputs. Protected-base CI regenerates the exact
   Decision/Report bytes. A rerun decision references a manager-created Task but
   never starts, retries, or collects a Run.
+
+## REQ-20260804-001 - Project document contracts work without research init
+
+- Source: post-export project-document hierarchy and standalone-lint discussion,
+  2026-08-04.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: a Git repository with `.researchctl-docs.yaml` but no `.research`,
+  SQLite database, Session, or manager context can run the same strict document
+  schema/tree/render diagnostics locally and in CI. Canonical `a/b:c` routes
+  bind type, contract, and directory; unknown hierarchy changes fail closed.
+  Frontmatter/path agreement, required relations, finite legacy exceptions,
+  deterministic YAML/Markdown pairs, visible renderer versions, optional
+  generated index freshness, baseline-frozen bytes, and configured machine-only
+  artifact roots are checked. Standalone policy is CODEOWNERS-protected; after
+  initialization, label/directory/contract/index/artifact-root remapping uses the
+  manager-only field-scoped `doc.configure-layout` proposal. Tags do not grant
+  routing or authority.
+
+## REQ-20260805-001 - Standalone Agents discover and draft the document contract
+
+- Source: post-export standalone Agent injection, policy-example, and hierarchy-
+  depth discussion, 2026-08-05.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc policy-template` emits a complete schema-valid candidate with
+  all policy sections explicit, while `doc policy-lint` validates the customized candidate without a
+  repository, managed state, or implicit taxonomy. Project policy may declare
+  repository-local Claude or AGENTS guide targets. `doc agent-guide` writes only
+  a declared target and deterministically inserts or replaces one visible,
+  versioned managed block while preserving unrelated instructions. The block
+  identifies policy discovery order, forbids fallback labels and directories,
+  renders accepted routes, distinguishes manual from generated documents, and
+  requires `doc tree`. Tree lint fails on missing, malformed, symlinked, or stale
+  guide blocks. The lexical label grammar is mandatory; project policy bounds
+  namespace segments before `:` independently from filesystem `max_depth`.
+  Skills and MCP adapters may reuse the workflow but are not required and cannot
+  become a second taxonomy or validator. Adopting or changing the candidate
+  policy remains a manager/CODEOWNER-reviewed operation.
+
+## REQ-20260805-002 - Standalone document authoring is self-discovering
+
+- Source: external Claude standalone adoption and authoring canary, 2026-08-05.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc contracts` names every built-in document contract, required
+  top-level fields, canonical source form, schema command, and renderer command;
+  `doc schema` exposes the complete generated JSON Schema without init;
+  `doc scaffold --type` emits a schema-valid route-specific Markdown or YAML
+  skeleton; and `doc check PATH --json` dispatches through the effective route.
+  Agent guides name these commands including AnalysisBrief. Routes carry a
+  structured non-empty rationale, and `policy-lint` rejects unchanged template
+  rationales. The template keeps human `docs/README.md` separate from generated
+  `docs/INDEX.md`. Generated Markdown binds renderer/source/body digests, allows
+  safe refresh only when the old body is unedited, and preserves apostrophes in
+  Markdown prose. The marker identifies its source digest as canonical model JSON
+  rather than raw YAML bytes. Structured routes may require and preserve a
+  project-owned frontmatter envelope while RCP checks only required key presence
+  and the renderer-owned body; project lint owns the envelope's value semantics.
+  The renderer remains an optional typed-model projection rather than a general
+  Markdown/HTML engine. AnalysisBrief schema and lint use canonical `answer`,
+  accept legacy `conclusion` only as an input alias, expose field prose limits,
+  preserve ordinary arrows, and require quoted display-sensitive decimals.
+  Prose output exposes observed/maximum English and CJK budgets.
+  Standalone `doctor` emits one mode explanation and document diagnostics rather
+  than managed generated-schema errors. Machine review evidence uses
+  `doc tree --json` rather than an unstructured summary.
+
+## REQ-20260805-003 - PR authorship and merge gates use distinct principals
+
+- Source: installed PR/branch-protection canary, 2026-08-05.
+- Maps to: `US-017`, `US-018`, `US-021`.
+- Acceptance: documentation distinguishes Action triggering from required status
+  checks. Branch rules require `researchctl/source-tests` and
+  `researchctl/exact-head`; those rules gate merge but do not trigger CI. An
+  Agent proposal is authored by a distinct GitHub App/bot principal and approved
+  by the human manager/CODEOWNER. The Agent cannot approve or merge. A
+  single-maintainer PR authored by the same GitHub user cannot satisfy its own
+  required approval and must not be placed behind an impossible rule without a
+  second author/reviewer principal. A bounded read-only `github doctor` command
+  audits classic protection and applicable active rulesets and returns a failed
+  machine envelope when any fixed merge gate is absent. It does not count a
+  green but non-required check as protection or mutate repository settings.
+  `ProjectPolicy.github` provides the strict non-secret identity contract and a
+  manager-owned field-specific proposal changes only that field. The separate
+  governance apply command defaults to read-only preview; mutation is bound to
+  the accepted-policy and observed-state digests, rejects Session/App authority,
+  verifies a configured human Manager through GitHub, supports only unambiguous
+  classic protection, and audits by read-back. Shared proposal delivery rejects
+  missing policy, remote/default-branch drift, and PR receipts authored by a
+  different login. No real rule apply is claimed. Pre-create App token
+  provenance and post-merge Manager-review verification remain deployment gates.
+
+## REQ-20260806-001 - Baseline enforcement survives policy-schema migration
+
+- Source: standalone canary CI migration deadlock and schema-diagnostic feedback,
+  2026-08-06.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: `doc tree --baseline-project` does not validate an historical
+  policy against the complete current `DocumentLayoutPolicy` schema. It reads
+  only a safe historical document root and identifies frozen documents from raw
+  baseline frontmatter, independent of subject routes. A baseline missing a
+  newly required route field therefore permits the migration PR, while modified
+  or deleted frozen bytes still fail. Malformed or unsafe baseline policy,
+  malformed baseline frontmatter, symlinks, and an unexpectedly missing adopted
+  root fail closed. Human schema errors name every invalid field and available
+  YAML line/column by default, use an existing remediation command, and retain
+  equivalent machine details under `--json`. Manual provenance values remain
+  strict quoted display strings that occur verbatim in the body; source mismatch
+  diagnostics name keys, and source/relation paths share the repository root.

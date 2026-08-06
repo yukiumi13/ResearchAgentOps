@@ -14,12 +14,12 @@ from researchctl.domain.models import (
 )
 
 
-REPORT_RENDERER_ID = "research-report.v1"
-REPORT_RENDERER_VERSION = 1
+REPORT_RENDERER_ID = "research-report.v2"
+REPORT_RENDERER_VERSION = 2
 
 
 def _text(value: object) -> str:
-    escaped = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    escaped = html.escape(str(value), quote=False).replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         escaped = escaped.replace(character, f"\\{character}")
     normalized = escaped.replace("\r\n", "\n").replace("\r", "\n")

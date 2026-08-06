@@ -27,6 +27,12 @@ from researchctl.services.actor import ActorContext, ActorRole, CredentialKind
 from researchctl.services.application import ApplicationService
 from researchctl.services.bootstrap_proposal import BootstrapProposalService
 from researchctl.services.control_bootstrap import ControlBootstrapAcceptance
+from researchctl.services.control_document_layout_policy import (
+    ControlDocumentLayoutPolicyRepository,
+)
+from researchctl.services.control_github_governance_policy import (
+    ControlGitHubGovernancePolicyRepository,
+)
 from researchctl.services.control_linear_policy import ControlLinearPolicyRepository
 from researchctl.services.control_plan_review_policy import (
     ControlPlanReviewPolicyRepository,
@@ -145,6 +151,10 @@ def open_application(
     linear_expected_default_head: str | None = None,
     plan_review_operation_id: str | None = None,
     plan_review_expected_default_head: str | None = None,
+    document_layout_operation_id: str | None = None,
+    document_layout_expected_default_head: str | None = None,
+    github_governance_operation_id: str | None = None,
+    github_governance_expected_default_head: str | None = None,
     run_spec: RunSpec | None = None,
 ) -> ApplicationHandle:
     if (task_operation_id is None) != (task_command is None):
@@ -203,6 +213,58 @@ def open_application(
             message=(
                 "Plan review operation ID and expected default head must be "
                 "supplied together."
+            ),
+        )
+    if (document_layout_operation_id is None) != (
+        document_layout_expected_default_head is None
+    ):
+        raise RCPError(
+            code="document_layout_mutation_context_incomplete",
+            message=(
+                "Document layout operation ID and expected default head must be "
+                "supplied together."
+            ),
+        )
+    if (github_governance_operation_id is None) != (
+        github_governance_expected_default_head is None
+    ):
+        raise RCPError(
+            code="github_governance_mutation_context_incomplete",
+            message=(
+                "GitHub governance operation ID and expected default head must be "
+                "supplied together."
+            ),
+        )
+    if document_layout_operation_id is not None and (
+        task_operation_id is not None
+        or bootstrap_operation_id is not None
+        or bootstrap_proposal_operation_id is not None
+        or linear_operation_id is not None
+        or plan_review_operation_id is not None
+        or github_governance_operation_id is not None
+        or run_spec is not None
+    ):
+        raise RCPError(
+            code="mutation_context_conflict",
+            message=(
+                "Document layout policy configuration cannot share another mutation "
+                "factory context."
+            ),
+        )
+    if github_governance_operation_id is not None and (
+        task_operation_id is not None
+        or bootstrap_operation_id is not None
+        or bootstrap_proposal_operation_id is not None
+        or linear_operation_id is not None
+        or plan_review_operation_id is not None
+        or document_layout_operation_id is not None
+        or run_spec is not None
+    ):
+        raise RCPError(
+            code="mutation_context_conflict",
+            message=(
+                "GitHub governance configuration cannot share another mutation "
+                "factory context."
             ),
         )
     if task_operation_id is not None and (
@@ -364,6 +426,34 @@ def open_application(
                 expected_default_head=plan_review_expected_default_head,
             )
         )
+        document_layout_policy_control = (
+            None
+            if (
+                document_layout_operation_id is None
+                or document_layout_expected_default_head is None
+            )
+            else ControlDocumentLayoutPolicyRepository(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                operation_id=document_layout_operation_id,
+                expected_default_head=document_layout_expected_default_head,
+            )
+        )
+        github_governance_policy_control = (
+            None
+            if (
+                github_governance_operation_id is None
+                or github_governance_expected_default_head is None
+            )
+            else ControlGitHubGovernancePolicyRepository(
+                repository_root=project.repository_root,
+                worktrees_directory=project.runtime.worktrees_directory,
+                default_branch=project.project.repository.default_branch,
+                operation_id=github_governance_operation_id,
+                expected_default_head=github_governance_expected_default_head,
+            )
+        )
         service = ApplicationService(
             project_id=project.project_id,
             policy=project.policy,
@@ -375,6 +465,8 @@ def open_application(
             runs=runs,
             linear_policy_control=linear_policy_control,
             plan_review_policy_control=plan_review_policy_control,
+            document_layout_policy_control=document_layout_policy_control,
+            github_governance_policy_control=github_governance_policy_control,
             notification_commits=GitSessionCommitVerifier(
                 project.repository_root,
             ),
@@ -384,6 +476,7 @@ def open_application(
                 default_branch=project.project.repository.default_branch,
                 delivery=GitHubSubmissionDelivery(
                     accepted_remote_url=project.project.repository.remote_url,
+                    governance=project.policy.github,
                     environment=environment,
                 ),
                 policy=project.policy,
@@ -394,6 +487,7 @@ def open_application(
                 default_branch=project.project.repository.default_branch,
                 delivery=GitHubImpactDelivery(
                     accepted_remote_url=project.project.repository.remote_url,
+                    governance=project.policy.github,
                     environment=environment,
                 ),
             ),
@@ -407,6 +501,7 @@ def open_application(
                 default_branch=project.project.repository.default_branch,
                 delivery=GitHubImpactDecisionDelivery(
                     accepted_remote_url=project.project.repository.remote_url,
+                    governance=project.policy.github,
                     environment=environment,
                 ),
             ),

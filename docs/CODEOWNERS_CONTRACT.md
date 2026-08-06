@@ -6,6 +6,14 @@ deployment template for repositories that need different principals. The
 installed file must still be reviewed on the protected default branch; its
 presence does not prove that branch rules or reviewer policy are enabled.
 
+This single-maintainer baseline cannot by itself satisfy a required approving
+review on a PR authored by `@yukiumi13`: GitHub does not count a PR author's own
+approval. The intended Agent-proposal deployment uses a distinct GitHub App or
+bot principal to create the PR and keeps the human manager as CODEOWNER. A
+second human CODEOWNER is an alternative. Until one of those identities exists,
+required checks can be enabled, but requiring one CODEOWNER approval would
+deadlock maintainer-authored PRs.
+
 A configured Linear app or credential-origin label, such as
 `researchctl-app`, is not a GitHub CODEOWNER and must not be substituted into
 this template unless GitHub independently has a real principal with that exact
@@ -23,6 +31,14 @@ means only that the research protocol has no accepted-state change to validate.
 The separate source check executes the exact PR source in a credential-free,
 read-only `pull_request` job.
 
+The workflows run from their configured pull-request events whether or not
+branch protection marks them required. A required-status-check rule does not
+start CI; it prevents merge when the named run is absent, pending, or failing.
+Conversely, a green non-required check is advisory. Agent-created PR automation
+should use a GitHub App installation identity or another external principal;
+it must not assume that a PR created recursively with a workflow's default
+`GITHUB_TOKEN` will emit another workflow run.
+
 Standalone post-bootstrap policy, schema, Project, Report, Decision, or other
 control mutations are intentionally unsupported at R0. Unknown protocol paths,
 multiple protocol PR types, and a supported type with extra protected paths all
@@ -34,21 +50,55 @@ Before enabling the complete protected merge gate, the administrator must:
 1. Review the installed `.github/CODEOWNERS` and confirm that `@yukiumi13`, or a
    deliberately approved replacement, is the intended repository principal.
    The exact-head workflow fails closed while that file is absent or empty.
-2. Review both workflows and the multi-type protected-base dispatcher, then
+2. Establish a distinct PR-author and reviewer principal: preferably the Agent
+   proposal GitHub App as author and the human manager as CODEOWNER, or two human
+   maintainers. Do not grant the Agent approval authority.
+3. Review both workflows and the multi-type protected-base dispatcher, then
    protect the default branch and require checks named
    `researchctl/source-tests` and `researchctl/exact-head`.
-3. Require at least one CODEOWNER approval and dismiss stale approvals when the
+4. Require at least one CODEOWNER approval and dismiss stale approvals when the
    PR head changes.
-4. Require approval of the latest reviewable push and require the branch to be
+5. Require approval of the latest reviewable push and require the branch to be
    current with the protected base before merge.
-5. Deny force pushes and branch deletion, and restrict administrator or service
+6. Deny force pushes and branch deletion, and restrict administrator or service
    bypass to an explicitly audited break-glass procedure.
-6. Keep Actions permissions read-only for PR validation. Do not add Linear,
+7. Keep Actions permissions read-only for PR validation. Do not add Linear,
    SSH, cloud, package-publish, or manager credentials to either workflow.
 
 The administrative change that confirms CODEOWNERS and enables branch rules
 must be complete before these checks become mandatory. It is an onboarding
 operation, not an exception that Submission agents can exercise.
+
+`researchctl github doctor --repository OWNER/REPOSITORY --json` is the
+read-only preflight and verification command for this checklist. It observes
+classic branch protection and active rulesets applicable to the selected branch
+and fails when a required gate is absent. It deliberately does not apply
+settings. `--project .` additionally binds the audit to accepted
+`ProjectPolicy.github`; repository-only mode warns that it cannot prove the
+configured Agent and Manager principals.
+
+After the field-specific GitHub policy proposal is reviewed and protected-merged,
+a human Manager can inspect the exact rule delta without mutation:
+
+```bash
+researchctl github apply-governance --project . --json
+```
+
+Applying that reviewed preview is a separate explicit operation requiring both
+reported digests and a live `gh` login matching an accepted Manager user or
+active team member:
+
+```bash
+researchctl github apply-governance --project . --apply \
+  --expected-policy-digest sha256:... \
+  --expected-observation-digest sha256:... --json
+```
+
+The bounded writer supports classic protection only and refuses applicable
+rulesets or configured bypass actors rather than creating overlapping rule
+authorities. It re-reads and audits the result, and a Session capability or
+Agent App cannot invoke the mutation. This repository's real settings were not
+changed while implementing the command.
 
 ## Trust Boundary
 
@@ -74,6 +124,18 @@ share caches, writable environments, or artifacts as trusted inputs.
 
 The workflow pins third-party actions by full commit SHA. Updating those pins is
 a CODEOWNER-reviewed control-plane change.
+
+The source workflow also runs portable project-document lint from the exact PR
+head and compares baseline-frozen documents with a detached checkout of the
+exact base SHA. In a repository that has not run `researchctl init`,
+`.researchctl-docs.yaml` is the complete document taxonomy and therefore must be
+CODEOWNERS-protected: changing it can add or remap an accepted classification,
+directory, schema contract, generated index, machine artifact root, or Agent
+guide target. Configured Agent guide managed blocks are deterministic policy
+projections; source lint rejects missing or stale blocks but does not authorize
+the underlying policy change. After
+initialization, the same policy is inside protected ProjectPolicy and changes
+through the manager-only, protected-base-validated `doc.configure-layout` path.
 
 ## Attestation Contract
 

@@ -13,6 +13,7 @@ from researchctl.adapters.github_submission import (
     GitHubSubmissionDelivery,
     parse_github_remote,
 )
+from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.errors import RCPError
 
 
@@ -23,6 +24,7 @@ OTHER_COMMIT = "c" * 40
 BASE = "main"
 TITLE = "researchctl: MAR-17 proposal"
 BODY = "# Review\n\nGenerated proposal body.\n"
+AUTHOR = "researchctl-agent[bot]"
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,7 @@ def _pull(
         "title": title,
         "body": body,
         "merged_at": merged_at,
+        "user": {"login": AUTHOR},
         "head": {
             "ref": BRANCH,
             "sha": commit,
@@ -151,6 +154,18 @@ def _delivery(
 ) -> GitHubSubmissionDelivery:
     return GitHubSubmissionDelivery(
         accepted_remote_url=remote_url,
+        governance=GitHubGovernancePolicy.model_validate(
+            {
+                "repository": "owner/project",
+                "default_branch": BASE,
+                "agent_app": {
+                    "app_id": 12,
+                    "installation_id": 34,
+                    "login": AUTHOR,
+                },
+                "managers": [{"kind": "user", "login": "manager"}],
+            }
+        ),
         git_runner=git,
         gh_runner=gh,
         environment={
@@ -195,6 +210,7 @@ def test_exact_branch_is_pushed_and_generated_pull_request_is_created(
     assert branch.pushed is True
     assert branch.ref == f"refs/heads/{BRANCH}"
     assert pull.created is True
+    assert pull.author_login == AUTHOR
     assert pull.repository == "owner/project"
     assert pull.number == 17
     push = next(call for call in git.calls if call.argv[5] == "push")
@@ -286,6 +302,7 @@ def test_remote_branch_conflicts_and_unresolved_pushes_fail_closed(
         ([_pull(), _pull(number=18)], "submission_pr_ambiguous"),
         ([_pull(state="closed")], "submission_pr_not_open"),
         ([_pull(commit=OTHER_COMMIT)], "submission_pr_identity_conflict"),
+        ([_pull() | {"user": {"login": "manager"}}], "submission_pr_author_mismatch"),
         ([_pull(body="REMOTE SECRET BODY")], "submission_pr_metadata_conflict"),
     ],
 )
@@ -327,6 +344,25 @@ def test_remote_identity_must_match_accepted_project_configuration(
         _push(delivery, tmp_path)
 
     assert raised.value.code == "submission_remote_identity_mismatch"
+
+
+def test_missing_github_governance_fails_before_remote_mutation(
+    tmp_path: Path,
+) -> None:
+    git = _GitRunner()
+    delivery = GitHubSubmissionDelivery(
+        accepted_remote_url=REMOTE_URL,
+        governance=None,
+        git_runner=git,
+        gh_runner=_GhRunner(),
+        environment={},
+    )
+
+    with pytest.raises(RCPError) as raised:
+        _push(delivery, tmp_path)
+
+    assert raised.value.code == "submission_github_governance_not_configured"
+    assert git.calls == []
 
 
 def test_github_remote_parser_accepts_credential_free_common_forms() -> None:

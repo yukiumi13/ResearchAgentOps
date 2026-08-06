@@ -15,8 +15,13 @@ PROMPT_MANIFEST = REPOSITORY_ROOT / "docs" / "HISTORICAL_PROMPT_MANIFEST.json"
 
 EXPECTED_SCENARIO_IDS = tuple(f"US-{number:03d}" for number in range(1, 34))
 EXPECTED_TEST_IDS = tuple(f"AT-US-{number:03d}" for number in range(1, 34))
-EXPECTED_POST_EXPORT_REQUIREMENTS = tuple(
-    f"REQ-20260803-{number:03d}" for number in range(1, 13)
+EXPECTED_POST_EXPORT_REQUIREMENTS = (
+    *(f"REQ-20260803-{number:03d}" for number in range(1, 13)),
+    "REQ-20260804-001",
+    "REQ-20260805-001",
+    "REQ-20260805-002",
+    "REQ-20260805-003",
+    "REQ-20260806-001",
 )
 
 _SCENARIO_HEADING = re.compile(r"^### (US-\d{3}) - .+$", re.MULTILINE)
@@ -226,7 +231,7 @@ def test_post_export_requirement_ledger_is_complete() -> None:
 def test_every_scenario_has_one_valid_workflow_and_status_checklist_row() -> None:
     content = WORKFLOW_COVERAGE.read_text(encoding="utf-8")
     workflow_ids = tuple(_WORKFLOW_HEADING.findall(content))
-    assert workflow_ids == tuple(f"WF-{number:02d}" for number in range(15))
+    assert workflow_ids == tuple(f"WF-{number:02d}" for number in range(16))
     assert len(workflow_ids) == len(set(workflow_ids))
 
     rows: list[tuple[str, ...]] = []

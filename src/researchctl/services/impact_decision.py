@@ -24,8 +24,8 @@ from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services.report_impact import RenderedImpactFile
 
 
-IMPACT_DECISION_RENDERER_ID = "research-impact-decision.v1"
-IMPACT_DECISION_RENDERER_VERSION = 1
+IMPACT_DECISION_RENDERER_ID = "research-impact-decision.v2"
+IMPACT_DECISION_RENDERER_VERSION = 2
 _UTC_DATETIME_ADAPTER = TypeAdapter(UtcDateTime)
 
 
@@ -249,7 +249,7 @@ class ImpactDecisionBuilder:
 
 
 def _text(value: object) -> str:
-    escaped = html.escape(str(value), quote=True).replace("\\", "\\\\")
+    escaped = html.escape(str(value), quote=False).replace("\\", "\\\\")
     for character in ("`", "*", "_", "[", "]", "#", "|"):
         escaped = escaped.replace(character, f"\\{character}")
     return escaped.replace("\r\n", "\n").replace("\r", "\n").replace(

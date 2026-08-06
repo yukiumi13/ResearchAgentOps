@@ -22,6 +22,7 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PYTHONUTF8: "1"
       RCP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RCP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
     steps:
       - name: Check out exact pull request head
@@ -36,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RCP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RCP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           observed_head="$(git rev-parse --verify 'HEAD^{commit}')"
           if [[ "$observed_head" != "$RCP_HEAD_SHA" ]]; then
             echo "::error::Checked-out source differs from the event's exact head"
@@ -56,6 +58,12 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint"
 
+      - name: Materialize immutable document baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/researchctl-base" "$RCP_BASE_SHA"
+
       - name: Install pull request source
         shell: bash
         run: |
@@ -68,3 +76,11 @@ jobs:
         run: |
           set -euo pipefail
           "$RUNNER_TEMP/researchctl-source-tests/bin/python" -m pytest
+
+      - name: Lint project document hierarchy
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/researchctl-source-tests/bin/researchctl" doc tree \
+            --project "$GITHUB_WORKSPACE" \
+            --baseline-project "$RUNNER_TEMP/researchctl-base"
