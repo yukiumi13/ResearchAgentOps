@@ -1,8 +1,8 @@
 <!-- researchctl-agent-guide:project-document-agent-guide.claude:begin -->
 ## Researchctl Document Workflow
 
-> Renderer: `researchctl-renderer:project-document-agent-guide.claude.v4`
-<!-- researchctl-generated:project-document-agent-guide.claude.v4;source=sha256:ef29e5884c51ca8e2c69813e0fb2748d0ee5c7e06f02c1be8f9af0726391d5f9;body=sha256:0c0f73817e04e14f7d7463f3a1115a4abec11177428b476163040d954bd09f60 -->
+> Renderer: `researchctl-renderer:project-document-agent-guide.claude.v5`
+<!-- researchctl-generated:project-document-agent-guide.claude.v5;source=sha256:ef29e5884c51ca8e2c69813e0fb2748d0ee5c7e06f02c1be8f9af0726391d5f9;body=sha256:c01c1c3915b2de1e93a36f8c293c899fe6ce79dc2dc0c4ea52cfe6632fcc912e -->
 
 Claude must treat the repository's effective document policy as the only
 authority for document classifications, contracts, and paths. Standalone
@@ -29,8 +29,10 @@ When creating, moving, or editing project documentation:
    Quantitative Markdown claims should declare keyed `sources` and a
    `provenance` item whose basis distinguishes measured, estimated, derived,
    or external values. Estimated and derived values require a method.
-   Provenance values are exact display strings: quote numeric-looking YAML
-   values and repeat that text verbatim in the body. Source locations and
+   Display-sensitive scalar values are exact strings: quote numeric-looking
+   values only under AnalysisBrief `evidence[].values` or Markdown
+   `provenance[].value`, and repeat provenance text verbatim in the body.
+   Do not add quote characters inside prose block scalars. Source locations and
    relation targets are repository-root-relative paths such as
    `data/results.json` and `docs/runbooks/evaluation.md`.
 4. Run `researchctl doc tree --project .` before committing to a proposal
@@ -38,6 +40,9 @@ When creating, moving, or editing project documentation:
    the repository's CI, CODEOWNER review, and protected merge; an Agent-authored
    commit is not acceptance. Use `researchctl doc tree --project . --json`
    when review automation will consume the findings.
+   One proposal branch represents one reviewable change set, not one commit.
+   Push follow-up fixes to the same PR. Implementation may include the
+   documentation required to review or operate it; split unrelated documents.
 5. If `researchctl` or the effective policy is unavailable, stop and report the
    missing prerequisite instead of approximating the checks.
 

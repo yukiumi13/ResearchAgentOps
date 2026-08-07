@@ -35,8 +35,8 @@ DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v2"
 PROJECT_STATUS_RENDERER_ID = "project-status-summary.v2"
 DOCUMENT_INDEX_RENDERER_ID = "project-document-index.v2"
 PROJECT_AGENT_GUIDE_RENDERER_IDS: dict[AgentGuideFormat, str] = {
-    "claude": "project-document-agent-guide.claude.v4",
-    "agents": "project-document-agent-guide.agents.v4",
+    "claude": "project-document-agent-guide.claude.v5",
+    "agents": "project-document-agent-guide.agents.v5",
 }
 TEMPLATE_ROUTE_RATIONALE_PREFIX = "TEMPLATE:"
 
@@ -362,8 +362,10 @@ def render_project_agent_guide(
         "   Quantitative Markdown claims should declare keyed `sources` and a",
         "   `provenance` item whose basis distinguishes measured, estimated, derived,",
         "   or external values. Estimated and derived values require a method.",
-        "   Provenance values are exact display strings: quote numeric-looking YAML",
-        "   values and repeat that text verbatim in the body. Source locations and",
+        "   Display-sensitive scalar values are exact strings: quote numeric-looking",
+        "   values only under AnalysisBrief `evidence[].values` or Markdown",
+        "   `provenance[].value`, and repeat provenance text verbatim in the body.",
+        "   Do not add quote characters inside prose block scalars. Source locations and",
         "   relation targets are repository-root-relative paths such as",
         "   `data/results.json` and `docs/runbooks/evaluation.md`.",
         "4. Run `researchctl doc tree --project .` before committing to a proposal",
@@ -371,6 +373,9 @@ def render_project_agent_guide(
         "   the repository's CI, CODEOWNER review, and protected merge; an Agent-authored",
         "   commit is not acceptance. Use `researchctl doc tree --project . --json`",
         "   when review automation will consume the findings.",
+        "   One proposal branch represents one reviewable change set, not one commit.",
+        "   Push follow-up fixes to the same PR. Implementation may include the",
+        "   documentation required to review or operate it; split unrelated documents.",
         "5. If `researchctl` or the effective policy is unavailable, stop and report the",
         "   missing prerequisite instead of approximating the checks.",
         "",

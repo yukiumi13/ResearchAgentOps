@@ -268,6 +268,10 @@ def test_agent_guide_renderer_teaches_the_effective_standalone_workflow() -> Non
     assert "`.researchctl-docs.yaml`" in guide
     assert "`researchctl doc tree --project .`" in guide
     assert "commit is not acceptance" in guide
+    assert "one reviewable change set, not one commit" in guide
+    assert "Push follow-up fixes to the same PR" in guide
+    assert "only under AnalysisBrief `evidence[].values`" in guide
+    assert "Do not add quote characters inside prose block scalars" in guide
     assert "does not require `researchctl init`" in guide
     assert "| `ledger` | `research/evidence:ledger` |" in guide
 
@@ -975,6 +979,11 @@ def test_doc_contract_discovery_schema_scaffold_and_route_dispatch(
         contracts.stdout
     )
     assert "researchctl brief render PATH" in contracts.stdout
+    assert '"$": {"max_cjk_characters": 700, "max_english_words": 350' in (
+        contracts.stdout
+    )
+    assert '"interpretation": {"max_cjk_characters": 120' in contracts.stdout
+    assert '"scope": "each_item"' in contracts.stdout
     assert "canonical model JSON, not the YAML file bytes" in contracts.stdout
     assert schema.exit_code == 0
     assert '"pattern": "^(?:session:session_' in schema.stdout
@@ -1098,6 +1107,21 @@ def test_doc_contract_discovery_schema_scaffold_and_route_dispatch(
     assert "researchctl-generated:research-analysis-brief.v4" in brief_output.read_text(
         encoding="utf-8"
     )
+
+    invalid_brief = load_yaml(brief_source.read_text(encoding="utf-8"))
+    invalid_brief["protocol"] = "x" * 513
+    invalid_brief["interpretation"] = [
+        " ".join(["first"] * 46) + ".",
+        " ".join(["second"] * 47) + ".",
+    ]
+    brief_source.write_text(dump_yaml(invalid_brief), encoding="utf-8")
+    aggregate = runner.invoke(
+        app,
+        ["doc", "check", str(brief_source), "--project", str(tmp_path), "--json"],
+    )
+    assert aggregate.exit_code == 2
+    assert '"loc": [\n              "protocol"' in aggregate.stdout
+    assert aggregate.stdout.count('"type": "prose_english_words_exceeded"') == 2
 
 
 def test_routed_render_preserves_project_frontmatter_and_owns_only_the_body(

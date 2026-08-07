@@ -157,6 +157,13 @@ not its configured App bot. Real rules remain unapplied; proving the token
 principal before PR creation, the proposal broker, and authenticated reviewer
 revalidation remain on the ADR 0015 deployment roadmap.
 
+Executor availability is now separated from merge authority. GitHub Actions or
+an external CI may execute the protected validator, but the result must be an
+authenticated exact-head GitHub check consumed by the ruleset. The read-only
+`github pr-status` command types ready, review, validation, dispatch, governance,
+and runner-capacity states. A dedicated self-hosted control runner and live
+outage/recovery pilot remain deployment work under ADR 0016.
+
 ### WF-10 - Accepted-Merge Projection
 
 ```text

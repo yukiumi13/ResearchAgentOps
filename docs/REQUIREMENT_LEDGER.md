@@ -253,3 +253,37 @@ requirements so traceability does not silently stop at that boundary.
   equivalent machine details under `--json`. Manual provenance values remain
   strict quoted display strings that occur verbatim in the body; source mismatch
   diagnostics name keys, and source/relation paths share the repository root.
+
+## REQ-20260806-002 - CI execution is replaceable and capacity failure is typed
+
+- Source: latent-agents hosted-runner acquisition failure and proposal-boundary
+  discussion, 2026-08-06.
+- Maps to: `US-017`, `US-018`, `US-021`, `US-023`.
+- Acceptance: design and help separate runner execution, authenticated status
+  publication, and ruleset merge authority. GitHub-hosted Actions is a default,
+  not a required compute provider; a dedicated self-hosted runner or external CI
+  may execute the protected validator only if the fixed exact-head GitHub check
+  remains authenticated and required. `github pr-status` observes one open PR
+  without mutation and distinguishes runner acquisition failure, pending checks,
+  validator failure, pending review, governance gaps, and ready state. It names
+  the workflow/job/runner labels and never recommends disabling the ruleset for
+  capacity recovery. Control and untrusted-source runners have separate trust
+  domains. An Agent uses a proposal branch for every protected code change, but
+  one branch/PR covers one reviewable change set rather than one commit. Code may
+  carry required documentation; unrelated documentation is split; policy,
+  taxonomy, workflow, and runner-trust changes use a Manager-owned control PR.
+
+## REQ-20260806-003 - AnalysisBrief authoring exposes and aggregates prose rules
+
+- Source: editable-install AnalysisBrief authoring canary, 2026-08-06.
+- Maps to: `US-014`, `US-015`, `US-017`, `US-022`, `US-031`.
+- Acceptance: AnalysisBrief JSON Schema exposes question, answer, per-item
+  interpretation/limitation, and whole-document English/CJK prose limits through
+  `x-researchctl-prose`, including explicit field/each-item/document scope.
+  `doc contracts` summarizes those limits. After YAML parsing succeeds, brief
+  lint and route-aware document check aggregate all detectable schema and prose
+  findings, preserving observed and maximum values. YAML parser failures use the
+  unambiguous phrase `invalid YAML`, retain exact line/column and parser subtype,
+  and do not imply the `protocol` field is invalid. Agent guidance restricts
+  numeric-looking scalar quoting to AnalysisBrief `evidence[].values` and
+  Markdown `provenance[].value`; it explicitly excludes prose block scalars.

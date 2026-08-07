@@ -1513,8 +1513,49 @@ class ProjectStatusSummary(DocumentEnvelope):
         return self
 
 
+ANALYSIS_BRIEF_QUESTION_PROSE_LIMITS = {
+    "max_sentences": 2,
+    "max_english_words": 40,
+    "max_cjk_characters": 100,
+}
+ANALYSIS_BRIEF_ANSWER_PROSE_LIMITS = {
+    "max_sentences": 2,
+    "max_english_words": 60,
+    "max_cjk_characters": 140,
+}
+ANALYSIS_BRIEF_LIST_ITEM_PROSE_LIMITS = {
+    "max_sentences": 2,
+    "max_english_words": 45,
+    "max_cjk_characters": 120,
+}
+ANALYSIS_BRIEF_DOCUMENT_PROSE_LIMITS = {
+    "max_english_words": 350,
+    "max_cjk_characters": 700,
+}
+
+
 class AnalysisBrief(ProtocolRecord):
-    question: ShortText
+    model_config = ConfigDict(
+        json_schema_extra={
+            "x-researchctl-prose": {
+                "scope": "document",
+                **ANALYSIS_BRIEF_DOCUMENT_PROSE_LIMITS,
+            }
+        }
+    )
+
+    question: Annotated[
+        ShortText,
+        Field(
+            description="Research question under the declared prose budget.",
+            json_schema_extra={
+                "x-researchctl-prose": {
+                    "scope": "field",
+                    **ANALYSIS_BRIEF_QUESTION_PROSE_LIMITS,
+                }
+            },
+        ),
+    ]
     answer: Annotated[
         ShortText,
         Field(
@@ -1526,9 +1567,8 @@ class AnalysisBrief(ProtocolRecord):
             ),
             json_schema_extra={
                 "x-researchctl-prose": {
-                    "max_sentences": 2,
-                    "max_english_words": 60,
-                    "max_cjk_characters": 140,
+                    "scope": "field",
+                    **ANALYSIS_BRIEF_ANSWER_PROSE_LIMITS,
                 }
             },
         ),
@@ -1536,8 +1576,32 @@ class AnalysisBrief(ProtocolRecord):
     protocol: ShortText
     metrics: Annotated[tuple[BriefMetric, ...], Field(min_length=1, max_length=5)]
     evidence: Annotated[tuple[BriefEvidence, ...], Field(min_length=1, max_length=8)]
-    interpretation: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
-    limitations: Annotated[tuple[ShortText, ...], Field(max_length=3)] = ()
+    interpretation: Annotated[
+        tuple[ShortText, ...],
+        Field(
+            max_length=3,
+            description="Interpretation bullets; the prose budget applies to each item.",
+            json_schema_extra={
+                "x-researchctl-prose": {
+                    "scope": "each_item",
+                    **ANALYSIS_BRIEF_LIST_ITEM_PROSE_LIMITS,
+                }
+            },
+        ),
+    ] = ()
+    limitations: Annotated[
+        tuple[ShortText, ...],
+        Field(
+            max_length=3,
+            description="Limitation bullets; the prose budget applies to each item.",
+            json_schema_extra={
+                "x-researchctl-prose": {
+                    "scope": "each_item",
+                    **ANALYSIS_BRIEF_LIST_ITEM_PROSE_LIMITS,
+                }
+            },
+        ),
+    ] = ()
     sources: Annotated[tuple[BriefSource, ...], Field(min_length=1, max_length=16)]
 
     @model_validator(mode="before")

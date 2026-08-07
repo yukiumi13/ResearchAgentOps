@@ -27,10 +27,10 @@ stable acceptance-suite keys, not filenames.
 | `US-015` | No old/orphan Markdown pollution | Spec Sections 8, 10, 14, 17; ADR 0008 | 3 | `AT-US-015` | pre-existing Markdown hashes and managed-path checks |
 | `US-016` | Wrong input retained, not a claim | Spec Sections 5, 7.1-7.5, 12 | 3 | `AT-US-016` | preflight failure and failed-result submission policy |
 | `US-017` | Canonical Submission, multiple renderers | Spec Sections 7.5, 7.8, 8, 14, 17; ADRs 0003, 0008, 0010 | 4 | `AT-US-017` | golden renderers, byte comparison and digest stability |
-| `US-018` | GitHub/VS Code/CLI review | Spec Sections 9, 14, 17; ADR 0003 | 4 | `AT-US-018` | proposal/digest parity and manager-only acceptance |
+| `US-018` | GitHub/VS Code/CLI review | Spec Sections 9, 14, 17; ADRs 0003, 0015, 0016 | 4 | `AT-US-018` | proposal/digest parity, change-set branch reuse, and manager-only acceptance |
 | `US-019` | Single-repository truth and retention | Spec Sections 3, 9, 13-14; ADRs 0001, 0002 | 4 | `AT-US-019` | clean-clone validation and reachability disposition |
 | `US-020` | Rerun, waive, or stale impact decision | Spec Sections 6.6, 15; ADR 0005 | 6 | `AT-US-020` | effective status, explicit decision materialization and protected regeneration; live providers pending |
-| `US-021` | Trusted CI vs SSH experiments | Spec Sections 4.3, 7.8, 12, 17; ADRs 0007, 0010 | 4 | `AT-US-021` | secretless exact-head attestation and separate runner authority |
+| `US-021` | Trusted CI vs SSH experiments | Spec Sections 4.3, 7.8, 12, 17; ADRs 0007, 0010, 0016 | 4 | `AT-US-021` | secretless exact-head attestation, replaceable verifier execution, capacity diagnosis, and separate runner authority |
 | `US-022` | Onboarding and glossary | Spec Sections 8, 10, 18; scenario contract | 1 | `AT-US-022` | terminology/help golden tests and no-service start |
 | `US-023` | `allowed_write_paths` enforcement | Spec Sections 4.4, 7.1, 11, 17; ADRs 0007, 0011 | 2 | `AT-US-023` | prefix, traversal/symlink/rename/protected-path adversarial tests |
 | `US-024` | Batch-safe worktree sync | Spec Section 15; ADRs 0004, 0005 | 6 | `AT-US-024` | preview, safe-point policy, isolated conflict recovery |
@@ -84,3 +84,5 @@ the stable `US-*` catalog.
 | `REQ-20260805-002` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; contract/schema/scaffold/check, renderer provenance, prose budget, and standalone doctor tests |
 | `REQ-20260805-003` | `US-017`, `US-018`, `US-021` | Spec Sections 9 and 17; ADR 0015; CODEOWNERS contract; read-only governance audit; installed PR checks and branch-rule canary |
 | `REQ-20260806-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; compatibility baseline reader, diagnostics, provenance, and relation tests |
+| `REQ-20260806-002` | `US-017`, `US-018`, `US-021`, `US-023` | Spec Sections 4.3 and 17; ADRs 0015 and 0016; PR gate capacity/classification tests; runner recovery runbook |
+| `REQ-20260806-003` | `US-014`, `US-015`, `US-017`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; AnalysisBrief schema, aggregate lint, YAML diagnostic, and Agent-guide tests |

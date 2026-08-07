@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from researchctl.domain.models import AnalysisBrief, ResearchUpdate
+from researchctl.domain.models import (
+    ANALYSIS_BRIEF_ANSWER_PROSE_LIMITS,
+    ANALYSIS_BRIEF_DOCUMENT_PROSE_LIMITS,
+    ANALYSIS_BRIEF_LIST_ITEM_PROSE_LIMITS,
+    ANALYSIS_BRIEF_QUESTION_PROSE_LIMITS,
+    AnalysisBrief,
+    ResearchUpdate,
+)
 from researchctl.errors import RCPError
 from researchctl.services.generated_markdown import render_generated_markdown
 
@@ -13,8 +21,12 @@ ANALYSIS_BRIEF_RENDERER_ID = "research-analysis-brief.v4"
 ANALYSIS_BRIEF_RENDERER_VERSION = 4
 RESEARCH_UPDATE_RENDERER_ID = "linear.research-update.v3"
 RESEARCH_UPDATE_RENDERER_VERSION = 3
-ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT = 350
-ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT = 700
+ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT = ANALYSIS_BRIEF_DOCUMENT_PROSE_LIMITS[
+    "max_english_words"
+]
+ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT = ANALYSIS_BRIEF_DOCUMENT_PROSE_LIMITS[
+    "max_cjk_characters"
+]
 RESEARCH_UPDATE_ENGLISH_WORD_LIMIT = 100
 RESEARCH_UPDATE_CJK_CHARACTER_LIMIT = 220
 
@@ -140,43 +152,56 @@ def _sum_measures(values: list[ProseMeasure]) -> ProseMeasure:
     )
 
 
-def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
+def lint_analysis_brief_payload(payload: Mapping[str, object]) -> WritingLintResult:
+    """Collect every prose finding available from a parsed, possibly invalid brief."""
+
     findings: list[WritingFinding] = []
-    measures = [
-        _add_text_findings(
-            findings,
-            field_path="question",
-            value=brief.question,
-            max_english_words=40,
-            max_cjk_characters=100,
-            max_sentences=2,
-        ),
-        _add_text_findings(
-            findings,
-            field_path="answer",
-            value=brief.answer,
-            max_english_words=60,
-            max_cjk_characters=140,
-            max_sentences=2,
-        ),
-    ]
-    for label, values in (
-        ("interpretation", brief.interpretation),
-        ("limitations", brief.limitations),
-    ):
+    measures: list[ProseMeasure] = []
+    question = payload.get("question")
+    if isinstance(question, str):
+        measures.append(
+            _add_text_findings(
+                findings,
+                field_path="question",
+                value=question,
+                **ANALYSIS_BRIEF_QUESTION_PROSE_LIMITS,
+            )
+        )
+    answer = payload.get("answer", payload.get("conclusion"))
+    if isinstance(answer, str):
+        measures.append(
+            _add_text_findings(
+                findings,
+                field_path="answer",
+                value=answer,
+                **ANALYSIS_BRIEF_ANSWER_PROSE_LIMITS,
+            )
+        )
+    for label in ("interpretation", "limitations"):
+        values = payload.get(label)
+        if not isinstance(values, (list, tuple)):
+            continue
         for index, value in enumerate(values):
+            if not isinstance(value, str):
+                continue
             measures.append(
                 _add_text_findings(
                     findings,
                     field_path=f"{label}.{index}",
                     value=value,
-                    max_english_words=45,
-                    max_cjk_characters=120,
-                    max_sentences=2,
+                    **ANALYSIS_BRIEF_LIST_ITEM_PROSE_LIMITS,
                 )
             )
-    for row_index, row in enumerate(brief.evidence):
-        for metric_key, value in row.values.items():
+    evidence = payload.get("evidence")
+    if not isinstance(evidence, (list, tuple)):
+        evidence = ()
+    for row_index, row in enumerate(evidence):
+        if not isinstance(row, Mapping):
+            continue
+        values = row.get("values")
+        if not isinstance(values, Mapping):
+            continue
+        for metric_key, value in values.items():
             if isinstance(value, float):
                 findings.append(
                     WritingFinding(
@@ -218,6 +243,28 @@ def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
         max_english_words=ANALYSIS_BRIEF_ENGLISH_WORD_LIMIT,
         max_cjk_characters=ANALYSIS_BRIEF_CJK_CHARACTER_LIMIT,
     )
+
+
+def lint_analysis_brief(brief: AnalysisBrief) -> WritingLintResult:
+    return lint_analysis_brief_payload(brief.model_dump(mode="python"))
+
+
+def writing_findings_as_validation_details(
+    findings: tuple[WritingFinding, ...],
+) -> list[dict[str, object]]:
+    details: list[dict[str, object]] = []
+    for finding in findings:
+        location: list[str | int] = []
+        for component in finding.field_path.split("."):
+            location.append(int(component) if component.isdigit() else component)
+        details.append(
+            {
+                "type": finding.code,
+                "loc": location,
+                "msg": finding.message,
+            }
+        )
+    return details
 
 
 def lint_research_update(update: ResearchUpdate) -> WritingLintResult:

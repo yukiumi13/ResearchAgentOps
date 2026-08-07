@@ -9,7 +9,7 @@ from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 
 EXPECTED_FILE_SHA256 = {
     "analysis-brief.schema.json": (
-        "158244a228a2a0f70c1fc1e112ab980722896286e9ac14dce4336975a2ce16b2"
+        "2d977eb01f426823b480418c4b949cac502ad793e01ac0350415fe17092a4d68"
     ),
     "ci-validation-attestation.schema.json": (
         "ce98a73fd821089804f269680a7f0da573a1bb6c29f946a065613fad43c2c638"
@@ -42,7 +42,7 @@ EXPECTED_FILE_SHA256 = {
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
     "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
-    "manifest.json": "3a4c32dea8baa0ef34b71f56dda3a07dfc60cc4f765d5599fbaf902bd2763826",
+    "manifest.json": "a94638e1450f626c99da5bbbb061d122fa84d981f168c63458d221ba418376fa",
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
         "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"
@@ -114,6 +114,31 @@ def test_each_schema_has_a_stable_id_and_json_file_format() -> None:
         schema = json.loads(content)
         assert content.endswith(b"\n")
         assert schema["$id"] == f"urn:researchctl:schema:{PROTOCOL_VERSION}:{name}"
+
+
+def test_analysis_brief_schema_exposes_every_prose_budget() -> None:
+    schema = json.loads(generate_schema_files()["analysis-brief.schema.json"])
+    properties = schema["properties"]
+
+    assert schema["x-researchctl-prose"] == {
+        "scope": "document",
+        "max_english_words": 350,
+        "max_cjk_characters": 700,
+    }
+    assert properties["question"]["x-researchctl-prose"] == {
+        "scope": "field",
+        "max_sentences": 2,
+        "max_english_words": 40,
+        "max_cjk_characters": 100,
+    }
+    assert properties["answer"]["x-researchctl-prose"]["max_english_words"] == 60
+    for name in ("interpretation", "limitations"):
+        assert properties[name]["x-researchctl-prose"] == {
+            "scope": "each_item",
+            "max_sentences": 2,
+            "max_english_words": 45,
+            "max_cjk_characters": 120,
+        }
 
 
 def test_input_identity_schema_requires_a_non_null_version_or_digest() -> None:

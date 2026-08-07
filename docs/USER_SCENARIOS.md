@@ -247,7 +247,10 @@ but this ID remains the acceptance-suite and reporting key.
 - Scope / earliest phase / test: Extension / Phase 4 / `AT-US-018`.
 - Acceptance: the same proposal and digest are visible as a standard GitHub PR,
   standard Git/VS Code diff, and CLI summary; only the authenticated manager
-  acceptance path materializes Decision and Report.
+  acceptance path materializes Decision and Report. One proposal branch is one
+  reviewable change set rather than one commit: follow-up fixes reuse the same
+  PR, implementation may carry its required documentation, unrelated documents
+  are split, and rule-defining control changes use a Manager-owned proposal.
 
 ### US-019 - One repository owns truth and retention
 
@@ -277,16 +280,19 @@ but this ID remains the acceptance-suite and reporting key.
 ### US-021 - Trusted CI validates; SSH runners experiment
 
 - Sources: historical P-057, P-063, P-065, P-068.
-- Real expectation: GitHub Actions runs deterministic, secretless policy checks,
-  while long or GPU experiments run explicitly through SSH/tmux rather than
-  untrusted PR workflows.
+- Real expectation: a trusted executor runs deterministic, secretless policy
+  checks and publishes an exact-head GitHub check, while long or GPU experiments
+  run explicitly through SSH/tmux rather than untrusted PR workflows. The
+  executor may be GitHub-hosted Actions, a dedicated self-hosted Actions runner,
+  or an external CI integration; the GitHub ruleset remains the merge authority.
 - Scope / earliest phase / test: Core / Phase 4 / `AT-US-021`.
 - Acceptance: PR CI cannot access SSH/cloud/Linear credentials or invoke remote
   experiments, uses the protected validator, and gates merge. It emits a
   machine-readable attestation bound to the exact PR head/tree, validator,
   schema manifest and generated-output digests; any new commit invalidates it,
   and an Agent status cannot satisfy it. A separately authorized runner can
-  consume the already-frozen RunSpec.
+  consume the already-frozen RunSpec. Runner acquisition failure is distinct
+  from validation failure and never recommends disabling the merge ruleset.
 
 ### US-022 - Onboarding and help teach the object model
 

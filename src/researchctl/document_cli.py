@@ -65,7 +65,9 @@ from researchctl.services.project_documents import (
 from researchctl.services.requests import DocumentLayoutConfigureRequest
 from researchctl.services.research_writing import (
     lint_analysis_brief,
+    lint_analysis_brief_payload,
     render_analysis_brief,
+    writing_findings_as_validation_details,
 )
 
 doc_app = typer.Typer(
@@ -91,17 +93,25 @@ def _stream_output(output_file: Path | None) -> bool:
     }
 
 
-def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
+def _error(
+    exc: Exception,
+    *,
+    source_path: Path | None = None,
+    additional_details: list[dict[str, object]] | None = None,
+) -> RCPError:
     if isinstance(exc, RCPError):
         return exc
     if isinstance(exc, ValidationError):
+        details = validation_error_details(exc, source_path=source_path)
+        if additional_details:
+            details.extend(additional_details)
         return RCPError(
             code="validation_error",
             message="Document contract schema validation failed.",
             remediation=(
                 "Fix the listed fields and rerun `researchctl doc check PATH`."
             ),
-            context={"details": validation_error_details(exc, source_path=source_path)},
+            context={"details": details},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
@@ -117,6 +127,21 @@ def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
             remediation="Check document paths, policy, and file contents.",
         )
     raise exc
+
+
+def _analysis_brief_schema_error(exc: ValidationError, source: Path) -> RCPError:
+    additional: list[dict[str, object]] = []
+    try:
+        payload = load_yaml(source.read_text(encoding="utf-8"))
+        raw_lint = lint_analysis_brief_payload(payload)
+        additional = writing_findings_as_validation_details(raw_lint.findings)
+    except (OSError, SerializationError):
+        pass
+    return _error(
+        exc,
+        source_path=source,
+        additional_details=additional,
+    )
 
 
 def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
@@ -622,6 +647,16 @@ def _slugify(title: str) -> str:
 
 def _contract_data(contract: DocumentSchema) -> dict[str, object]:
     schema = json.loads(generate_schema_files()[f"{contract}.schema.json"])
+    properties = schema.get("properties", {})
+    prose_limits: dict[str, object] = {}
+    if isinstance(schema.get("x-researchctl-prose"), dict):
+        prose_limits["$"] = schema["x-researchctl-prose"]
+    if isinstance(properties, dict):
+        for name, value in properties.items():
+            if isinstance(value, dict) and isinstance(
+                value.get("x-researchctl-prose"), dict
+            ):
+                prose_limits[str(name)] = value["x-researchctl-prose"]
     source_format = (
         "Markdown with YAML frontmatter"
         if contract == "markdown-frontmatter"
@@ -656,6 +691,7 @@ def _contract_data(contract: DocumentSchema) -> dict[str, object]:
             else "researchctl doc render PATH --project . --output-file PATH.md"
         ),
         "schema_command": f"researchctl doc schema --contract {contract}",
+        "prose_limits": prose_limits,
         "provenance": (
             "Use keyed sources + provenance for measured, estimated, derived, or "
             "external Markdown claims."
@@ -895,6 +931,12 @@ def doc_contracts_command(
             typer.echo(f"  Standalone check (no policy): {standalone_check}")
             typer.echo(f"  Routed check (policy required): {item['routed_check_command']}")
         typer.echo(f"  Schema: {item['schema_command']}")
+        prose_limits = item["prose_limits"]
+        if isinstance(prose_limits, dict) and prose_limits:
+            typer.echo(
+                "  Prose limits: "
+                + json.dumps(prose_limits, ensure_ascii=False, sort_keys=True)
+            )
         typer.echo(f"  Provenance: {item['provenance']}")
         renderer = item["render_command"] or "none (manual Markdown is canonical)"
         typer.echo(f"  Render: {renderer}")
@@ -1105,7 +1147,10 @@ def doc_check_command(
                         "message": "Structured document sources must be direct route children.",
                     }
                 )
-            brief = load_model(source, AnalysisBrief)
+            try:
+                brief = load_model(source, AnalysisBrief)
+            except ValidationError as error:
+                raise _analysis_brief_schema_error(error, source) from error
             result = lint_analysis_brief(brief)
             findings.extend(
                 {
@@ -1250,7 +1295,10 @@ def doc_render_command(
                         "accepted route directory."
                     ),
                 )
-            document = load_model(source, AnalysisBrief)
+            try:
+                document = load_model(source, AnalysisBrief)
+            except ValidationError as error:
+                raise _analysis_brief_schema_error(error, source) from error
             content = render_analysis_brief(document)
         else:
             document = load_project_document(source)

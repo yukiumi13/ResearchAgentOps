@@ -76,6 +76,13 @@ taxonomy changes. Taxonomy, schema routing, identity policy, CODEOWNERS, and
 repository-rule changes additionally require a distinct manager-owned control
 proposal because they redefine what later proposals may pass.
 
+The proposal unit is one reviewable change set, not one commit or one file type.
+Follow-up commits for that change set stay on the same proposal branch and PR.
+Implementation and the documentation required to review or operate it may land
+atomically; unrelated documentation is separate. Control-policy changes remain
+isolated from ordinary content except for a minimal, explicitly justified
+compatibility migration that cannot pass in independently mergeable halves.
+
 ## Enforcement Workflow
 
 ```text
@@ -162,6 +169,8 @@ tests, owner consent, and deployment evidence exist.
   presented as hostile-process isolation.
 - Standalone document lint remains usable without GitHub or RCP initialization;
   protected acceptance is an additional repository deployment layer.
+- Agent code changes correctly use proposal branches, but a new branch and PR
+  for every follow-up commit is unintended churn.
 
 ## Verification
 
