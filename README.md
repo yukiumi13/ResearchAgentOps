@@ -100,6 +100,23 @@ For a managed repository with accepted `ProjectPolicy.github`, use
 `researchctl github doctor --project . --json`; the command derives the bound
 repository/default branch and compares the observed gates with that policy.
 
+Diagnose one blocked PR without changing GitHub state:
+
+```bash
+researchctl github pr-status \
+  --repository OWNER/REPOSITORY \
+  --pull-request NUMBER \
+  --json
+```
+
+The typed result distinguishes a validator rejection from a missing/pending
+check, review wait, governance gap, and a job that never acquired a runner. A
+`ci_capacity_pending` result calls for billing or runner recovery, not disabling
+the ruleset. GitHub Actions is the default event/check controller, but execution
+may move to a dedicated self-hosted runner or external CI as long as it publishes
+the authenticated required check for the exact head. See
+`docs/runbooks/github-ci-execution.md` for the Manager procedure.
+
 The command reads classic branch protection and active applicable branch
 rulesets, checks the review, latest-head, status-check, force-push, and deletion
 requirements, and exits `2` when a required gate is missing. It does not modify

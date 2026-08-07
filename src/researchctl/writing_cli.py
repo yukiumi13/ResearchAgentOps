@@ -19,6 +19,7 @@ from researchctl.output import (
 from researchctl.serialization import (
     SerializationError,
     load_model,
+    load_yaml,
     validation_error_details,
 )
 from researchctl.services.generated_markdown import (
@@ -28,9 +29,11 @@ from researchctl.services.generated_markdown import (
 from researchctl.services.research_writing import (
     WritingLintResult,
     lint_analysis_brief,
+    lint_analysis_brief_payload,
     lint_research_update,
     render_analysis_brief,
     render_research_update,
+    writing_findings_as_validation_details,
 )
 
 brief_app = typer.Typer(
@@ -43,15 +46,23 @@ update_app = typer.Typer(
 )
 
 
-def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
+def _error(
+    exc: Exception,
+    *,
+    source_path: Path | None = None,
+    additional_details: list[dict[str, object]] | None = None,
+) -> RCPError:
     if isinstance(exc, RCPError):
         return exc
     if isinstance(exc, ValidationError):
+        details = validation_error_details(exc, source_path=source_path)
+        if additional_details:
+            details.extend(additional_details)
         return RCPError(
             code="validation_error",
             message="Writing contract schema validation failed.",
             remediation="Fix the listed fields and rerun the same writing command.",
-            context={"details": validation_error_details(exc, source_path=source_path)},
+            context={"details": details},
         )
     if isinstance(exc, SerializationError):
         return RCPError(
@@ -67,6 +78,22 @@ def _error(exc: Exception, *, source_path: Path | None = None) -> RCPError:
             remediation="Check the input and output paths.",
         )
     raise exc
+
+
+def _brief_error(exc: Exception, *, source_path: Path) -> RCPError:
+    additional: list[dict[str, object]] = []
+    if isinstance(exc, ValidationError):
+        try:
+            payload = load_yaml(source_path.read_text(encoding="utf-8"))
+            raw_lint = lint_analysis_brief_payload(payload)
+            additional = writing_findings_as_validation_details(raw_lint.findings)
+        except (OSError, SerializationError):
+            pass
+    return _error(
+        exc,
+        source_path=source_path,
+        additional_details=additional,
+    )
 
 
 def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
@@ -184,7 +211,7 @@ def brief_lint_command(
         result = lint_analysis_brief(brief)
     except Exception as exc:
         _abort(
-            _error(exc, source_path=brief_file),
+            _brief_error(exc, source_path=brief_file),
             command=command,
             json_output=json_output,
         )
@@ -206,7 +233,7 @@ def brief_render_command(
         _write_or_echo(render_analysis_brief(brief), output_file)
     except Exception as exc:
         _abort(
-            _error(exc, source_path=brief_file),
+            _brief_error(exc, source_path=brief_file),
             command="brief.render",
             json_output=False,
         )

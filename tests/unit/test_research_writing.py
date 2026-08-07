@@ -331,6 +331,29 @@ def test_writing_cli_returns_two_for_lint_failure(tmp_path: Path) -> None:
     assert "prose_english_words_exceeded" in result.stdout
 
 
+def test_brief_lint_aggregates_schema_and_all_detectable_prose_errors(
+    tmp_path: Path,
+) -> None:
+    brief_path = tmp_path / "brief.yaml"
+    payload = _brief().model_dump(mode="json")
+    payload["protocol"] = "x" * 513
+    payload["interpretation"] = [
+        " ".join(["first"] * 46) + ".",
+        " ".join(["second"] * 47) + ".",
+    ]
+    brief_path.write_text(dump_yaml(payload), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["brief", "lint", str(brief_path), "--json"])
+
+    assert result.exit_code == 2
+    assert '"loc": [\n              "protocol"' in result.stdout
+    assert result.stdout.count('"type": "prose_english_words_exceeded"') == 2
+    assert '"interpretation",\n              0' in result.stdout
+    assert '"interpretation",\n              1' in result.stdout
+    assert "has 46 English words; maximum is 45" in result.stdout
+    assert "has 47 English words; maximum is 45" in result.stdout
+
+
 def test_writing_cli_reports_yaml_scanner_location_and_specific_remediation(
     tmp_path: Path,
 ) -> None:
@@ -348,6 +371,8 @@ def test_writing_cli_reports_yaml_scanner_location_and_specific_remediation(
     assert "ScannerError" in payload
     assert '"line": 2' in payload
     assert '"column": 16' in payload
+    assert "invalid YAML (ScannerError)" in payload
+    assert "invalid protocol YAML" not in payload
     assert "Quote plain YAML text" in payload
     assert "duplicate keys or aliases" not in payload
 

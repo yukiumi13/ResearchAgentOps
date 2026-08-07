@@ -144,6 +144,19 @@ failures print every field location and, when source YAML is available, its line
 and column; JSON output preserves the same structured details. Remediation names
 the real route-aware command, `researchctl doc check PATH`.
 
+AnalysisBrief JSON Schema exposes `x-researchctl-prose` at document scope and on
+every budgeted field. Array fields mark limits as `scope: each_item`; the root
+declares the whole-brief English and CJK totals. `doc contracts` summarizes the
+same extension. Once YAML parses, lint reports all detectable schema and prose
+length findings in one result, even when schema construction itself fails. A
+YAML scanner/parser error necessarily stops semantic lint because no reliable
+field tree exists, but it reports the exact line/column as `invalid YAML` rather
+than the ambiguous `invalid protocol YAML` phrase.
+
+Quoting guidance is field-specific. Display-sensitive numeric scalars are
+quoted under AnalysisBrief `evidence[].values` and Markdown frontmatter
+`provenance[].value`; prose block scalars do not include literal quote characters.
+
 Structured YAML is canonical source for design documents, project status
 summaries, and analysis briefs. Its Markdown pair is deterministic generated
 output and carries a visible versioned renderer marker plus source/body digests.

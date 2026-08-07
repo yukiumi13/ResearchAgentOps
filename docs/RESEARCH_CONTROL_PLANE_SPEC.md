@@ -119,6 +119,11 @@ the base repository or an immutable published action, never a validator modified
 by the untrusted PR under test. Workflows handling untrusted PRs receive no
 Linear, SSH, cloud, or manager credentials. CI emits an exact-head attestation;
 an agent-supplied check result or status message is never accepted as CI proof.
+The executor is replaceable: GitHub-hosted Actions, a dedicated self-hosted
+Actions runner, or an external CI controller may run the validator, but the
+protected GitHub gate accepts only an authenticated result bound to the exact
+proposal head. Runner availability and validation correctness are separate
+terminal states.
 
 ### 4.4 Host security boundary
 
@@ -579,6 +584,14 @@ targets are both repository-root relative; legacy document-root-relative
 relations receive an exact replacement diagnostic. Human validation output
 prints schema field paths and available YAML line/column positions by default,
 matching the structured details retained in JSON output.
+AnalysisBrief schema exposes field, per-item, and whole-document English/CJK
+budgets through `x-researchctl-prose`, and contract discovery summarizes them.
+Only display-sensitive scalars under `evidence[].values` or Markdown
+`provenance[].value` require YAML quoting; prose block scalars do not include
+literal quote characters. Once YAML parses, validation aggregates all detectable
+schema and prose-length findings. Scanner/parser failures report `invalid YAML`
+with exact line/column and stop semantic checks because no reliable field tree
+exists.
 Structured design, status, and brief YAML remains canonical while its Markdown
 is renderer-owned and visibly identifies its renderer version. A hidden
 provenance marker binds the canonical source digest and generated body digest.
@@ -1071,6 +1084,33 @@ observation before retry. This command is implemented and locally tested, but
 has not applied rules to this repository. ADR 0015 retains the proposal broker,
 pre-create App credential proof, and authenticated post-merge identity checks
 as deployment work.
+
+GitHub Actions was selected as the default controller because GitHub already
+owns the PR event, exact commit identity, check publication, and ruleset input.
+It is not required to provide the compute. Private-repository hosted-runner
+capacity may be replaced by a dedicated self-hosted control runner without
+changing check identity or merge authority. A voluntary local command is not a
+substitute because the proposer can omit it; an external CI is valid only when
+its trusted integration publishes the required exact-head GitHub check.
+
+The control runner executes only protected-base code and treats the PR tree as
+data. Any runner that executes PR source is disposable and credential-free and
+shares no trusted writable state. Research SSH/GPU runners consume frozen
+RunSpecs outside PR CI and are never general PR executors.
+
+`researchctl github pr-status` is a bounded, read-only diagnosis of one open PR.
+It combines applicable protection, current required checks, reviews, Actions
+runs/jobs, and capacity annotations into `ready`, `review_pending`,
+`checks_pending`, `ci_capacity_pending`, `validation_failed`, or
+`governance_misconfigured`. Capacity recovery restores billing or an authorized
+runner; it does not disable the ruleset.
+
+One Agent proposal branch corresponds to one reviewable change set, not one
+commit. Follow-up commits reuse the same PR. Code and the documentation required
+to review or operate it may be atomic; unrelated documents are split. Taxonomy,
+schema, CODEOWNERS, workflow, validator-pin, ruleset, and runner-trust changes
+are isolated Manager-owned control proposals unless a minimal compatibility
+migration explicitly proves that independent halves cannot pass.
 
 Trusted post-merge automation revalidates an accepted merge and prepares one
 stable projection event. Credential-free `shadow` mode emits only a canonical

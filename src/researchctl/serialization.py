@@ -167,7 +167,7 @@ def dump_yaml(value: BaseModel | dict[str, Any]) -> str:
 def _load_yaml_unchecked(text: str) -> dict[str, Any]:
     if len(text.encode("utf-8")) > _MAX_YAML_BYTES:
         raise SerializationError(
-            f"protocol YAML exceeds {_MAX_YAML_BYTES} byte limit"
+            f"YAML input exceeds {_MAX_YAML_BYTES} byte limit"
         )
     alias_count = sum(
         isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(text)
@@ -178,7 +178,7 @@ def _load_yaml_unchecked(text: str) -> dict[str, Any]:
         )
     loaded = yaml.load(text, Loader=UniqueKeyLoader)
     if not isinstance(loaded, dict):
-        raise SerializationError("protocol YAML root must be a mapping")
+        raise SerializationError("YAML root must be a mapping")
     _assert_finite(loaded)
     return loaded
 
@@ -206,7 +206,7 @@ def load_yaml(text: str) -> dict[str, Any]:
             else "Fix the YAML construct at the reported line and column."
         )
         raise SerializationError(
-            f"invalid protocol YAML ({error_type}){location}: {problem}",
+            f"invalid YAML ({error_type}){location}: {problem}",
             remediation=remediation,
             error_type=error_type,
             line=line,
@@ -215,7 +215,7 @@ def load_yaml(text: str) -> dict[str, Any]:
     except (yaml.YAMLError, RecursionError, TypeError, ValueError) as exc:
         error_type = type(exc).__name__
         raise SerializationError(
-            f"invalid protocol YAML ({error_type})",
+            f"invalid YAML ({error_type})",
             remediation="Fix the malformed canonical YAML and rerun validation.",
             error_type=error_type,
         ) from exc
@@ -302,7 +302,7 @@ def validation_error_details(
 def load_model(path: Path, model_type: type[ModelT]) -> ModelT:
     if path.stat().st_size > _MAX_YAML_BYTES:
         raise SerializationError(
-            f"protocol YAML exceeds {_MAX_YAML_BYTES} byte limit"
+            f"YAML input exceeds {_MAX_YAML_BYTES} byte limit"
         )
     data = load_yaml(path.read_text(encoding="utf-8"))
     return model_type.model_validate(data)

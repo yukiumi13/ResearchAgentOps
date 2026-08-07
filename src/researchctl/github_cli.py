@@ -7,6 +7,7 @@ from typing import Annotated, NoReturn
 import typer
 
 from researchctl.adapters.github_governance import GitHubGovernanceClient
+from researchctl.adapters.github_pr_gate import GitHubPullRequestGateClient
 from researchctl.adapters.github_protection import GitHubProtectionManager
 from researchctl.domain.ids import new_id
 from researchctl.domain.models import GitHubGovernancePolicy
@@ -14,6 +15,7 @@ from researchctl.errors import RCPError
 from researchctl.output import dump_envelope, envelope, error_payload
 from researchctl.serialization import load_model
 from researchctl.services.github_governance import audit_github_governance
+from researchctl.services.github_pr_gate import assess_github_pull_request_gate
 from researchctl.services.project_runtime import ProjectRuntimeService
 from researchctl.services.requests import GitHubGovernanceConfigureRequest
 
@@ -146,6 +148,89 @@ def github_doctor_command(
             typer.echo(f"[{check.status.upper()}] {check.name}: {check.message}")
     if not report.healthy:
         raise typer.Exit(code=2)
+
+
+@github_app.command("pr-status")
+def github_pr_status_command(
+    pull_request: Annotated[
+        int,
+        typer.Option("--pull-request", min=1, help="Open pull request number to diagnose."),
+    ],
+    repository: Annotated[
+        str | None,
+        typer.Option(
+            "--repository",
+            help="Canonical GitHub OWNER/REPOSITORY; required without --project.",
+        ),
+    ] = None,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            help="Managed project whose accepted GitHub policy supplies the target.",
+        ),
+    ] = None,
+    hostname: Annotated[
+        str,
+        typer.Option("--hostname", help="GitHub host used by gh api."),
+    ] = "github.com",
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit a stable JSON envelope."),
+    ] = False,
+) -> None:
+    """Diagnose the exact-head merge gate without changing GitHub state."""
+
+    command = "github.pr-status"
+    try:
+        branch = None
+        if project is not None:
+            policy = _accepted_github_policy(project)
+            if repository is not None and repository.lower() != policy.repository.lower():
+                raise RCPError(
+                    code="github_pr_status_request_invalid",
+                    message="Explicit repository conflicts with accepted ProjectPolicy.",
+                )
+            repository = policy.repository
+            branch = policy.default_branch
+        if repository is None:
+            raise RCPError(
+                code="github_pr_status_request_invalid",
+                message="GitHub PR status requires --repository or a managed --project.",
+            )
+        governance = GitHubGovernanceClient().observe(
+            repository=repository,
+            branch=branch,
+            hostname=hostname,
+        )
+        observation = GitHubPullRequestGateClient().observe(
+            repository=repository,
+            pull_request_number=pull_request,
+            required_checks=governance.required_status_checks,
+            hostname=hostname,
+        )
+        report = assess_github_pull_request_gate(observation, governance=governance)
+        data = report.as_dict()
+    except RCPError as error:
+        _abort(error, command=command, json_output=json_output)
+
+    if json_output:
+        typer.echo(dump_envelope(envelope(command=command, success=True, data=data)))
+        return
+    typer.echo(f"Outcome: {report.terminal_result}")
+    typer.echo(f"Repository: {observation.repository}")
+    typer.echo(f"Pull request: {observation.pull_request_number}")
+    typer.echo(f"Head: {observation.head_sha}")
+    typer.echo(f"Merge allowed: {str(report.merge_allowed).lower()}")
+    observed_checks = {item.name: item for item in observation.checks}
+    for name in observation.required_checks:
+        check = observed_checks.get(name)
+        typer.echo(f"Check: {name} = {check.state if check is not None else 'missing'}")
+    for item in observation.capacity_evidence:
+        typer.echo(
+            f"Capacity: run {item.workflow_run_id}, job {item.job_id}: {item.message}"
+        )
+    typer.echo(f"Next: {report.recommendation}")
 
 
 @github_app.command("apply-governance")
