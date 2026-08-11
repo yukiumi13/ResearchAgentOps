@@ -5,7 +5,6 @@ import re
 from collections import Counter
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_CATALOG = REPOSITORY_ROOT / "docs" / "USER_SCENARIOS.md"
 TRACEABILITY_MATRIX = REPOSITORY_ROOT / "docs" / "TRACEABILITY_MATRIX.md"
@@ -24,6 +23,7 @@ EXPECTED_POST_EXPORT_REQUIREMENTS = (
     "REQ-20260806-001",
     "REQ-20260806-002",
     "REQ-20260806-003",
+    "REQ-20260810-001",
 )
 
 _SCENARIO_HEADING = re.compile(r"^### (US-\d{3}) - .+$", re.MULTILINE)

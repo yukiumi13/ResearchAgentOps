@@ -271,7 +271,7 @@ def upgrade_command(
     ] = Path("."),
     check: Annotated[
         bool,
-        typer.Option("--check", help="Preview protocol compatibility."),
+        typer.Option("--check/--no-check", help="Preview protocol compatibility."),
     ] = True,
     json_output: Annotated[
         bool,

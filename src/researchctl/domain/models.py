@@ -44,8 +44,9 @@ from researchctl.domain.enums import (
     TaskState,
 )
 from researchctl.domain.types import (
-    DependencyReceiptId,
+    AttestationId,
     DecisionId,
+    DependencyReceiptId,
     DocumentId,
     DocumentLabel,
     DocumentSlug,
@@ -56,7 +57,6 @@ from researchctl.domain.types import (
     GitObjectId,
     HumanKey,
     ImpactId,
-    AttestationId,
     LinearUuid,
     NonEmptyStr,
     OperationId,
@@ -68,15 +68,14 @@ from researchctl.domain.types import (
     RunAttemptId,
     RunId,
     RunResultId,
+    SessionId,
     Sha256Digest,
     ShortText,
     StatusUpdateId,
     SubmissionId,
-    SessionId,
     TaskId,
     UtcDateTime,
 )
-
 
 _REPOSITORY_PATH_ADAPTER = TypeAdapter(RepositoryPath)
 _PROTECTED_WRITE_PREFIX = PurePosixPath(".research")
@@ -1326,6 +1325,174 @@ class MarkdownFrontmatter(StrictModel):
             if undeclared:
                 differences.append("undeclared source keys: " + ", ".join(undeclared))
             raise ValueError("Markdown provenance source mismatch; " + "; ".join(differences))
+        return self
+
+
+DocumentSitePageKind = Literal["root", "manual", "structured", "legacy"]
+DocumentSiteHistoryKind = Literal["archive", "legacy"]
+
+
+class DocumentSitePage(StrictModel):
+    path: RepositoryPath
+    source_path: RepositoryPath | None = None
+    kind: DocumentSitePageKind
+    title: ShortText
+    document_type: DocumentSlug | None = None
+    classification: DocumentLabel | None = None
+    contract: DocumentSchema | None = None
+    validity: Literal["valid", "invalid", "frozen"] | None = None
+    lifecycle: DocumentLifecycle | None = None
+    generated: StrictBool = False
+    route_order: Annotated[StrictInt, Field(ge=0)] | None = None
+    relations: DocumentRelations = Field(default_factory=DocumentRelations)
+    content_digest: Sha256Digest
+    source_digest: Sha256Digest | None = None
+    history_kind: DocumentSiteHistoryKind | None = None
+
+    @model_validator(mode="after")
+    def require_kind_specific_metadata(self) -> DocumentSitePage:
+        route_fields = (
+            self.document_type,
+            self.classification,
+            self.contract,
+            self.route_order,
+        )
+        if self.kind == "root":
+            if any(value is not None for value in route_fields):
+                raise ValueError("root site pages cannot carry route metadata")
+            if (
+                self.source_path is not None
+                or self.validity is not None
+                or self.lifecycle is not None
+                or self.generated
+                or self.source_digest is not None
+                or self.history_kind is not None
+                or self.relations != DocumentRelations()
+            ):
+                raise ValueError("root site pages must be direct Markdown content")
+            return self
+        if self.kind == "legacy":
+            if (
+                self.document_type is None
+                or self.classification is None
+                or self.route_order is None
+            ):
+                raise ValueError("legacy site pages require their migration route metadata")
+            if self.contract is not None:
+                raise ValueError("legacy site pages cannot claim a validated content contract")
+            if (
+                self.source_path is not None
+                or self.validity is not None
+                or self.lifecycle is not None
+                or self.generated
+                or self.source_digest is not None
+                or self.history_kind != "legacy"
+                or self.relations != DocumentRelations()
+            ):
+                raise ValueError("legacy site pages must remain explicit legacy content")
+            return self
+        if any(value is None for value in route_fields):
+            raise ValueError("routed site pages require complete route metadata")
+        if self.kind == "manual":
+            if self.contract != "markdown-frontmatter" or self.validity is None:
+                raise ValueError("manual site pages require validated Markdown frontmatter")
+            if (
+                self.source_path is not None
+                or self.lifecycle is not None
+                or self.generated
+                or self.source_digest is not None
+            ):
+                raise ValueError("manual site pages cannot claim a generated source pair")
+            expected_history = (
+                "archive"
+                if self.document_type == "archive" or self.validity == "invalid"
+                else None
+            )
+            if self.history_kind != expected_history:
+                raise ValueError("manual site page history metadata is inconsistent")
+            return self
+        if (
+            self.contract == "markdown-frontmatter"
+            or self.validity is not None
+            or not self.generated
+            or self.source_path is None
+            or self.source_digest is None
+            or self.relations != DocumentRelations()
+        ):
+            raise ValueError("structured site pages require a canonical source/render pair")
+        if self.contract in {"design-document", "project-status-summary"}:
+            if self.lifecycle is None:
+                raise ValueError("project structured site pages require lifecycle metadata")
+        elif self.lifecycle is not None:
+            raise ValueError("this structured contract does not define a lifecycle")
+        expected_history = (
+            "archive"
+            if self.document_type == "archive"
+            or self.lifecycle in {"superseded", "deprecated"}
+            else None
+        )
+        if self.history_kind != expected_history:
+            raise ValueError("structured site page history metadata is inconsistent")
+        return self
+
+
+class DocumentSiteExcludedPath(StrictModel):
+    path: RepositoryPath
+    reason: Literal[
+        "structured_source",
+        "legacy_non_markdown",
+        "root_non_markdown",
+    ]
+    page_path: RepositoryPath | None = None
+
+    @model_validator(mode="after")
+    def bind_structured_source_to_page(self) -> DocumentSiteExcludedPath:
+        if (self.reason == "structured_source") != (self.page_path is not None):
+            raise ValueError("only structured source exclusions require page_path")
+        return self
+
+
+class DocumentSiteManifest(ProtocolRecord):
+    manifest_kind: Literal["document_site_manifest"] = "document_site_manifest"
+    document_root: RepositoryPath
+    repository_head: GitObjectId | None = None
+    repository_state: Literal["clean", "dirty"]
+    repository_remote: NonEmptyStr | None = None
+    policy_digest: Sha256Digest
+    pages: tuple[DocumentSitePage, ...]
+    excluded_paths: tuple[DocumentSiteExcludedPath, ...] = ()
+    manifest_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_unique_paths_and_valid_digest(self) -> DocumentSiteManifest:
+        page_paths = tuple(page.path for page in self.pages)
+        excluded_paths = tuple(item.path for item in self.excluded_paths)
+        if len(page_paths) != len(set(page_paths)):
+            raise ValueError("document site page paths must be unique")
+        if len(excluded_paths) != len(set(excluded_paths)):
+            raise ValueError("document site excluded paths must be unique")
+        if set(page_paths) & set(excluded_paths):
+            raise ValueError("document site paths cannot be both published and excluded")
+        structured_pairs = {
+            (page.source_path, page.path)
+            for page in self.pages
+            if page.kind == "structured"
+        }
+        excluded_source_pairs = {
+            (item.path, item.page_path)
+            for item in self.excluded_paths
+            if item.reason == "structured_source"
+        }
+        if structured_pairs != excluded_source_pairs:
+            raise ValueError(
+                "structured site pages and source exclusions must have a one-to-one mapping"
+            )
+
+        from researchctl.serialization import canonical_digest
+
+        payload = self.model_dump(mode="json", exclude={"manifest_digest"})
+        if self.manifest_digest != canonical_digest(payload):
+            raise ValueError("document site manifest digest does not match its content")
         return self
 
 

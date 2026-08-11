@@ -84,3 +84,17 @@ jobs:
           "$RUNNER_TEMP/researchctl-source-tests/bin/researchctl" doc tree \
             --project "$GITHUB_WORKSPACE" \
             --baseline-project "$RUNNER_TEMP/researchctl-base"
+
+      - name: Build validated documentation site
+        shell: bash
+        env:
+          RESEARCHCTL_SITE_MANIFEST: ${{ runner.temp }}/researchctl-site-manifest.json
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/researchctl-source-tests/bin/researchctl" doc site-manifest \
+            --project "$GITHUB_WORKSPACE" \
+            --require-clean \
+            --output-file "$RESEARCHCTL_SITE_MANIFEST"
+          "$RUNNER_TEMP/researchctl-source-tests/bin/mkdocs" build \
+            --strict \
+            --site-dir "$RUNNER_TEMP/researchctl-site"

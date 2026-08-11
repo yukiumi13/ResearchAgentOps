@@ -287,3 +287,25 @@ requirements so traceability does not silently stop at that boundary.
   and do not imply the `protocol` field is invalid. Agent guidance restricts
   numeric-looking scalar quoting to AnalysisBrief `evidence[].values` and
   Markdown `provenance[].value`; it explicitly excludes prose block scalars.
+
+## REQ-20260810-001 - Validated document trees project into replaceable sites
+
+- Source: post-export static document-library and MkDocs/Read the Docs tool
+  evaluation, 2026-08-10.
+- Maps to: `US-014`, `US-015`, `US-022`, `US-031`.
+- Acceptance: `.researchctl-docs.yaml` or managed `DocumentLayoutPolicy` remains
+  the only taxonomy and directory authority. `doc site-manifest` runs the full
+  tree validator before emitting a strict, deterministic, engine-neutral JSON
+  artifact with policy order, publishable Markdown metadata, validity/lifecycle,
+  relations, source paths, raw source/content digests, repository identity and
+  clean/dirty state, explicit structured-source and legacy exclusions, and a
+  self-authenticating canonical digest. The manifest schema is discoverable
+  through `doc schema`. An optional MkDocs plugin consumes only the manifest,
+  verifies every published/source byte, rejects unlisted Markdown and optionally
+  dirty state, filters canonical YAML, derives navigation, and injects display
+  metadata. MkDocs remains an optional presentation dependency; hand-maintained
+  `nav` cannot become a second taxonomy. Static hosting publishes only accepted
+  protected-main builds. Local implementation must not claim that GitHub Pages,
+  Read the Docs, or another host has been deployed. A repository can reuse an
+  existing source-test runner for strict site validation rather than allocating
+  a separate Actions job; presentation/publishing config is manager-owned.

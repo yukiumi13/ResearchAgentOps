@@ -293,6 +293,51 @@ Markdown parser, HTML renderer, theme system, or documentation-site framework;
 projects may use mature Markdown tooling for those downstream jobs while RCP
 remains the schema/lint authority.
 
+For a browsable document library, install the optional MkDocs adapter and build
+from an ephemeral validated manifest:
+
+```bash
+pip install 'research-control-plane[docs-site]'
+researchctl doc site-manifest --project . --require-clean \
+  --output-file /tmp/researchctl-site-manifest.json
+researchctl doc schema --contract document-site-manifest
+RESEARCHCTL_SITE_MANIFEST=/tmp/researchctl-site-manifest.json \
+  mkdocs build --strict
+```
+
+```yaml
+# mkdocs.yml: theme and presentation settings live here; do not hand-write nav.
+site_name: Project documents
+docs_dir: docs
+plugins:
+  - search
+  - researchctl:
+      manifest: !ENV RESEARCHCTL_SITE_MANIFEST
+      require_clean: true
+```
+
+`doc site-manifest` first requires the complete governed tree to pass. Its
+strict JSON records policy order, page title/type/classification, validity or
+lifecycle, relations, canonical-source path, repository identity/state, and
+exact content/source digests. Structured YAML and legacy non-Markdown are
+explicit exclusions. The manifest is a replaceable build artifact, not tracked
+authority; write it outside the repository or to an ignored build directory.
+
+The plugin validates the manifest and every page/source byte, rejects dirty
+publication when configured, removes canonical YAML from the site, rejects
+unlisted Markdown, generates navigation from policy route order, and injects
+display metadata plus an immutable source link when the remote is recognized.
+MkDocs owns Markdown-to-HTML, search, live reload, and themes. GitHub Pages or
+Read the Docs may host the strict build from protected `main`, but neither owns
+taxonomy or acceptance. No `mkdocs.yml nav` becomes a second directory truth,
+and MkDocs remains absent from the core install.
+
+This repository keeps that presentation-only configuration in `mkdocs.yml` and
+reuses the existing `researchctl/source-tests` runner for the strict build. The
+canary does not create another Actions job and does not deploy Pages. The
+CODEOWNERS rule covers `mkdocs.yml` because a future accepted publication must
+not let an unreviewed presentation change hide validated pages.
+
 An existing project may preserve its own frontmatter around a generated body by
 configuring a structured route:
 

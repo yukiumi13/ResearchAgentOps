@@ -1,0 +1,15 @@
+site_name: ResearchAgentOps
+site_description: Governed research control-plane contracts and operating documentation
+docs_dir: docs
+site_dir: site
+strict: true
+use_directory_urls: true
+
+theme:
+  name: mkdocs
+
+plugins:
+  - search
+  - researchctl:
+      manifest: !ENV RESEARCHCTL_SITE_MANIFEST
+      require_clean: true

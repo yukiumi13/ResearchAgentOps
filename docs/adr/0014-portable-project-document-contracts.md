@@ -177,6 +177,46 @@ solve those downstream concerns but do not replace the project-specific
 would not remove the contract logic and would enlarge the compatibility surface,
 so no general Markdown framework is part of the core.
 
+### Documentation Site Projection
+
+A documentation library is a downstream view of the validated tree, not a new
+taxonomy. `researchctl doc site-manifest` therefore runs the complete tree lint
+and emits a strict engine-neutral JSON projection. Every publishable Markdown
+page carries its policy route order, title, type, classification, contract,
+validity or structured lifecycle, relations, exact content digest, and optional
+same-stem canonical YAML path plus raw-byte digest. Root and finite legacy pages
+remain explicit. Canonical YAML, legacy non-Markdown, and non-Markdown root files
+are recorded as exclusions rather than silently disappearing. Repository HEAD,
+sanitized remote, clean/dirty state, policy digest, and a canonical manifest
+digest bind the build input.
+
+The first optional adapter targets MkDocs Core. It consumes only the manifest,
+requires `docs_dir` to match the governed root, verifies every page and
+structured-source byte, filters exclusions, rejects Markdown missing from the
+manifest, derives navigation from route order, and injects display-only metadata
+and immutable forge source links where possible. `require_clean` defaults to
+true for publication and may be disabled for a local preview.
+
+MkDocs was selected because it is a mature Python static-site engine with a
+small plugin boundary, strict builds, live reload, search, and broad theme and
+hosting support. Material for MkDocs is an optional theme rather than a contract.
+Read the Docs and GitHub Pages are hosting/deployment choices that can consume
+the same strict build. Sphinx is stronger for API cross-reference domains but
+adds unnecessary authoring machinery for this policy-routed Markdown corpus;
+Docusaurus and VitePress add a separate JavaScript toolchain without replacing
+validation. None is allowed to infer or own taxonomy. In particular,
+`mkdocs.yml nav` is generated in memory and must not become a hand-maintained
+second directory truth.
+
+The manifest is replaceable build output, not accepted repository state. It
+should be written to `/tmp` or an ignored build directory. Static publication
+must originate from protected `main`; PR preview output is review evidence, not
+accepted truth. No hosting deployment is claimed by this local vertical slice.
+ResearchAgentOps uses a CODEOWNERS-protected `mkdocs.yml` and appends the strict
+build to its existing source-test job, avoiding another runner allocation. That
+canary validates presentation only; it neither publishes a preview nor deploys
+Pages.
+
 Some repositories already require their own generated-document frontmatter. A
 structured route may declare `generated_markdown_frontmatter.required_fields`.
 The Markdown target must contain that project-owned envelope before its first
@@ -221,6 +261,8 @@ read-only and cannot acquire manager authority merely by acting as reviewer.
 - RCP remains usable as a schema/lint engine when a project chooses another
   Markdown/HTML presentation stack; only deterministic paired Markdown uses its
   projection functions.
+- A validated tree can feed a static site without copying policy into a second
+  navigation file; the first MkDocs adapter remains optional and replaceable.
 - Baseline-free local lint cannot prove frozen immutability; CI must provide a
   trusted baseline checkout for that check.
 - The current CLI is the integration surface. A language-server/editor adapter
@@ -238,3 +280,9 @@ guide insertion and drift detection, manager-only policy proposals, protected
 field-scope replay, legacy-policy baseline migration, malformed baseline
 fail-closed behavior, human field/line diagnostics, CODEOWNERS, and the
 exact-head source workflow contract.
+Additional site tests cover deterministic manifest/digest generation, root,
+manual, structured, legacy, invalid, frozen, lifecycle, raw source/content
+digests, exclusions, clean/dirty state, CLI/schema discovery, safe manifest
+replacement, generated navigation, metadata/source links, drift rejection, and
+a real MkDocs Core strict build. The repository source workflow repeats that
+strict build from an ephemeral clean manifest without adding another CI job.

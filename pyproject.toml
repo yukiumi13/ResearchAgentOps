@@ -41,14 +41,21 @@ Issues = "https://github.com/yukiumi13/ResearchAgentOps/issues"
 
 [project.optional-dependencies]
 dev = [
+    "mkdocs>=1.6,<2",
     "pytest>=9,<10",
     "ruff>=0.12",
+]
+docs-site = [
+    "mkdocs>=1.6,<2",
 ]
 
 [project.scripts]
 researchctl = "researchctl.cli:app"
 researchctl-linear-host = "researchctl.trusted_linear_host:app"
 researchctl-github-post-merge = "researchctl.github_post_merge_host:app"
+
+[project.entry-points."mkdocs.plugins"]
+researchctl = "researchctl.integrations.mkdocs:ResearchctlPlugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
