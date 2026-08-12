@@ -75,6 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          "$RUNNER_TEMP/researchctl-source-tests/bin/python" -m ruff check .
           "$RUNNER_TEMP/researchctl-source-tests/bin/python" -m pytest
 
       - name: Lint project document hierarchy

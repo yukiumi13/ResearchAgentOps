@@ -1,7 +1,7 @@
 # Research Control Plane Design Assessment
 
 Status: implementation review
-Updated: 2026-08-04
+Updated: 2026-08-12
 
 ## Conclusion
 
@@ -25,27 +25,39 @@ locally but still needs a live repository pilot.
 | Quality | Current assessment | Evidence and remaining risk |
 |---|---|---|
 | Correctness and governance | Strong for the local core | Strict records, actor capabilities, Git path closure, immutable Run refs, manager-only acceptance, exact-head CI, and crash/idempotency tests prevent an Agent status or self-authored Report from becoming accepted truth. Real GitHub rules still must be installed by an administrator. |
-| Maintainability | Acceptable for R0, with required internal cleanup after it | Domain models, deterministic renderers, stable errors, and thin CLI presentations are clear. `ApplicationService` and `RuntimeStore` are already large, and Linear composition currently uses a concrete worker plus a private bind hook. Split internal command/store modules behind small protocols after R0 while retaining one public facade and one SQLite database. |
+| Maintainability | Acceptable for R0, with measured cleanup required | The 2026-08-12 review removed the 183-finding Ruff baseline and adds full-repository lint to source CI. `RuntimeStore`, `ApplicationService`, `domain/models.py`, CI dispatch, and document linting remain large change surfaces. Split observed domain or transaction hotspots behind the existing public facade and SQLite authority. |
 | Extensibility | Strong at declared boundaries | Git, GitHub Submission delivery, Agent CLI, tmux, CI, run execution, and Linear use narrow ports. Optional Linear project scope is supported. New transports should consume the same requests/outbox rather than add another Task or Session state machine. |
-| Local response speed | Appropriate for the target scale | Indexed SQLite reads and local Git object checks avoid network calls in interactive commands. The 50-item inbox benchmark exists, but it is explicitly preliminary; no production p95/p99 claim is valid until the 200-sample, 30-minute end-to-end run is recorded. |
+| Local response speed | Appropriate for the target scale | On cm04, cold import and document commands measured about 0.55-0.68 seconds. A 50-item, 200-sample warm diagnostic measured inbox read p95/p99 at 0.777/0.854 ms and render p95/p99 at 1.975/1.986 ms with zero failures. The 0.74-second window remains preliminary; no production claim is valid until the 30-minute end-to-end run is recorded. |
 | CI response | Bounded and reproducible | Protected-base exact-head CI reads PR content only as Git objects and has a ten-minute timeout. A separate unprivileged, credential-free workflow intentionally executes the exact PR source with a fifteen-minute timeout. Large evidence bytes remain external; GitHub queue time must be reported separately. |
 | Ease of use | Usable for technical researchers, not yet polished for a pilot | Human flags and strict Agent JSON call the same service, guided Task creation covers the compact PM fields, and the inbox is grouped by management question. Long canonical IDs, CODEOWNERS review, and branch-rule configuration are deliberate safety costs. Session notifications still need one deployed Linear adapter before `@app` works remotely. |
 | Operational simplicity | Strong local design | The core needs Python, Git, SQLite, tmux, and repository-native Agent CLIs. It has no broker, web UI, inbound research-host listener, or general scheduler. The Linear adapter and future SSH controller can run as short-lived jobs. |
 | Scale | Suitable for one researcher or a small lab project | One local SQLite writer and Git-native records are a good fit for tens of active Sessions and moderate Run history. They are not a distributed control database. A separate fenced controller is justified only for a genuinely shared GPU pool. |
 
-The codebase is operationally simple but no longer small: it contains roughly
-30,000 lines of Python implementation and 20,000 lines of tests. In particular,
-`RuntimeStore`, `ApplicationService`, and the CI validators are already large
-change surfaces. R1 should freeze new core mechanisms, record actual change
-hotspots during the pilot, and then split only those internals behind the
-existing public facade. Adding another service, database, or plugin framework
+The codebase is operationally simple but no longer small: the 2026-08-12 review
+counted 52,198 lines under `src/researchctl` and 32,731 test lines. The largest
+files are `RuntimeStore` (3,298 lines), `ApplicationService` (2,696), domain
+models (2,511), and CI dispatch (2,042). Function-level hotspots are more useful
+than file size alone: `lint_document_tree` is 469 lines, one CI validation path
+is 248, site-manifest construction is 208, and notification/ingress transactions
+reach 140-161 lines. R1 should freeze new core mechanisms, record actual change
+hotspots during the pilot, and split these internals incrementally with
+characterization tests. Adding another service, database, or plugin framework
 would make maintenance worse at the current scale.
 
 The end-to-end workflow and implementation-status audit is maintained in
-`WORKFLOW_COVERAGE.md`. It maps all 33 stable scenarios to 15 workflows and
+`WORKFLOW_COVERAGE.md`. It maps all 33 stable scenarios to 16 workflows and
 keeps `verified_local`, `partial`, `deployment_pending`, and `designed`
 separate. This prevents static prompt traceability from being presented as an
 executed acceptance result.
+
+Python remains the supported implementation language. The measured local paths
+do not justify a rewrite, and most unfinished latency belongs to Git, subprocess,
+GitHub runner acquisition, network APIs, or remote execution. Pydantic, Typer,
+SQLite, and the optional MkDocs adapter also keep the current implementation
+cohesive. A Rust or Go component is justified only after profiling identifies a
+stable CPU, memory, startup, or concurrency boundary that cannot be isolated and
+optimized behind an existing port. A whole-system rewrite would currently add
+protocol migration and parity risk without addressing the deployment gaps.
 
 ## Goal Simulations
 

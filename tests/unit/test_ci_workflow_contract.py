@@ -59,6 +59,7 @@ def test_source_tests_run_exact_pr_head_without_secrets_or_write_permission() ->
     assert "RCP_BASE_SHA: ${{ github.event.pull_request.base.sha }}" in content
     assert 'git worktree add --detach "$RUNNER_TEMP/researchctl-base" "$RCP_BASE_SHA"' in content
     assert "pip install '.[dev]'" in content
+    assert 'bin/python" -m ruff check .' in content
     assert 'bin/python" -m pytest' in content
     assert 'doc tree \\' in content
     assert '--baseline-project "$RUNNER_TEMP/researchctl-base"' in content

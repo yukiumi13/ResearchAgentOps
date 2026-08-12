@@ -87,3 +87,4 @@ the stable `US-*` catalog.
 | `REQ-20260806-002` | `US-017`, `US-018`, `US-021`, `US-023` | Spec Sections 4.3 and 17; ADRs 0015 and 0016; PR gate capacity/classification tests; runner recovery runbook |
 | `REQ-20260806-003` | `US-014`, `US-015`, `US-017`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; AnalysisBrief schema, aggregate lint, YAML diagnostic, and Agent-guide tests |
 | `REQ-20260810-001` | `US-014`, `US-015`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; document-site manifest/schema/CLI and strict MkDocs adapter tests |
+| `REQ-20260812-001` | `US-014`, `US-025`, `US-027` | system stability snapshot; Ruff/source-test gate; traceability and benchmark tests |
