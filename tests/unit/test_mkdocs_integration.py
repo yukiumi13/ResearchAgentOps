@@ -20,6 +20,8 @@ from researchctl.domain.models import (
 from researchctl.integrations.mkdocs import ResearchctlPlugin
 from researchctl.serialization import canonical_digest
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Path]:
     project = tmp_path / "project"
@@ -209,3 +211,15 @@ def test_mkdocs_core_builds_the_manifest_projection_strictly(tmp_path: Path) -> 
     assert "Overview" in overview
     assert "researchctl-site-metadata:document-site-manifest.v1" in result
     assert "docs/brief/result.yaml" in result
+
+
+def test_repository_site_output_is_confined_to_ignored_build_tree() -> None:
+    config = (PROJECT_ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    ignored = {
+        line.strip()
+        for line in (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "site_dir: build/site" in config
+    assert "build/" in ignored

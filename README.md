@@ -302,7 +302,7 @@ researchctl doc site-manifest --project . --require-clean \
   --output-file /tmp/researchctl-site-manifest.json
 researchctl doc schema --contract document-site-manifest
 RESEARCHCTL_SITE_MANIFEST=/tmp/researchctl-site-manifest.json \
-  mkdocs build --strict
+  mkdocs build --strict --site-dir build/site
 ```
 
 ```yaml

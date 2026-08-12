@@ -1,7 +1,7 @@
 site_name: ResearchAgentOps
 site_description: Governed research control-plane contracts and operating documentation
 docs_dir: docs
-site_dir: site
+site_dir: build/site
 strict: true
 use_directory_urls: true
 
