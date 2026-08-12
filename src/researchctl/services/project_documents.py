@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -15,13 +18,22 @@ from researchctl.domain.models import (
     DesignDocument,
     DocumentLayoutPolicy,
     DocumentRoute,
+    DocumentSiteExcludedPath,
+    DocumentSiteManifest,
+    DocumentSitePage,
     MarkdownFrontmatter,
     ProjectStatusSummary,
 )
 from researchctl.errors import RCPError
-from researchctl.repository import safe_repository_path
+from researchctl.repository import (
+    current_head,
+    discover_repository,
+    safe_repository_path,
+    status_porcelain,
+)
 from researchctl.serialization import (
     SerializationError,
+    canonical_digest,
     dump_yaml,
     load_yaml,
     validation_error_details,
@@ -1299,6 +1311,269 @@ def lint_document_tree(
         structured_documents=len(structured_sources),
         findings=tuple(findings),
     )
+
+
+def _content_digest(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def _markdown_title(content: bytes, *, fallback: str) -> str:
+    text = content.decode("utf-8", errors="replace")
+    fence: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        match = re.match(r"^#\s+(.+?)\s*#*\s*$", stripped)
+        if match is not None:
+            title = match.group(1)
+            if len(title) <= 512:
+                return title
+    return fallback
+
+
+def _site_history_kind(
+    *,
+    document_type: str,
+    validity: str | None = None,
+    lifecycle: str | None = None,
+) -> Literal["archive"] | None:
+    if (
+        document_type == "archive"
+        or validity == "invalid"
+        or lifecycle in {"superseded", "deprecated"}
+    ):
+        return "archive"
+    return None
+
+
+def build_document_site_manifest(
+    repository_root: Path,
+    policy: DocumentLayoutPolicy,
+) -> DocumentSiteManifest:
+    """Project a fully valid document tree into an engine-neutral site manifest."""
+
+    repository = Path(os.path.abspath(os.fspath(repository_root)))
+    lint = lint_document_tree(repository, policy)
+    if not lint.passed:
+        raise RCPError(
+            code="document_site_tree_invalid",
+            message="Document site manifest requires a valid governed document tree.",
+            remediation=(
+                "Run `researchctl doc tree --project PROJECT --json` and fix every "
+                "invalid finding."
+            ),
+            context=lint.as_dict(),
+        )
+
+    git_repository = discover_repository(repository)
+    document_root = repository / policy.root
+    collection_findings: list[DocumentFinding] = []
+    files = _collect_files(document_root, collection_findings)
+    if any(finding.kind == "invalid" for finding in collection_findings):
+        raise RCPError(
+            code="document_site_tree_changed",
+            message="Document tree changed while the site manifest was being generated.",
+            remediation="Rerun document tree lint and site manifest generation.",
+            context={"findings": [item.as_dict() for item in collection_findings]},
+        )
+
+    root_order = {path: index for index, path in enumerate(policy.root_files)}
+    route_order = {route.classification: index for index, route in enumerate(policy.routes)}
+    legacy = {item.path: item for item in policy.legacy_files}
+    pages: list[DocumentSitePage] = []
+    excluded: list[DocumentSiteExcludedPath] = []
+
+    for file_path in files:
+        relative = file_path.relative_to(repository).as_posix()
+        content = file_path.read_bytes()
+        if relative in root_order:
+            if file_path.suffix.lower() != ".md":
+                excluded.append(
+                    DocumentSiteExcludedPath(
+                        path=relative,
+                        reason="root_non_markdown",
+                    )
+                )
+                continue
+            pages.append(
+                DocumentSitePage(
+                    path=relative,
+                    kind="root",
+                    title=_markdown_title(content, fallback=file_path.stem),
+                    content_digest=_content_digest(content),
+                )
+            )
+            continue
+
+        legacy_entry = legacy.get(relative)
+        if legacy_entry is not None:
+            route = policy.route_for_label(legacy_entry.classification)
+            if route is None:
+                raise AssertionError("validated legacy classification has no route")
+            if file_path.suffix.lower() != ".md":
+                excluded.append(
+                    DocumentSiteExcludedPath(
+                        path=relative,
+                        reason="legacy_non_markdown",
+                    )
+                )
+                continue
+            pages.append(
+                DocumentSitePage(
+                    path=relative,
+                    kind="legacy",
+                    title=_markdown_title(content, fallback=file_path.stem),
+                    document_type=route.document_type,
+                    classification=route.classification,
+                    route_order=route_order[route.classification],
+                    content_digest=_content_digest(content),
+                    history_kind="legacy",
+                )
+            )
+            continue
+
+        route = _route_for_path(policy, relative)
+        if route is None:
+            raise AssertionError("validated document path has no route")
+        order = route_order[route.classification]
+        if route.contract == "markdown-frontmatter":
+            frontmatter, _body = load_markdown_frontmatter(
+                content.decode("utf-8"),
+                path=relative,
+            )
+            pages.append(
+                DocumentSitePage(
+                    path=relative,
+                    kind="manual",
+                    title=frontmatter.title,
+                    document_type=route.document_type,
+                    classification=route.classification,
+                    contract=route.contract,
+                    validity=frontmatter.validity,
+                    route_order=order,
+                    relations=frontmatter.relations,
+                    content_digest=_content_digest(content),
+                    history_kind=_site_history_kind(
+                        document_type=route.document_type,
+                        validity=frontmatter.validity,
+                    ),
+                )
+            )
+            continue
+        if file_path.suffix.lower() == ".md":
+            continue
+
+        generated_path = relative.removesuffix(".yaml") + ".md"
+        generated_content = (repository / generated_path).read_bytes()
+        if route.contract == "analysis-brief":
+            from researchctl.serialization import load_model
+
+            document: StructuredDocument = load_model(file_path, AnalysisBrief)
+            title = document.question
+            lifecycle = None
+        else:
+            document = load_project_document(file_path)
+            title = document.title
+            lifecycle = document.status
+        pages.append(
+            DocumentSitePage(
+                path=generated_path,
+                source_path=relative,
+                kind="structured",
+                title=title,
+                document_type=route.document_type,
+                classification=route.classification,
+                contract=route.contract,
+                lifecycle=lifecycle,
+                generated=True,
+                route_order=order,
+                content_digest=_content_digest(generated_content),
+                source_digest=_content_digest(content),
+                history_kind=_site_history_kind(
+                    document_type=route.document_type,
+                    lifecycle=lifecycle,
+                ),
+            )
+        )
+        excluded.append(
+            DocumentSiteExcludedPath(
+                path=relative,
+                reason="structured_source",
+                page_path=generated_path,
+            )
+        )
+
+    def page_key(page: DocumentSitePage) -> tuple[int, int, str]:
+        if page.kind == "root":
+            return (0, root_order[page.path], page.path)
+        if page.history_kind is None:
+            return (1, page.route_order or 0, page.path)
+        if page.history_kind == "archive":
+            return (2, page.route_order or 0, page.path)
+        return (3, page.route_order or 0, page.path)
+
+    ordered_pages = tuple(sorted(pages, key=page_key))
+    ordered_excluded = tuple(sorted(excluded, key=lambda item: item.path))
+
+    final_lint = lint_document_tree(repository, policy)
+    if not final_lint.passed:
+        raise RCPError(
+            code="document_site_tree_changed",
+            message="Document tree changed while the site manifest was being generated.",
+            remediation="Rerun document tree lint and site manifest generation.",
+            context=final_lint.as_dict(),
+        )
+    for page in ordered_pages:
+        if _content_digest((repository / page.path).read_bytes()) != page.content_digest:
+            raise RCPError(
+                code="document_site_tree_changed",
+                message="A publishable page changed during site manifest generation.",
+                remediation="Rerun document tree lint and site manifest generation.",
+                context={"path": page.path},
+            )
+        if page.source_path is not None:
+            source_digest = _content_digest((repository / page.source_path).read_bytes())
+            if source_digest != page.source_digest:
+                raise RCPError(
+                    code="document_site_tree_changed",
+                    message="A structured source changed during site manifest generation.",
+                    remediation="Rerun document tree lint and site manifest generation.",
+                    context={"path": page.source_path},
+                )
+
+    payload: dict[str, object] = {
+        "schema_version": "0.1",
+        "manifest_kind": "document_site_manifest",
+        "document_root": policy.root,
+        "repository_head": current_head(git_repository),
+        "repository_state": "dirty" if status_porcelain(git_repository) else "clean",
+        "repository_remote": git_repository.remote_url,
+        "policy_digest": canonical_digest(policy),
+        "pages": [page.model_dump(mode="json") for page in ordered_pages],
+        "excluded_paths": [item.model_dump(mode="json") for item in ordered_excluded],
+    }
+    payload["manifest_digest"] = canonical_digest(payload)
+    return DocumentSiteManifest.model_validate(payload)
+
+
+def render_document_site_manifest(manifest: DocumentSiteManifest) -> bytes:
+    return (
+        json.dumps(
+            manifest.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 def _lint_frozen_documents(

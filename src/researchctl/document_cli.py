@@ -5,7 +5,9 @@ import os
 import re
 import stat
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from re import sub
 from typing import Annotated, Literal, NoReturn
@@ -51,12 +53,14 @@ from researchctl.services.project_documents import (
     DocumentLintResult,
     DocumentTreeLintResult,
     agent_guide_markers,
+    build_document_site_manifest,
     inspect_document_relation_target,
     lint_document_tree,
     lint_project_document,
     load_markdown_frontmatter,
     load_project_document,
     render_document_index,
+    render_document_site_manifest,
     render_project_agent_guide,
     render_project_document,
     render_standalone_document_policy_template,
@@ -82,6 +86,13 @@ _DOCUMENT_CONTRACTS: tuple[DocumentSchema, ...] = (
     "design-document",
     "project-status-summary",
 )
+DiscoverableDocumentSchema = Literal[
+    "markdown-frontmatter",
+    "analysis-brief",
+    "design-document",
+    "project-status-summary",
+    "document-site-manifest",
+]
 _REPOSITORY_PATH = TypeAdapter(RepositoryPath)
 
 
@@ -304,6 +315,45 @@ def _write_or_echo(
     typer.echo(f"Rendered: {destination}")
 
 
+def _write_ephemeral_output(content: bytes, output_file: Path | None) -> None:
+    """Write a replaceable build artifact without generated-document ownership rules."""
+
+    if _stream_output(output_file):
+        typer.echo(content.decode("utf-8"), nl=False)
+        return
+    destination = Path(os.path.abspath(os.fspath(output_file)))
+    if destination.parent.is_symlink() or not destination.parent.is_dir():
+        raise RCPError(
+            code="document_output_path_invalid",
+            message="Site manifest output parent must be an existing non-symlink directory.",
+            context={"path": str(output_file)},
+        )
+    if destination.exists() or destination.is_symlink():
+        if destination.is_symlink() or not destination.is_file():
+            raise RCPError(
+                code="document_output_path_invalid",
+                message="Site manifest output must be a regular non-symlink file.",
+                context={"path": str(output_file)},
+            )
+        if destination.read_bytes() == content:
+            typer.echo(f"Unchanged: {destination}")
+            return
+        mode = stat.S_IMODE(destination.stat().st_mode)
+        _atomic_replace(destination, content, mode)
+        typer.echo(f"Updated: {destination}")
+        return
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    typer.echo(f"Rendered: {destination}")
+
+
 def _agent_guide_destination(
     repository: Path,
     output_file: Path,
@@ -380,10 +430,8 @@ def _atomic_replace(destination: Path, content: bytes, mode: int) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, destination)
     except Exception:
-        try:
+        with suppress(OSError):
             os.close(descriptor)
-        except OSError:
-            pass
         temporary.unlink(missing_ok=True)
         raise
 
@@ -437,7 +485,7 @@ def _upsert_agent_guide(
         )
         overlaps = any(
             previous.end() > current.start()
-            for previous, current in zip(blocks, blocks[1:], strict=False)
+            for previous, current in pairwise(blocks)
         )
         if len(marker_pattern.findall(observed)) != 2 * len(blocks) or overlaps:
             raise RCPError(
@@ -948,8 +996,8 @@ def doc_contracts_command(
 @doc_app.command("schema")
 def doc_schema_command(
     contract: Annotated[
-        DocumentSchema,
-        typer.Option("--contract", help="Built-in document contract name."),
+        DiscoverableDocumentSchema,
+        typer.Option("--contract", help="Built-in document or artifact contract name."),
     ],
     output_file: Annotated[
         Path | None,
@@ -1375,6 +1423,46 @@ def doc_tree_command(
     except Exception as exc:
         _abort(_error(exc), command="doc.tree", json_output=json_output)
     _emit_lint(result, command="doc.tree", json_output=json_output)
+
+
+@doc_app.command("site-manifest")
+def doc_site_manifest_command(
+    project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
+    policy_file: Annotated[
+        Path | None,
+        typer.Option("--policy-file", help="Standalone DocumentLayoutPolicy YAML."),
+    ] = None,
+    output_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-file",
+            help="Write replaceable manifest JSON here; stdout is the default.",
+        ),
+    ] = None,
+    require_clean: Annotated[
+        bool,
+        typer.Option(
+            "--require-clean",
+            help="Reject a manifest generated from a dirty repository.",
+        ),
+    ] = False,
+) -> None:
+    """Emit a validated, engine-neutral documentation-site manifest."""
+
+    try:
+        repository, policy = _repository_and_policy(project, policy_file)
+        manifest = build_document_site_manifest(repository, policy)
+        if require_clean and manifest.repository_state != "clean":
+            raise RCPError(
+                code="document_site_repository_dirty",
+                message="Clean site publication was requested from a dirty repository.",
+                remediation=(
+                    "Commit or discard the relevant changes, then regenerate the manifest."
+                ),
+            )
+        _write_ephemeral_output(render_document_site_manifest(manifest), output_file)
+    except Exception as exc:
+        _abort(_error(exc), command="doc.site-manifest", json_output=False)
 
 
 @doc_app.command("index")

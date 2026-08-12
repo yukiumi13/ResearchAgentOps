@@ -8,6 +8,7 @@
 /.github/CODEOWNERS @yukiumi13
 /.github/workflows/ @yukiumi13
 /.researchctl-docs.yaml @yukiumi13
+/mkdocs.yml @yukiumi13
 /pyproject.toml @yukiumi13
 /src/researchctl/ @yukiumi13
 /src/researchctl/adapters/git_ci.py @yukiumi13

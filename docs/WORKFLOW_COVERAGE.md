@@ -230,6 +230,8 @@ complete policy template -> standalone policy lint -> manager-reviewed project p
 -> deterministic index comparison -> compatibility-read trusted baseline root
 -> raw baseline frontmatter discovery -> frozen byte comparison
 -> local/editor/CI findings -> repository review
+-> validated engine-neutral site manifest -> optional MkDocs navigation/build
+-> protected-main static publication
 ```
 
 Without `researchctl init`, `.researchctl-docs.yaml` supplies the complete static
@@ -242,8 +244,19 @@ routes; tree lint rejects missing or stale instructions. Semantic namespace dept
 and route filesystem depth are separate bounded policy fields. Local policy-
 template/lint, schema/tree/index/guide/frozen checks, structured-source discovery,
 project-frontmatter preservation, YAML diagnostics, and source-workflow wiring
-are verified. RCP does not replace Markdown-to-HTML or documentation-site tools;
-an editor/language-server adapter and a protected-repository pilot remain open.
+are verified. The engine-neutral site manifest and optional MkDocs projection
+are locally verified: RCP remains taxonomy/validation authority while MkDocs
+owns Markdown-to-HTML, navigation presentation, search, themes, and strict site
+builds. No static host has been deployed. An editor/language-server adapter,
+protected publication pilot, and protected-repository acceptance pilot remain
+open.
+
+ResearchAgentOps itself supplies a presentation-only `mkdocs.yml` with no
+hand-maintained navigation. Its existing `researchctl/source-tests` job creates
+an ephemeral clean manifest and runs `mkdocs build --strict` in the same runner,
+so the canary adds no second Actions capacity queue. `mkdocs.yml` is
+CODEOWNERS-protected. The job validates buildability only and does not publish a
+PR preview or deploy a static host.
 
 ## Scenario Checklist
 
@@ -262,15 +275,15 @@ an editor/language-server adapter and a protected-repository pilot remain open.
 | [x] | `US-011` | `partial` | `WF-02` | `WF-11` | execution-domain policy records | HostPool selection and grouped fleet view |
 | [x] | `US-012` | `partial` | `WF-05` | `WF-11` | typed local preflight and immutable inputs | cross-domain staging and destination verification |
 | [x] | `US-013` | `partial` | `WF-03` | `WF-04` | local tmux attach/pause/continue and one-writer rules | provider-complete remote continuation |
-| [x] | `US-014` | `verified_local` | `WF-00` | `WF-14`, `WF-15` | Git/tmux/SQLite composition, portable document linter, and CLI/JSON parity | observed pilot maintenance budget |
-| [x] | `US-015` | `verified_local` | `WF-15` | `WF-05`, `WF-06` | frontmatter/path/tree, frozen baseline, orphan render, and machine-root tests | cleanup pilot across long-lived repository |
+| [x] | `US-014` | `verified_local` | `WF-00` | `WF-14`, `WF-15` | Git/tmux/SQLite composition, portable document linter, site manifest, and CLI/JSON parity | observed pilot maintenance budget |
+| [x] | `US-015` | `verified_local` | `WF-15` | `WF-05`, `WF-06` | frontmatter/path/tree, frozen baseline, orphan render, machine-root, manifest, and strict MkDocs tests | cleanup and protected publication pilots across a long-lived repository |
 | [x] | `US-016` | `verified_local` | `WF-05` | `WF-06` | mismatch/failure evidence and submission checks | explicit failure-study policy workflow |
 | [x] | `US-017` | `partial` | `WF-06` | `WF-09`, `WF-10` | canonical Submission/renderers plus separate Plan/PlanReview evidence and deterministic CI replay | live PR and installed-rule pilot |
 | [x] | `US-018` | `partial` | `WF-06` | `WF-09` | fixed GitHub PR plus CLI/Git review artifacts and distinct Agent-author/manager-reviewer deployment contract | GitHub App-authored PR and request-changes/reject/abandon pilot |
 | [x] | `US-019` | `partial` | `WF-08` | `WF-01`, `WF-06` | Git-owned accepted records and immutable refs | reachability-aware cleanup and retention apply |
 | [x] | `US-020` | `partial` | `WF-07` | `WF-05` | batch, typed receipts, fail-closed unresolved classification, effective status and explicit decisions | live providers/replay and protected-repository pilot |
 | [x] | `US-021` | `partial` | `WF-09` | `WF-05`, `WF-15` | secretless exact-head CI, baseline document lint, policy-bound governance audit, and Manager/digest-gated classic protection apply separated from Runs | execute reviewed rule apply, distinct App PR author, and authorized runner pilot |
-| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free policy template/lint, contract/schema discovery, route scaffold/check/render, deterministic Claude/AGENTS guide, standalone-aware doctor, and core terminology | glossary golden tests and novice usability run |
+| [x] | `US-022` | `partial` | `WF-01` | `WF-14`, `WF-15` | init-free policy template/lint, contract/schema discovery, route scaffold/check/render, deterministic Claude/AGENTS guide, site manifest discovery, standalone-aware doctor, and core terminology | glossary golden tests and novice usability run |
 | [x] | `US-023` | `verified_local` | `WF-03` | `WF-06`, `WF-09` | traversal/symlink/rename/protected path tests | hostile same-user isolation remains out of scope |
 | [x] | `US-024` | `designed` | `WF-08` | `WF-03`, `WF-07` | safe-point and conflict contract | preview/apply batch sync implementation |
 | [x] | `US-025` | `verified_local` | `WF-14` | `WF-00` | 77-prompt/33-scenario static traceability tests | executed acceptance results must stay separate |
@@ -279,7 +292,7 @@ an editor/language-server adapter and a protected-repository pilot remain open.
 | [x] | `US-028` | `partial` | `WF-03` | `WF-11` | deterministic local tmux and no daemon dependency | fixed SSH remote lifecycle |
 | [x] | `US-029` | `designed` | `WF-11` | `WF-05` | exact-input and ambiguity contracts | on-prem-to-cloud run and artifact return |
 | [x] | `US-030` | `deployment_pending` | `WF-10` | `WF-09` | stable outbox/receipt and crash-recovery fake-port tests | real Linear comment canary |
-| [x] | `US-031` | `partial` | `WF-01` | `WF-00`, `WF-15` | standalone document adoption, required route rationales, machine-readable tree evidence, authoring scaffold/dispatch, and dirty/idempotent init tests | explicit upgrade apply and second realistic repo pilot |
+| [x] | `US-031` | `partial` | `WF-01` | `WF-00`, `WF-15` | standalone document adoption, required route rationales, machine-readable tree/site evidence, authoring scaffold/dispatch, and dirty/idempotent init tests | explicit upgrade apply and second realistic repo publication pilot |
 | [x] | `US-032` | `designed` | `WF-12` | `WF-11` | allocation safety ADR and state contract | controller, contention, quarantine, restore tests |
 | [x] | `US-033` | `deployment_pending` | `WF-10` | `WF-13` | Git-authoritative replay and ignored-mutation tests | outage/canary against real Linear transport |
 
@@ -309,10 +322,11 @@ an editor/language-server adapter and a protected-repository pilot remain open.
    tested. Documentation must keep `deployment_pending` separate from local
    completion until branch rules, credentials, and a shadow/canary pilot are
    observed from an exact release commit.
-7. `Low`: document diagnostics are reusable through CLI/JSON and generated
-   schemas, but no editor language-server adapter currently streams per-keystroke
-   findings. That adapter should remain a thin presentation over WF-15 rather
-   than another policy implementation.
+7. `Low`: document diagnostics and the static-site projection are reusable
+   through CLI/JSON, generated schemas, and an optional MkDocs adapter, but no
+   editor language-server currently streams per-keystroke findings. That
+   adapter should remain a thin presentation over WF-15 rather than another
+   policy implementation.
 
 ## Dependency Framework Decision
 
