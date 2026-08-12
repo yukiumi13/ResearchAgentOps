@@ -23,7 +23,6 @@ from researchctl.services.github_post_merge import (
     github_artifact_name,
 )
 
-
 REPOSITORY = "owner/repository"
 PULL_REQUEST = 17
 BASE_SHA = "a" * 40

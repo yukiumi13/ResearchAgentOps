@@ -23,7 +23,6 @@ from researchctl.serialization import load_model, load_yaml
 from researchctl.services.bootstrap_proposal import BootstrapProposalService
 from researchctl.services.control_bootstrap import capture_managed_init_manifest
 
-
 OPERATION_ID = "operation_20260803T140000Z_" + "a" * 24
 OTHER_OPERATION_ID = "operation_20260803T140001Z_" + "b" * 24
 BOOTSTRAP_ID = "bootstrap_20260803T140000Z_" + "c" * 24

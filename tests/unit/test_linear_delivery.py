@@ -28,6 +28,15 @@ from researchctl.services.actor import (
     ActorRole,
     CredentialKind,
 )
+from researchctl.services.ci_dispatch import CIPRDispatchAttestation
+from researchctl.services.ci_validation import CI_CHECK_IDENTITY, CI_WORKFLOW_ID
+from researchctl.services.github_post_merge import (
+    GITHUB_WORKFLOW_EVENT,
+    GITHUB_WORKFLOW_PATH,
+    AuthenticatedGitHubPostMergeBridge,
+    AuthenticatedGitHubPostMergeObservation,
+    github_artifact_name,
+)
 from researchctl.services.linear_delivery import (
     AcceptedMergeSnapshot,
     LinearAcceptedResultDeliveryService,
@@ -38,15 +47,6 @@ from researchctl.services.linear_delivery import (
     parse_linear_delivery_marker,
     strip_linear_transport_envelope,
 )
-from researchctl.services.ci_dispatch import CIPRDispatchAttestation
-from researchctl.services.ci_validation import CI_CHECK_IDENTITY, CI_WORKFLOW_ID
-from researchctl.services.github_post_merge import (
-    GITHUB_WORKFLOW_EVENT,
-    GITHUB_WORKFLOW_PATH,
-    AuthenticatedGitHubPostMergeBridge,
-    AuthenticatedGitHubPostMergeObservation,
-    github_artifact_name,
-)
 from researchctl.services.linear_preview import build_linear_preview
 from researchctl.services.post_merge import (
     TrustedPostMergeService,
@@ -55,7 +55,6 @@ from researchctl.services.post_merge import (
 )
 from researchctl.services.review_acceptance import ReviewAcceptanceBuilder
 from researchctl.services.submissions import SubmissionEvidence
-
 
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 WORKSPACE_ID = "11111111-1111-4111-8111-111111111111"

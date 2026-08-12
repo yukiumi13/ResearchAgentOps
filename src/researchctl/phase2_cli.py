@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, TypeVar
+from typing import Annotated, Any
 
 import typer
 from click import Choice
@@ -20,8 +20,8 @@ from researchctl.domain.enums import InputKind, Priority, SessionState, StatusKi
 from researchctl.domain.ids import new_id
 from researchctl.domain.models import (
     DecisionRequest,
-    ExperimentPlan,
     ExecutionPreferences,
+    ExperimentPlan,
     InputIdentity,
     LinearProjectionPolicy,
     PlanReview,
@@ -70,7 +70,6 @@ from researchctl.services.requests import (
     TaskUpdateRequest,
 )
 
-
 bootstrap_app = typer.Typer(
     help="Prepare explicit Project bootstrap changes.",
     no_args_is_help=True,
@@ -94,8 +93,7 @@ linear_delivery_app = typer.Typer(
 )
 linear_app.add_typer(linear_delivery_app, name="delivery")
 
-RequestT = TypeVar("RequestT", bound=BaseModel)
-HumanBuilder = Callable[[], RequestT]
+type HumanBuilder[RequestT: BaseModel] = Callable[[], RequestT]
 HumanRenderer = Callable[[dict[str, Any]], None]
 
 _INBOX_GROUPS = (
@@ -210,7 +208,7 @@ def _prompt_value(prompt: str | None, prompt_file: Path | None) -> str:
     return _required(prompt, "--prompt")
 
 
-def _machine_or_human_request(
+def _machine_or_human_request[RequestT: BaseModel](
     json_input: bool,
     model: type[RequestT],
     human_builder: HumanBuilder[RequestT],
@@ -697,7 +695,7 @@ def _render_linear_delivery_show(data: dict[str, Any]) -> None:
         )
 
 
-def _run_command(
+def _run_command[RequestT: BaseModel](
     *,
     command: str,
     method_name: str,

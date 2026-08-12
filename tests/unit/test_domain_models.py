@@ -24,7 +24,6 @@ from researchctl.domain.models import (
     TaskRecord,
 )
 
-
 PayloadFactory = Callable[..., dict[str, Any]]
 
 

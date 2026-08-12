@@ -33,12 +33,12 @@ from researchctl.services.application import ApplicationService
 from researchctl.services.requests import (
     BootstrapAcceptRequest,
     BootstrapProposalRequest,
-    InboxAckRequest,
-    InboxListRequest,
-    InboxResolveRequest,
     ImpactBatchCreateRequest,
     ImpactCreateRequest,
     ImpactDecisionCreateRequest,
+    InboxAckRequest,
+    InboxListRequest,
+    InboxResolveRequest,
     ReviewAcceptRequest,
     RunCollectRequest,
     RunRetryRequest,
@@ -49,7 +49,6 @@ from researchctl.services.requests import (
     TaskUpdateRequest,
 )
 from researchctl.services.task_records import TaskRecordRepository
-
 
 NOW = datetime(2026, 8, 2, 12, 34, 56, tzinfo=UTC)
 PROJECT_ID = "project_20260802T123456Z_" + "9" * 24
@@ -802,7 +801,7 @@ def test_impact_is_manager_owned_journaled_and_denies_agent_before_workflow(
 def test_impact_batch_is_trusted_automation_owned_and_replayable(
     tmp_path: Path,
 ) -> None:
-    service, runtime = _service(tmp_path)
+    service, _runtime = _service(tmp_path)
     workflow = _ImpactWorkflow()
     service.impact_workflow = workflow
     request = ImpactBatchCreateRequest(

@@ -10,7 +10,6 @@ from researchctl.services.linear_delivery_health_runtime import (
     RuntimeLinearDeliveryObservationSource,
 )
 
-
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 
 

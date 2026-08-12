@@ -18,7 +18,6 @@ from researchctl.services.github_pr_gate import (
     assess_github_pull_request_gate,
 )
 
-
 REPOSITORY = "owner/project"
 HEAD = "7" * 40
 

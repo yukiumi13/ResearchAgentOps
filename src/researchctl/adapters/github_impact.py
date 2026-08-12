@@ -12,7 +12,6 @@ from researchctl.services.impact_delivery import (
     ImpactPullRequestReceipt,
 )
 
-
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _IMPACT_BRANCH = re.compile(
     r"^research/impact/(impact_\d{8}T\d{6}Z_[0-9a-f]{24})$"

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -305,7 +306,7 @@ def _run_record_checks(root: Path, checks: list[DoctorCheck]) -> None:
             canonical_relative=lambda record: (
                 f"{relative_directory}/{record.run_id}/result.yaml"
             ),
-            content_valid=lambda record: (
+            content_valid=lambda record, spec=spec: (
                 not isinstance(spec, RunSpec)
                 or record.run_spec_digest == spec.spec_digest
             ),
@@ -376,7 +377,7 @@ def _submission_evidence_checks(
             canonical_relative=lambda record: (
                 f"{evidence_relative}/{record.run_id}/result.yaml"
             ),
-            content_valid=lambda record: (
+            content_valid=lambda record, spec=spec: (
                 not isinstance(spec, RunSpec)
                 or record.run_spec_digest == spec.spec_digest
             ),

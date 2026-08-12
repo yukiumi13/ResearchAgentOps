@@ -28,7 +28,6 @@ from researchctl.services.project_documents import (
     render_standalone_document_policy_template,
 )
 
-
 DOCUMENT_ID = "document_20260804T120000Z_" + "1" * 24
 BASIS_COMMIT = "2" * 40
 SESSION_ID = "session_20260804T110000Z_" + "3" * 24

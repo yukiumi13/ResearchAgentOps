@@ -11,7 +11,6 @@ from researchctl.domain.models import TaskRecord
 from researchctl.domain.types import ShortText
 from researchctl.serialization import SerializationError, load_yaml
 
-
 PROJECT_ID = "project_20260802T123456Z_" + "a" * 24
 MANIFEST_DIGEST = "sha256:" + "b" * 64
 

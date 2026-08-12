@@ -13,14 +13,13 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import DependencySet, ImpactDecision, ReportRecord
 from researchctl.errors import RCPError
-from researchctl.serialization import canonical_digest, dump_yaml
+from researchctl.serialization import dump_yaml
 from researchctl.services.impact_decision import ImpactDecisionBuilder
 from researchctl.services.impact_decision_workflow import (
     ImpactDecisionWorkflowService,
 )
 from researchctl.services.report_impact import ReportImpactBuilder
 from researchctl.services.requests import ImpactDecisionCreateRequest
-
 
 IMPACT_ID = "impact_20260803T140000Z_" + "1" * 24
 DECISION_ID = "decision_20260803T150000Z_" + "2" * 24

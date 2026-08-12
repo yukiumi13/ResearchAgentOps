@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil, isfinite
 from time import perf_counter_ns
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol
 
 from researchctl.runtime import AttentionItem
 from researchctl.serialization import canonical_json_bytes
@@ -18,9 +18,6 @@ MIN_PRODUCTION_SAMPLE_COUNT = 200
 MIN_PRODUCTION_WINDOW_SECONDS = 30 * 60
 LOCAL_INBOX_P95_OBJECTIVE_MS = 500.0
 LOCAL_INBOX_P99_OBJECTIVE_MS = 1_000.0
-
-ResultT = TypeVar("ResultT")
-
 
 class InboxReader(Protocol):
     def list_inbox(
@@ -246,7 +243,7 @@ def run_inbox_benchmark(
     )
 
 
-def _measure(
+def _measure[ResultT](
     sample_count: int,
     operation: Callable[[], ResultT],
     validator: Callable[[ResultT], object],

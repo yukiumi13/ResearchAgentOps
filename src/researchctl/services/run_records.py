@@ -3,13 +3,13 @@ from __future__ import annotations
 import fcntl
 import os
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 from researchctl.adapters import GitWorktreeAdapter, WorktreeSpec
-from researchctl.adapters.git_run import GitRunAdapter, RunRecordCommitReceipt
+from researchctl.adapters.git_run import GitRunAdapter
 from researchctl.domain.models import RunResult, RunSpec
 from researchctl.errors import RCPError
 from researchctl.repository import safe_repository_path

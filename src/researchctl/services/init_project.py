@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import re
+import tempfile
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -23,9 +25,9 @@ from researchctl.domain.models import (
 from researchctl.domain.types import utc_now
 from researchctl.errors import (
     ConflictError,
-    RCPError,
     ProtocolCompatibilityError,
     ProtocolLockError,
+    RCPError,
 )
 from researchctl.repository import (
     GitRepository,
@@ -332,10 +334,8 @@ def _publish_exclusive(
         _fsync_directory(destination.parent)
         return published.st_dev, published.st_ino
     finally:
-        try:
+        with suppress(FileNotFoundError):
             temporary.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _remove_if_unchanged(destination: Path, identity: tuple[int, int]) -> None:

@@ -19,7 +19,6 @@ from researchctl.services.github_pr_gate import assess_github_pull_request_gate
 from researchctl.services.project_runtime import ProjectRuntimeService
 from researchctl.services.requests import GitHubGovernanceConfigureRequest
 
-
 github_app = typer.Typer(
     help="Audit and configure GitHub governance for research proposals.",
     no_args_is_help=True,

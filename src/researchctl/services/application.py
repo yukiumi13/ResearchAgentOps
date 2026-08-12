@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH, PROJECT_POLICY_PATH
 from researchctl.domain.enums import (
@@ -18,9 +19,9 @@ from researchctl.domain.models import (
     ExperimentPlan,
     GitHubGovernancePolicy,
     LinearProjectionPolicy,
-    ProjectPolicy,
     PlanReview,
     PlanReviewPolicy,
+    ProjectPolicy,
     RunAttemptEvent,
     RunSpec,
     TaskRecord,
@@ -44,23 +45,29 @@ from researchctl.services.control_github_governance_policy import (
 )
 from researchctl.services.control_linear_policy import LinearPolicyWriteResult
 from researchctl.services.control_plan_review_policy import PlanReviewPolicyWriteResult
+from researchctl.services.experiment_plan import (
+    compile_experiment_plan,
+    lint_experiment_plan,
+    require_passing_plan_review,
+)
 from researchctl.services.linear_delivery_read import (
     LinearDeliveryListResult,
     LinearDeliveryShowResult,
     linear_delivery_view,
 )
+from researchctl.services.post_merge import PostMergeRequest
 from researchctl.services.requests import (
     BootstrapAcceptRequest,
     BootstrapProposalRequest,
     DocumentLayoutConfigureRequest,
     GitHubGovernanceConfigureRequest,
+    ImpactBatchCreateRequest,
+    ImpactCreateRequest,
+    ImpactDecisionCreateRequest,
     InboxAckRequest,
     InboxListRequest,
     InboxResolveRequest,
     InboxSnoozeRequest,
-    ImpactBatchCreateRequest,
-    ImpactCreateRequest,
-    ImpactDecisionCreateRequest,
     LinearConfigureRequest,
     LinearDeliveryListRequest,
     LinearDeliveryShowRequest,
@@ -73,12 +80,11 @@ from researchctl.services.requests import (
     PlanLintRequest,
     PlanReviewConfigureRequest,
     PlanReviewCreateRequest,
-    ReviewAcceptRequest,
     ReportStatusRequest,
+    ReviewAcceptRequest,
     RunCollectRequest,
     RunRetryRequest,
     RunStartRequest,
-    SubmissionCreateRequest,
     SessionAddressRequest,
     SessionAttachRequest,
     SessionContinueRequest,
@@ -87,20 +93,14 @@ from researchctl.services.requests import (
     SessionShowRequest,
     SessionStartRequest,
     StatusPublishRequest,
+    SubmissionCreateRequest,
     TaskCancelRequest,
     TaskCreateRequest,
     TaskUpdateRequest,
     linear_notification_request_digest,
 )
-from researchctl.services.post_merge import PostMergeRequest
-from researchctl.services.experiment_plan import (
-    compile_experiment_plan,
-    lint_experiment_plan,
-    require_passing_plan_review,
-)
 from researchctl.services.task_policy import task_transition_allowed
 from researchctl.services.task_records import TaskRecordRepository, TaskWriteResult
-
 
 _UNRECORDED_OPERATION_ERRORS = frozenset(
     {

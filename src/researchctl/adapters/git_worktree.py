@@ -14,7 +14,6 @@ from researchctl.adapters._subprocess import (
 )
 from researchctl.errors import RCPError
 
-
 _GIT_CONTEXT_ENVIRONMENT = {
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",

@@ -26,7 +26,6 @@ from researchctl.serialization import dump_yaml, load_model
 from researchctl.services.doctor import doctor
 from researchctl.services.init_project import apply_init, initialize_project, plan_init
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OBSERVED_AT = "2026-08-02T12:34:56Z"
 

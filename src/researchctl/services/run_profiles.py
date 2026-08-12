@@ -34,7 +34,6 @@ from researchctl.services.run_preflight import (
     StaticIdentityResolver,
 )
 
-
 _MAX_PROFILE_BYTES = 64 * 1024
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _PROFILE_REMEDIATION = (

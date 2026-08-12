@@ -36,7 +36,6 @@ from researchctl.services.linear_delivery import (
     linear_event_payload,
 )
 
-
 PostMergeMode = Literal["shadow", "enqueue"]
 PostMergeProvenance = Literal["local_shadow", "github_authenticated"]
 PostMergeState = Literal[

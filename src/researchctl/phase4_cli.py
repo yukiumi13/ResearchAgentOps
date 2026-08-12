@@ -32,7 +32,6 @@ from researchctl.services.requests import (
     SubmissionCreateRequest,
 )
 
-
 review_app = typer.Typer(
     help="Prepare explicit manager review decisions.",
     no_args_is_help=True,

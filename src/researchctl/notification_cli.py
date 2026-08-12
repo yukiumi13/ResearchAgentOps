@@ -22,7 +22,6 @@ from researchctl.services.requests import (
     NotificationSendRequest,
 )
 
-
 notification_app = typer.Typer(
     help="Address durable messages to one governed Session.",
     no_args_is_help=True,

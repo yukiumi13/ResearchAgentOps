@@ -5,7 +5,11 @@ from datetime import datetime
 from typing import Any
 
 from researchctl.domain.enums import NotificationRoute, NotificationState, SessionState
-from researchctl.domain.models import SessionNotificationOrigin, StatusUpdate
+from researchctl.domain.models import (
+    SessionNotificationOrigin,
+    SessionNotificationSourceMarker,
+    StatusUpdate,
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
 import subprocess
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -16,8 +16,8 @@ from researchctl.domain.enums import PlanReviewOutcome, SessionState
 from researchctl.domain.models import (
     AgentPolicy,
     ArtifactDeclaration,
-    ExperimentPlan,
     ExecutionDomainPolicy,
+    ExperimentPlan,
     InputIdentity,
     PlanMetric,
     PlanReview,
@@ -49,7 +49,6 @@ from researchctl.services.submissions import (
     SubmissionEvidence,
 )
 from researchctl.services.task_records import TaskRecordRepository
-
 
 DENIED_PATHS = (
     ".research/decisions/**",
@@ -537,10 +536,10 @@ def test_codex_reviewer_is_ephemeral_read_only_attributed_and_secretless(
     assert observed.opinion.outcome is PlanReviewOutcome.PASSED
     argv, kwargs = runner.calls[0]
     assert "--ephemeral" in argv
-    assert ("--sandbox", "read-only") == (
+    assert (
         argv[argv.index("--sandbox")],
         argv[argv.index("--sandbox") + 1],
-    )
+    ) == ("--sandbox", "read-only")
     assert argv[argv.index("--model") + 1] == "gpt-test-reviewer"
     assert kwargs["env"] == {
         "PATH": "/usr/bin",

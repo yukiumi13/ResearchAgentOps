@@ -25,9 +25,7 @@ from researchctl.services.dependency_impact import (
     DeclaredDependencyImpactEvaluator,
     DependencyImpactEvaluation,
     DependencyImpactEvaluator,
-    path_dependency_matches,
 )
-
 
 IMPACT_ANALYZER_ID = "researchctl.report-impact.v3"
 IMPACT_RENDERER_ID = "research-impact-report.v3"

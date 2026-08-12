@@ -11,7 +11,6 @@ from researchctl.adapters._subprocess import CommandRunner, SubprocessCommandRun
 from researchctl.errors import RCPError
 from researchctl.services.github_governance import GitHubGovernanceObservation
 
-
 _REPOSITORY = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})/"
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$"

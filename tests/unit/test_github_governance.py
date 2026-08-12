@@ -15,13 +15,12 @@ from researchctl.adapters.github_governance import (
     _ref_pattern_matches,
 )
 from researchctl.cli import app
-from researchctl.errors import RCPError
 from researchctl.domain.models import GitHubGovernancePolicy
+from researchctl.errors import RCPError
 from researchctl.services.github_governance import (
     GitHubGovernanceObservation,
     audit_github_governance,
 )
-
 
 REPOSITORY = "owner/project"
 

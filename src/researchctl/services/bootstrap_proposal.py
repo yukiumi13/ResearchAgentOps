@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import fcntl
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Iterator
 
 from researchctl.adapters import GitWorktreeAdapter, WorktreeSpec
 from researchctl.adapters.git_bootstrap_proposal import (

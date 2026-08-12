@@ -10,7 +10,6 @@ from researchctl.adapters.git_submission import (
 from researchctl.adapters.git_worktree import WorktreeSpec
 from researchctl.errors import RCPError
 
-
 _DECISION_ID = re.compile(r"^decision_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REPORT_ID = re.compile(r"^report_\d{8}T\d{6}Z_[0-9a-f]{24}$")

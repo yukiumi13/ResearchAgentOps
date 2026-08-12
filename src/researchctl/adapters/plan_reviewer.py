@@ -22,7 +22,6 @@ from researchctl.domain.models import (
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_json_bytes
 
-
 _MAX_REVIEW_INPUT_BYTES = 512 * 1024
 _SENSITIVE_ENVIRONMENT = frozenset(
     {

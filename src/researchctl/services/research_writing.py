@@ -34,7 +34,7 @@ _ENGLISH_WORD = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*")
 _CJK_CHARACTER = re.compile(
     "[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]"
 )
-_SENTENCE_TERMINATORS = frozenset(".!?。！？")
+_SENTENCE_TERMINATORS = frozenset(".!?。！？")  # noqa: RUF001
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,9 +103,13 @@ def measure_prose(value: str) -> ProseMeasure:
         following = value[index + 1] if index + 1 < len(value) else ""
         if character == "." and previous.isdigit() and following.isdigit():
             continue
-        if following and not following.isspace() and following not in _SENTENCE_TERMINATORS:
-            if character == ".":
-                continue
+        if (
+            following
+            and not following.isspace()
+            and following not in _SENTENCE_TERMINATORS
+            and character == "."
+        ):
+            continue
         if following in _SENTENCE_TERMINATORS:
             continue
         sentences += 1

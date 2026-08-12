@@ -16,7 +16,6 @@ from researchctl.adapters.github_submission import (
 from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.errors import RCPError
 
-
 REMOTE_URL = "git@github.example.invalid:owner/project.git"
 BRANCH = "research/submission/submission_20260803T120000Z_" + "a" * 24
 COMMIT = "b" * 40

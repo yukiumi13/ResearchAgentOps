@@ -14,7 +14,6 @@ from researchctl.services.linear_notification_ingress import (
     parse_linear_notification_command,
 )
 
-
 TASK_ID = "task_20260803T120000Z_" + "a" * 24
 SESSION_ID = "session_20260803T120000Z_" + "b" * 24
 ISSUE_ID = "0199a213-81c0-4800-8aa1-bbab2a035a53"

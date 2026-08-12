@@ -16,7 +16,6 @@ from researchctl.services.run_preflight import (
 )
 from researchctl.services.run_profiles import LocalRunProfile
 
-
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 DIGEST = "sha256:" + "3" * 64
 

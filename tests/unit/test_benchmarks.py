@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from researchctl.benchmarks import (
-    InboxBenchmarkReport,
     INBOX_ITEM_COUNT,
-    LatencyMeasurement,
     MIN_PRODUCTION_SAMPLE_COUNT,
     MIN_PRODUCTION_WINDOW_SECONDS,
+    InboxBenchmarkReport,
+    LatencyMeasurement,
     _nearest_rank,
     run_inbox_benchmark,
 )
@@ -147,16 +147,18 @@ def test_inbox_benchmark_reports_repeatable_preliminary_50_item_baseline(
 
 
 def test_inbox_benchmark_rejects_a_non_50_item_fixture(tmp_path: Path) -> None:
-    with RuntimeStore(tmp_path / "runtime.sqlite3") as store:
-        with pytest.raises(ValueError, match="requires exactly 50 visible attention items"):
-            run_inbox_benchmark(
-                store,
-                PROJECT_ID,
-                as_of=AS_OF,
-                sample_count=1,
-                commit=COMMIT,
-                host="local-test-host",
-            )
+    with (
+        RuntimeStore(tmp_path / "runtime.sqlite3") as store,
+        pytest.raises(ValueError, match="requires exactly 50 visible attention items"),
+    ):
+        run_inbox_benchmark(
+            store,
+            PROJECT_ID,
+            as_of=AS_OF,
+            sample_count=1,
+            commit=COMMIT,
+            host="local-test-host",
+        )
 
 
 def test_nearest_rank_percentiles_are_dependency_free_and_deterministic() -> None:

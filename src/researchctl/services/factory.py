@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from researchctl.adapters.git_commit import GitSessionCommitVerifier
 from researchctl.adapters.git_accepted_merge import GitAcceptedMergeReader
+from researchctl.adapters.git_commit import GitSessionCommitVerifier
 from researchctl.adapters.github_impact import GitHubImpactDelivery
 from researchctl.adapters.github_impact_decision import (
     GitHubImpactDecisionDelivery,
@@ -38,12 +38,10 @@ from researchctl.services.control_plan_review_policy import (
     ControlPlanReviewPolicyRepository,
 )
 from researchctl.services.control_tasks import ControlTaskRecordRepository
-from researchctl.services.impact_workflow import ImpactWorkflowService
 from researchctl.services.impact_decision_workflow import (
     ImpactDecisionWorkflowService,
 )
-from researchctl.services.report_status import ReportStatusService
-from researchctl.services.local_run import LocalRunExecutor
+from researchctl.services.impact_workflow import ImpactWorkflowService
 from researchctl.services.linear_delivery import (
     AcceptedMergeReader,
     LinearAcceptedResultDeliveryService,
@@ -52,18 +50,19 @@ from researchctl.services.linear_notification_ingress import (
     LinearNotificationIngressFacade,
 )
 from researchctl.services.linear_worker import LinearTransportWorker, LinearWorkerPort
+from researchctl.services.local_run import LocalRunExecutor
+from researchctl.services.plan_review import IndependentPlanReviewService
+from researchctl.services.post_merge import TrustedPostMergeService
 from researchctl.services.project_runtime import (
     ManagedProject,
     ProjectRuntimeService,
 )
-from researchctl.services.post_merge import TrustedPostMergeService
-from researchctl.services.plan_review import IndependentPlanReviewService
+from researchctl.services.report_status import ReportStatusService
 from researchctl.services.run_execution import LocalRunCoordinator
 from researchctl.services.run_profiles import LocalRunProfile
 from researchctl.services.session_harness import LocalSessionHarness
 from researchctl.services.submission_workflow import SubmissionWorkflowService
 from researchctl.services.task_records import TaskRecordRepository
-
 
 SESSION_ID_ENV = "RESEARCHCTL_SESSION_ID"
 SESSION_TOKEN_ENV = "RESEARCHCTL_SESSION_TOKEN"

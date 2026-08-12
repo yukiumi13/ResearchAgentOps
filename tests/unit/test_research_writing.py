@@ -19,7 +19,6 @@ from researchctl.services.research_writing import (
     render_research_update,
 )
 
-
 SESSION_ID = "session_20260804T120000Z_" + "1" * 24
 SOURCE_COMMIT = "2" * 40
 

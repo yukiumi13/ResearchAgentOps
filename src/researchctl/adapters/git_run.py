@@ -13,7 +13,6 @@ from researchctl.adapters._subprocess import (
 )
 from researchctl.errors import RCPError
 
-
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _RUN_ID = re.compile(r"^run_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _RECORD_PATH = re.compile(

@@ -23,7 +23,6 @@ from researchctl.adapters import (
 )
 from researchctl.errors import RCPError
 
-
 BASE_COMMIT = "a" * 40
 OTHER_COMMIT = "b" * 40
 BRANCH = "research/task/MAR-17/session-a"

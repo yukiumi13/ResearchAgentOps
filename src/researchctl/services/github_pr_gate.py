@@ -5,7 +5,6 @@ from typing import Literal
 
 from researchctl.services.github_governance import GitHubGovernanceObservation
 
-
 CheckState = Literal["passed", "pending", "failed", "missing"]
 PullRequestGateResult = Literal[
     "ready",

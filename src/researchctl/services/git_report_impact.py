@@ -19,7 +19,6 @@ from researchctl.services.report_impact import (
     ReportImpactBundle,
 )
 
-
 _REPORT_REVISION = re.compile(
     r"^\.research/reports/"
     r"(report_\d{8}T\d{6}Z_[0-9a-f]{24})/([1-9][0-9]*)\.(md|yaml)$"

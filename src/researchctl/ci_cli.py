@@ -13,8 +13,8 @@ from researchctl.domain.types import UtcDateTime, utc_now
 from researchctl.phase2_cli import (
     _input_error,
     _machine_or_human_request,
-    _required,
     _render_result,
+    _required,
     _result_data,
 )
 from researchctl.services.ci_dispatch import (
@@ -28,7 +28,6 @@ from researchctl.services.ci_validation import (
     write_ci_validation_artifact,
 )
 from researchctl.services.requests import ImpactBatchCreateRequest
-
 
 ci_app = typer.Typer(
     help="Validate an untrusted PR head as Git data.",

@@ -65,7 +65,6 @@ from researchctl.services.submissions import (
     SubmissionEvidence,
 )
 
-
 CI_VALIDATOR_VERSION = __version__
 CI_WORKFLOW_ID = "research-validate-pr"
 CI_CHECK_IDENTITY = "researchctl/exact-head"

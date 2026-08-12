@@ -3,10 +3,10 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterator
 
 from researchctl.adapters import GitWorktreeAdapter, WorktreeSpec
 from researchctl.adapters.git_bootstrap import (
@@ -28,7 +28,6 @@ from researchctl.serialization import (
     load_model,
     load_yaml,
 )
-
 
 _MANAGED_DIRECTORIES = (
     "bootstrap",

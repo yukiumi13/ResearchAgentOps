@@ -25,7 +25,6 @@ from researchctl.services.run_preflight import (
     RunPreflightReceipt,
 )
 
-
 ATTEMPT_ID = "attempt_20260803T120000Z_aaaaaaaaaaaaaaaaaaaaaaaa"
 OPERATION_ID = "operation_20260803T120000Z_bbbbbbbbbbbbbbbbbbbbbbbb"
 

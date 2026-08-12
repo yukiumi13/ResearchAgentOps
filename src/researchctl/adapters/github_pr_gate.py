@@ -15,7 +15,6 @@ from researchctl.services.github_pr_gate import (
     GitHubWorkflowRun,
 )
 
-
 _REPOSITORY = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})/"
     r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$"

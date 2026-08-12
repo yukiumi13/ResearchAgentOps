@@ -27,7 +27,6 @@ from researchctl.services.project_runtime import (
     ensure_runtime_directories,
 )
 
-
 PROJECT_ID = "project_20260803T120000Z_" + "a" * 24
 OTHER_PROJECT_ID = "project_20260803T120000Z_" + "b" * 24
 DENIED_PATHS = (

@@ -15,7 +15,6 @@ from researchctl.adapters._subprocess import (
 from researchctl.adapters.git_bootstrap import GitBootstrapCommitAdapter
 from researchctl.errors import RCPError
 
-
 _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _BOOTSTRAP_ID = re.compile(r"^bootstrap_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
