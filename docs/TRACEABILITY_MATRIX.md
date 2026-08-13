@@ -62,7 +62,7 @@ traceable.
 ## Post-export requirements
 
 Requirements stated after the 77-prompt historical baseline are tracked separately in
-`REQUIREMENT_LEDGER.md`; they refine existing scenarios rather than renumbering
+`reference/requirement-ledger.md`; they refine existing scenarios rather than renumbering
 the stable `US-*` catalog.
 
 | Requirement | Scenario mapping | Primary contract |
@@ -88,3 +88,4 @@ the stable `US-*` catalog.
 | `REQ-20260806-003` | `US-014`, `US-015`, `US-017`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; AnalysisBrief schema, aggregate lint, YAML diagnostic, and Agent-guide tests |
 | `REQ-20260810-001` | `US-014`, `US-015`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; document-site manifest/schema/CLI and strict MkDocs adapter tests |
 | `REQ-20260812-001` | `US-014`, `US-025`, `US-027` | system stability snapshot; Ruff/source-test gate; traceability and benchmark tests |
+| `REQ-20260813-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | routed requirement/design/runbook/status documents; baseline tree and strict MkDocs dogfood |

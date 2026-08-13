@@ -1,11 +1,38 @@
+---
+type: reference
+title: Post-export requirement ledger
+owner: person:yukiumi13
+last_updated: 2026-08-13
+validity: valid
+tags: [requirements, traceability, governance]
+references:
+  - kind: repository_path
+    location: docs/USER_SCENARIOS.md
+  - kind: repository_path
+    location: docs/TRACEABILITY_MATRIX.md
+sources:
+  - key: prompt-manifest
+    kind: repository_path
+    location: docs/HISTORICAL_PROMPT_MANIFEST.json
+  - key: scenario-catalog
+    kind: repository_path
+    location: docs/USER_SCENARIOS.md
+provenance:
+  - key: historical-baseline
+    value: "77 historical prompt anchors"
+    basis: derived
+    source_keys: [prompt-manifest, scenario-catalog]
+    method: Compare the prompt manifest count and scenario source mappings.
+relations:
+  supersedes: []
+  derived_from: []
+  see_also: [docs/USER_SCENARIOS.md, docs/TRACEABILITY_MATRIX.md]
+---
 # Post-export Requirement Ledger
 
-Status: normative implementation input
-Updated: 2026-08-06
-
-`USER_SCENARIOS.md` preserves anonymous anchors for all 77 prompts in the
-private historical research. This ledger gives stable identities to later
-requirements so traceability does not silently stop at that boundary.
+`USER_SCENARIOS.md` maps the 77 historical prompt anchors into stable scenarios
+without publishing the private source. This ledger gives stable identities to
+later requirements so traceability does not silently stop at that boundary.
 
 ## REQ-20260803-001 - Workspace and reference-repository boundary
 
@@ -326,3 +353,19 @@ requirements so traceability does not silently stop at that boundary.
   separately. Large modules are split incrementally by domain or transaction
   behind the existing public service and SQLite authority, not by introducing a
   second state machine or performing an unmeasured rewrite.
+
+## REQ-20260813-001 - The control plane manages its own project documents
+
+- Source: ResearchAgentOps document-management dogfood and GitHub App deployment
+  continuation, 2026-08-13.
+- Maps to: `US-014`, `US-015`, `US-021`, `US-022`, `US-031`.
+- Acceptance: ResearchAgentOps authors requirements, development design,
+  deployment runbooks, status evidence, and architecture decisions through its
+  accepted standalone routes and contract-dispatched commands. Migrating one
+  legacy document removes exactly its finite exception, refreshes configured
+  Agent-guide and generated projections, updates repository references, passes
+  baseline-aware tree lint, and appears in the manifest-derived documentation
+  site without a hand-maintained MkDocs navigation entry. An ordinary content
+  proposal cannot add or remap a route. A policy change required by an
+  indivisible legacy migration is isolated to the exact compatibility entry and
+  called out for explicit manager/CODEOWNER review.

@@ -2,7 +2,7 @@
 ## Researchctl Document Workflow
 
 > Renderer: `researchctl-renderer:project-document-agent-guide.claude.v5`
-<!-- researchctl-generated:project-document-agent-guide.claude.v5;source=sha256:ef29e5884c51ca8e2c69813e0fb2748d0ee5c7e06f02c1be8f9af0726391d5f9;body=sha256:c01c1c3915b2de1e93a36f8c293c899fe6ce79dc2dc0c4ea52cfe6632fcc912e -->
+<!-- researchctl-generated:project-document-agent-guide.claude.v5;source=sha256:07f8850e49919ab4b718e682b23fe1bc1b97797f3b89eb23ac4fc6a6c8bd2223;body=sha256:c01c1c3915b2de1e93a36f8c293c899fe6ce79dc2dc0c4ea52cfe6632fcc912e -->
 
 Claude must treat the repository's effective document policy as the only
 authority for document classifications, contracts, and paths. Standalone

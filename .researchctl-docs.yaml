@@ -26,10 +26,6 @@ legacy_files:
     migration_target: docs/reference/mutation-contracts.md
     path: docs/MUTATION_CONTRACTS.md
     reason: Pre-contract governance document.
-  - classification: reference/project:document
-    migration_target: docs/reference/requirement-ledger.md
-    path: docs/REQUIREMENT_LEDGER.md
-    reason: Pre-contract requirement ledger.
   - classification: design/architecture:proposal
     migration_target: docs/design/research-control-plane.yaml
     path: docs/RESEARCH_CONTROL_PLANE_SPEC.md
