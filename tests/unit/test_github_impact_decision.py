@@ -38,7 +38,16 @@ class _GitRunner:
 
     def run(self, argv, *, cwd, env, timeout_seconds):
         del cwd, env, timeout_seconds
-        arguments = argv[5:]
+        assert argv[1:8] == (
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "credential.helper=",
+            "-C",
+        )
+        arguments = argv[9:]
         if arguments in {
             ("remote", "get-url", "origin"),
             ("remote", "get-url", "--push", "origin"),

@@ -6,13 +6,13 @@ slug: system-stability-review
 title: System stability review
 status: proposed
 project_id: null
-basis_commit: 7bd5309acfc136176c8cab7e57c83eacfa652535
-revision: 2
+basis_commit: ef51eb85ca6e85db9f050a89c3e2301892eff6b5
+revision: 3
 authored_by:
   role: external_agent
   actor_id: codex-system-review
 created_at: '2026-08-12T23:04:02Z'
-updated_at: '2026-08-13T03:32:30Z'
+updated_at: '2026-08-13T05:53:56Z'
 acceptance: null
 supersedes: null
 tags:
@@ -38,7 +38,7 @@ sources:
   location: tests/unit/test_traceability.py
 - key: source-tree
   kind: git_commit
-  location: 7bd5309acfc136176c8cab7e57c83eacfa652535
+  location: ef51eb85ca6e85db9f050a89c3e2301892eff6b5
 - key: benchmark-contract
   kind: repository_path
   location: tests/unit/test_benchmarks.py
@@ -51,12 +51,19 @@ sources:
 - key: document-site
   kind: repository_path
   location: tests/unit/test_document_site.py
-as_of: '2026-08-13T03:32:30Z'
+- key: github-app-installation
+  kind: external
+  location: github-app:4577593/installation:153350892/repository:yukiumi13/ResearchAgentOps
+- key: proposal-broker-tests
+  kind: repository_path
+  location: tests/unit/test_github_app_broker.py
+as_of: '2026-08-13T05:53:56Z'
 executive_summary: >-
   The local core is a release candidate, not a production-stable control plane.
-  Historical and post-export requirements are traceable, 910 tests pass, the
+  Historical and post-export requirements are traceable, 931 tests pass, the
   Python lint baseline is clean, and measured local paths are responsive. Live
-  governance and external transports remain the dominant stability gaps.
+  protected deployment and external transports remain the dominant stability
+  gaps.
 capabilities:
 - key: requirement-coverage
   title: Requirement and workflow coverage
@@ -130,18 +137,26 @@ capabilities:
   evidence_keys:
   - governance
   missing:
-  - Install and audit required checks, latest CODEOWNER approval, strict base currency, and a distinct Agent App principal.
+  - Audit required checks, latest CODEOWNER approval, strict base currency, and protected-main rules.
+- key: proposal-identity
+  title: Distinct GitHub proposal identity
+  status: partial
+  summary: >-
+    GitHub App 4577593 and installation 153350892 were observed on the selected
+    ResearchAgentOps repository with exactly metadata read, contents write, and
+    pull requests write. The local broker implementation has adversarial
+    credential and identity tests.
+  evidence_keys:
+  - github-app-installation
+  - proposal-broker-tests
+  missing:
+  - Manager acceptance, an Agent-inaccessible broker service principal, and a live rcp-agent[bot] canary remain.
 active_work:
 - key: github-app-identity
-  summary: Install and validate the distinct GitHub App proposal identity
+  summary: Accept and deploy the distinct GitHub App proposal broker
   state: active
   owner: person:yukiumi13
-  next_action: Create the least-privilege App, install it only on ResearchAgentOps, and record its non-secret identities.
-- key: document-dogfood
-  summary: Migrate project documentation through accepted researchctl routes
-  state: ready_for_review
-  owner: person:yukiumi13
-  next_action: Review the minimal legacy-policy exception removal and the routed requirement, design, and runbook documents.
+  next_action: Review the broker PR, deploy it under an Agent-inaccessible principal, then run the first bot-authored canary.
 risks:
 - key: unprotected-main
   severity: high
@@ -159,10 +174,15 @@ risks:
   severity: medium
   risk: Fake ports and local adapters do not prove real GitHub, Linear, SSH, or provider behavior.
   mitigation: Run the R1 protected-repository shadow pilot before expanding the product surface.
+- key: shared-broker-uid
+  severity: high
+  risk: A mode-0400 private key remains readable to an Agent process that shares the broker Unix UID.
+  mitigation: Move the key and one-shot host to a distinct principal before any live proposal canary.
 decisions_needed: []
 next_steps:
-- Review the document-management dogfood proposal after exact-head checks pass.
-- Apply and audit protected main governance with a distinct Agent App author.
+- Review and merge the App proposal broker without treating the implementing Agent as acceptance.
+- Deploy the broker under a distinct principal and run one rcp-agent[bot] canary before applying protection.
+- Apply and audit protected main governance after the App-authored canary.
 - Run the live Plan reviewer and Linear shadow pilots from one exact release commit.
 - Split the document tree validator and notification transactions only after hotspot-specific characterization tests exist.
 - Retain Python until a recorded workload violates the supported latency or scale envelope.

@@ -94,13 +94,16 @@ later requirements so traceability does not silently stop at that boundary.
 
 - Source: post-export workflow correction, 2026-08-03.
 - Maps to: `US-017`, `US-018`, `US-021`, `US-026`.
-- Acceptance: `researchctl submit` validates collected evidence, creates and
-  pushes the one derived Submission branch and commit, and creates or observes
-  the exact GitHub PR with a deterministic title/body. The operation is not
-  `proposal_open` after only a local commit, and the caller cannot select an
-  arbitrary repository, head, base, or PR body. The Agent proposes; only the
-  manager can prepare acceptance, and only protected exact-head review and merge
-  create accepted truth.
+- Acceptance: the assigned Agent sends a strict `SubmissionCreateRequest` and
+  its Session capability to a trusted host that reuses the existing Submission
+  workflow. The host validates collected evidence, mints one repository-scoped
+  App installation credential, pushes the one derived branch and commit over an
+  isolated HTTPS Git transport, and creates or observes the exact bot-authored
+  PR with deterministic title/body. Direct Session delivery has no human Git
+  credential fallback. The operation is not `proposal_open` after only a local
+  commit, and the caller cannot select an arbitrary repository, head, base, PR
+  body, or credential. Only the manager can prepare acceptance, and only
+  protected exact-head review and merge create accepted truth.
 
 ## REQ-20260803-008 - Plans cannot hide Agent fallback decisions
 

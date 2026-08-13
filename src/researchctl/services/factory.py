@@ -13,7 +13,6 @@ from researchctl.adapters.github_impact import GitHubImpactDelivery
 from researchctl.adapters.github_impact_decision import (
     GitHubImpactDecisionDelivery,
 )
-from researchctl.adapters.github_submission import GitHubSubmissionDelivery
 from researchctl.adapters.plan_reviewer import EphemeralPlanReviewer
 from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH
 from researchctl.domain.enums import ProjectState
@@ -61,6 +60,7 @@ from researchctl.services.report_status import ReportStatusService
 from researchctl.services.run_execution import LocalRunCoordinator
 from researchctl.services.run_profiles import LocalRunProfile
 from researchctl.services.session_harness import LocalSessionHarness
+from researchctl.services.submission_delivery import SubmissionDeliveryPort
 from researchctl.services.submission_workflow import SubmissionWorkflowService
 from researchctl.services.task_records import TaskRecordRepository
 
@@ -155,6 +155,8 @@ def open_application(
     github_governance_operation_id: str | None = None,
     github_governance_expected_default_head: str | None = None,
     run_spec: RunSpec | None = None,
+    submission_delivery: SubmissionDeliveryPort | None = None,
+    project_runtime_service: ProjectRuntimeService | None = None,
 ) -> ApplicationHandle:
     if (task_operation_id is None) != (task_command is None):
         raise RCPError(
@@ -313,7 +315,7 @@ def open_application(
                 "factory context."
             ),
         )
-    locator = ProjectRuntimeService()
+    locator = project_runtime_service or ProjectRuntimeService()
     project = locator.discover(path)
     preparing_bootstrap = (
         bootstrap_operation_id is not None
@@ -473,10 +475,10 @@ def open_application(
                 repository_root=project.repository_root,
                 worktrees_directory=project.runtime.worktrees_directory,
                 default_branch=project.project.repository.default_branch,
-                delivery=GitHubSubmissionDelivery(
-                    accepted_remote_url=project.project.repository.remote_url,
-                    governance=project.policy.github,
-                    environment=environment,
+                delivery=(
+                    submission_delivery
+                    if submission_delivery is not None
+                    else None
                 ),
                 policy=project.policy,
             ),

@@ -794,14 +794,17 @@ attestation explicitly.
 
 ## 14. Submission and atomic human acceptance
 
-`researchctl submit` is invoked by the assigned Agent after collection. It
-validates evidence, creates the fixed Submission branch and deterministic
-proposal commit from the protected default branch, pushes that exact commit,
-and creates or observes the one GitHub PR for the derived repository, head, and
-base. The caller cannot choose an arbitrary branch, base, repository, title, or
-body. The title and body are deterministic renderings of structured records.
-The operation reaches `proposal_open` only after the exact remote branch and PR
-are observed; a local proposal commit alone is not an open proposal.
+After collection, the assigned Agent supplies the strict
+`SubmissionCreateRequest` and its Session capability to the trusted proposal
+host. The host reauthenticates the Session, runs the existing Submission
+workflow, validates evidence, creates the fixed branch and deterministic commit
+from the protected default branch, and uses one short-lived App installation
+credential to push that exact commit and create or observe the one GitHub PR.
+The caller cannot choose an arbitrary branch, base, repository, title, body, or
+credential. The title and body are deterministic renderings of structured
+records. The operation reaches `proposal_open` only after the exact remote
+branch and PR are observed; a local proposal commit alone is not an open
+proposal.
 
 The Submission branch adds:
 

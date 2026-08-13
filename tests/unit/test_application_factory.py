@@ -100,6 +100,40 @@ def test_session_capability_actor_is_injected_and_bound_outside_request_json(
         assert token not in repr(handle.actor)
 
 
+@pytest.mark.parametrize("environment_kind", ["agent", "manager"])
+def test_direct_submit_has_no_human_credential_delivery_fallback(
+    initialized_repository,
+    environment_kind: str,
+) -> None:
+    _mark_project_managed(initialized_repository)
+    project = discover_managed_project(initialized_repository)
+    project.runtime.state_directory.mkdir(mode=0o700)
+    project.runtime.worktrees_directory.mkdir(mode=0o700)
+    session_id = _id("session", "a")
+    token = "factory-session-capability"
+    with RuntimeStore(project.runtime.database_path) as runtime:
+        runtime.save_session(
+            RuntimeSession(
+                session_id=session_id,
+                project_id=project.project_id,
+                task_id=_id("task", "b"),
+                state=SessionState.ACTIVE,
+                created_at=NOW,
+                updated_at=NOW,
+                actor_token_digest=hash_session_token(token),
+            )
+        )
+
+    environment = (
+        {SESSION_ID_ENV: session_id, SESSION_TOKEN_ENV: token}
+        if environment_kind == "agent"
+        else {}
+    )
+    with open_application(initialized_repository, environment=environment) as handle:
+        assert handle.service.submission_workflow is not None
+        assert handle.service.submission_workflow.delivery is None
+
+
 def test_incomplete_or_wrong_session_credential_fails_closed(
     initialized_repository,
 ) -> None:
