@@ -6,13 +6,13 @@ slug: system-stability-review
 title: System stability review
 status: proposed
 project_id: null
-basis_commit: 1ffbe6caeee7cb002028238ccc0ba423ee19cc23
-revision: 1
+basis_commit: 7bd5309acfc136176c8cab7e57c83eacfa652535
+revision: 2
 authored_by:
   role: external_agent
   actor_id: codex-system-review
 created_at: '2026-08-12T23:04:02Z'
-updated_at: '2026-08-12T23:04:02Z'
+updated_at: '2026-08-13T03:32:30Z'
 acceptance: null
 supersedes: null
 tags:
@@ -29,7 +29,7 @@ sources:
   location: docs/USER_SCENARIOS.md
 - key: requirements
   kind: repository_path
-  location: docs/REQUIREMENT_LEDGER.md
+  location: docs/reference/requirement-ledger.md
 - key: workflows
   kind: repository_path
   location: docs/WORKFLOW_COVERAGE.md
@@ -38,7 +38,7 @@ sources:
   location: tests/unit/test_traceability.py
 - key: source-tree
   kind: git_commit
-  location: 1ffbe6caeee7cb002028238ccc0ba423ee19cc23
+  location: 7bd5309acfc136176c8cab7e57c83eacfa652535
 - key: benchmark-contract
   kind: repository_path
   location: tests/unit/test_benchmarks.py
@@ -51,7 +51,7 @@ sources:
 - key: document-site
   kind: repository_path
   location: tests/unit/test_document_site.py
-as_of: '2026-08-12T23:04:02Z'
+as_of: '2026-08-13T03:32:30Z'
 executive_summary: >-
   The local core is a release candidate, not a production-stable control plane.
   Historical and post-export requirements are traceable, 910 tests pass, the
@@ -132,11 +132,16 @@ capabilities:
   missing:
   - Install and audit required checks, latest CODEOWNER approval, strict base currency, and a distinct Agent App principal.
 active_work:
-- key: stability-proposal
-  summary: Review and merge the measured stability baseline
+- key: github-app-identity
+  summary: Install and validate the distinct GitHub App proposal identity
+  state: active
+  owner: person:yukiumi13
+  next_action: Create the least-privilege App, install it only on ResearchAgentOps, and record its non-secret identities.
+- key: document-dogfood
+  summary: Migrate project documentation through accepted researchctl routes
   state: ready_for_review
   owner: person:yukiumi13
-  next_action: Review the proposal diff and exact-head CI evidence before merge.
+  next_action: Review the minimal legacy-policy exception removal and the routed requirement, design, and runbook documents.
 risks:
 - key: unprotected-main
   severity: high
@@ -156,7 +161,7 @@ risks:
   mitigation: Run the R1 protected-repository shadow pilot before expanding the product surface.
 decisions_needed: []
 next_steps:
-- Merge the source-quality and review proposal only after exact-head checks pass.
+- Review the document-management dogfood proposal after exact-head checks pass.
 - Apply and audit protected main governance with a distinct Agent App author.
 - Run the live Plan reviewer and Linear shadow pilots from one exact release commit.
 - Split the document tree validator and notification transactions only after hotspot-specific characterization tests exist.

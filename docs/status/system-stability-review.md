@@ -1,16 +1,16 @@
 # System stability review
 
 > Renderer: `researchctl-renderer:project-status-summary.v2`
-<!-- researchctl-generated:project-status-summary.v2;source=sha256:75f31e356d4f2d3dcb031cd9268130bd631696b6e0c9ac798254b0aea71d7251;body=sha256:3127eb4146b058f5f910c6983db131f5bf98783d3db71324675003ea78f46890 -->
+<!-- researchctl-generated:project-status-summary.v2;source=sha256:d25eb10f0537e24b5012243a5e880815927ab14389f45f8c8191950fba6ebad5;body=sha256:035f78f396a2482554784c65ccd470e20a824397db110aef7d40802c8b9a4eb8 -->
 
 - Document: `document_20260812T230402Z_d47c9274452ad42422fcb092`
 - Classification: `status/project:snapshot`
 - Status: `proposed`
-- Revision: `1`
-- Basis commit: `1ffbe6caeee7cb002028238ccc0ba423ee19cc23`
+- Revision: `2`
+- Basis commit: `7bd5309acfc136176c8cab7e57c83eacfa652535`
 - Author: `codex-system-review` (`external_agent`)
-- Updated: `2026-08-12T23:04:02+00:00`
-- As of: `2026-08-12T23:04:02+00:00`
+- Updated: `2026-08-13T03:32:30+00:00`
+- As of: `2026-08-13T03:32:30+00:00`
 
 ## Summary
 
@@ -30,7 +30,8 @@ The local core is a release candidate, not a production-stable control plane. Hi
 
 ## Active Work
 
-- **Review and merge the measured stability baseline** (`ready_for_review`, owner `person:yukiumi13`): Review the proposal diff and exact-head CI evidence before merge.
+- **Install and validate the distinct GitHub App proposal identity** (`active`, owner `person:yukiumi13`): Create the least-privilege App, install it only on ResearchAgentOps, and record its non-secret identities.
+- **Migrate project documentation through accepted researchctl routes** (`ready_for_review`, owner `person:yukiumi13`): Review the minimal legacy-policy exception removal and the routed requirement, design, and runbook documents.
 
 ## Risks
 
@@ -40,7 +41,7 @@ The local core is a release candidate, not a production-stable control plane. Hi
 
 ## Next Steps
 
-- Merge the source-quality and review proposal only after exact-head checks pass.
+- Review the document-management dogfood proposal after exact-head checks pass.
 - Apply and audit protected main governance with a distinct Agent App author.
 - Run the live Plan reviewer and Linear shadow pilots from one exact release commit.
 - Split the document tree validator and notification transactions only after hotspot-specific characterization tests exist.
@@ -50,10 +51,10 @@ The local core is a release candidate, not a production-stable control plane. Hi
 
 - `historical` (`repository_path`): `docs/HISTORICAL_PROMPT_MANIFEST.json`
 - `scenarios` (`repository_path`): `docs/USER_SCENARIOS.md`
-- `requirements` (`repository_path`): `docs/REQUIREMENT_LEDGER.md`
+- `requirements` (`repository_path`): `docs/reference/requirement-ledger.md`
 - `workflows` (`repository_path`): `docs/WORKFLOW_COVERAGE.md`
 - `traceability-tests` (`repository_path`): `tests/unit/test_traceability.py`
-- `source-tree` (`git_commit`): `1ffbe6caeee7cb002028238ccc0ba423ee19cc23`
+- `source-tree` (`git_commit`): `7bd5309acfc136176c8cab7e57c83eacfa652535`
 - `benchmark-contract` (`repository_path`): `tests/unit/test_benchmarks.py`
 - `ci-workflow` (`repository_path`): `.github/workflows/research-source-tests.yml`
 - `governance` (`repository_path`): `docs/adr/0015-github-proposal-identity-and-protected-acceptance.md`
