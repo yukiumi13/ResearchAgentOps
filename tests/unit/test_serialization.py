@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from researchctl.domain.models import TaskRecord
@@ -19,7 +18,6 @@ from researchctl.serialization import (
     load_yaml,
     validation_error_details,
 )
-
 
 PayloadFactory = Callable[..., dict[str, Any]]
 

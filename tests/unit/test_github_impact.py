@@ -11,7 +11,6 @@ from researchctl.adapters.github_submission import GhSubmissionCommandResult
 from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.errors import RCPError
 
-
 REMOTE_URL = "git@github.example.invalid:owner/project.git"
 IMPACT_ID = "impact_20260803T120000Z_" + "a" * 24
 BRANCH = f"research/impact/{IMPACT_ID}"

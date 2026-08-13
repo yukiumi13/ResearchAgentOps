@@ -18,7 +18,6 @@ from researchctl.services.control_plan_review_policy import (
 from researchctl.services.factory import open_application
 from researchctl.services.requests import PlanReviewConfigureRequest
 
-
 OPERATION_ID = "operation_20260804T130000Z_" + "a" * 24
 OTHER_OPERATION_ID = "operation_20260804T130001Z_" + "b" * 24
 
@@ -197,7 +196,6 @@ def test_application_journals_manager_plan_review_policy_and_denies_agent(
         environment={},
         plan_review_operation_id=OTHER_OPERATION_ID,
         plan_review_expected_default_head=base,
-    ) as handle:
-        with pytest.raises(RCPError) as denied:
-            handle.service.plan_review_configure(denied_request, agent)
+    ) as handle, pytest.raises(RCPError) as denied:
+        handle.service.plan_review_configure(denied_request, agent)
     assert denied.value.code == "authorization_denied"

@@ -25,7 +25,6 @@ from researchctl.services.linear_preview import (
     build_linear_preview,
 )
 
-
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _LINEAR_UUID = re.compile(

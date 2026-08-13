@@ -3,16 +3,15 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Callable
 
 from researchctl.domain.models import InputIdentity, RunSpec, TaskRecord
 from researchctl.domain.types import utc_now
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_digest
-
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 

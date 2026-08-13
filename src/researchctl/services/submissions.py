@@ -6,8 +6,8 @@ from pathlib import PurePosixPath
 
 from researchctl.domain.enums import RunOutcome, SubmissionCategory, SubmissionState
 from researchctl.domain.models import (
-    ReportProposal,
     ProjectPolicy,
+    ReportProposal,
     ResearchSubmission,
     RunResult,
     RunSpec,
@@ -15,12 +15,12 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_digest, dump_yaml
+from researchctl.services.experiment_plan import require_passing_plan_review
 from researchctl.services.report_renderer import (
     render_report_preview,
     render_submission_review,
 )
 from researchctl.services.run_preflight import validate_task_required_inputs
-from researchctl.services.experiment_plan import require_passing_plan_review
 
 
 @dataclass(frozen=True, slots=True)

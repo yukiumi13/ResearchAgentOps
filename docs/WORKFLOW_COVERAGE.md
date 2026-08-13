@@ -327,6 +327,15 @@ PR preview or deploy a static host.
    editor language-server currently streams per-keystroke findings. That
    adapter should remain a thin presentation over WF-15 rather than another
    policy implementation.
+8. `Medium`: the repository accumulated 183 Ruff findings because source CI ran
+   pytest but no Python lint gate. The 2026-08-12 review establishes a clean
+   baseline and adds full-repository Ruff to the same exact-head job; future
+   debt is now a failed proposal rather than a later cleanup project.
+9. `Low`: measured Python performance is not a current system constraint. Cold
+   local commands complete in roughly 0.55-0.68 seconds, while the preliminary
+   50-item warm inbox diagnostic remains below 2 ms p95 for both measured
+   components. The missing evidence is a 30-minute end-to-end production window,
+   not a language rewrite.
 
 ## Dependency Framework Decision
 

@@ -34,9 +34,9 @@ from researchctl.domain.models import (
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_digest, dump_yaml, load_yaml
 from researchctl.services.ci_validation import (
+    LINEAR_PROJECTION_POLICY_PATH,
     CIValidationRequest,
     ExactHeadCIValidator,
-    LINEAR_PROJECTION_POLICY_PATH,
     write_ci_validation_artifact,
 )
 from researchctl.services.requests import (
@@ -50,7 +50,6 @@ from researchctl.services.submissions import (
     SubmissionEvidence,
 )
 from researchctl.services.task_records import TaskRecordRepository
-
 
 WORKSPACE_ID = "11111111-1111-4111-8111-111111111111"
 TEAM_ID = "22222222-2222-4222-8222-222222222222"

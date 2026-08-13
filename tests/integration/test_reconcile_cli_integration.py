@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -27,6 +26,7 @@ def _invoke_reconcile(
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment.pop("TMUX", None)
     environment["TMUX_TMPDIR"] = str(tmux_directory)
+    environment["PATH"] = f"{tmux_directory}{os.pathsep}{environment['PATH']}"
     arguments = [sys.executable, "-m", "researchctl", "reconcile", str(repository)]
     if json_output:
         arguments.append("--json")
@@ -46,6 +46,12 @@ def test_real_reconcile_does_not_create_a_missing_runtime_database(
 ) -> None:
     tmux_directory = tmp_path / "isolated-tmux"
     tmux_directory.mkdir(mode=0o700)
+    tmux_executable = tmux_directory / "tmux"
+    tmux_executable.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'no server running on test socket' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    tmux_executable.chmod(0o700)
     runtime_directory = initialized_repository / ".git" / "researchctl"
     database_path = runtime_directory / "runtime-v1.sqlite3"
     assert not runtime_directory.exists()

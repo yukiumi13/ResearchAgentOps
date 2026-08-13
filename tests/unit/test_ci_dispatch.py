@@ -56,16 +56,15 @@ from researchctl.services.control_plan_review_policy import (
     ControlPlanReviewPolicyRepository,
 )
 from researchctl.services.control_tasks import ControlTaskRecordRepository
-from researchctl.services.impact_workflow import ImpactWorkflowService
 from researchctl.services.impact_decision_workflow import (
     ImpactDecisionWorkflowService,
 )
+from researchctl.services.impact_workflow import ImpactWorkflowService
 from researchctl.services.requests import (
     ImpactBatchCreateRequest,
     ImpactCreateRequest,
     ImpactDecisionCreateRequest,
 )
-
 
 ATTESTATION_ID = "attestation_20260803T120000Z_" + "a" * 24
 BOOTSTRAP_ID = "bootstrap_20260803T120000Z_" + "b" * 24

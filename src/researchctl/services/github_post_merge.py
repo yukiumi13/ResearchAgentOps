@@ -15,7 +15,6 @@ from researchctl.services.ci_dispatch import (
 from researchctl.services.ci_validation import CI_CHECK_IDENTITY, CI_WORKFLOW_ID
 from researchctl.services.post_merge import PostMergeRequest, PostMergeResult
 
-
 GITHUB_WORKFLOW_PATH = ".github/workflows/research-validate-pr.yml"
 GITHUB_WORKFLOW_EVENT = "pull_request_target"
 GITHUB_ARTIFACT_MEMBER = "researchctl-ci-attestation.yaml"

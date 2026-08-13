@@ -25,7 +25,6 @@ from researchctl.services.requests import (
 )
 from researchctl.services.task_records import TaskRecordRepository
 
-
 NOW = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)
 PROJECT_ID = "project_20260803T140000Z_" + "a" * 24
 OTHER_PROJECT_ID = "project_20260803T140000Z_" + "b" * 24

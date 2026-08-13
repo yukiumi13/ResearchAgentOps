@@ -15,19 +15,18 @@ from researchctl.domain.models import RunAttempt, RunResult, RunSpec, TaskRecord
 from researchctl.domain.types import OperationId, RunAttemptId
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_digest, canonical_json_bytes, load_model
+from researchctl.services.experiment_plan import require_passing_plan_review
 from researchctl.services.local_run import (
     LocalRunExecution,
     LocalRunExecutor,
     RunEventCallback,
 )
-from researchctl.services.experiment_plan import require_passing_plan_review
 from researchctl.services.run_preflight import LocalRunPreflight, RunPreflightReceipt
 from researchctl.services.run_records import (
     CollectedRunReceipt,
     FrozenRunReceipt,
     GitRunRecordRepository,
 )
-
 
 _ATTEMPT_ID = TypeAdapter(RunAttemptId)
 _OPERATION_ID = TypeAdapter(OperationId)

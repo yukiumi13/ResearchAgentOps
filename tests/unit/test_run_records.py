@@ -125,7 +125,7 @@ def test_freeze_retry_and_crash_after_file_write_create_only_one_spec_commit(
         worktrees_directory=worktrees,
         spec=spec,
     )
-    interrupted.directory
+    assert interrupted.directory.is_dir()
     interrupted.spec_path.write_text(dump_yaml(spec), encoding="utf-8")
 
     recovered = GitRunRecordRepository(

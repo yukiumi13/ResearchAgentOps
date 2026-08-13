@@ -24,7 +24,6 @@ from researchctl.services.control_github_governance_policy import (
 from researchctl.services.factory import open_application
 from researchctl.services.requests import GitHubGovernanceConfigureRequest
 
-
 OPERATION_ID = "operation_20260805T150000Z_" + "a" * 24
 OTHER_OPERATION_ID = "operation_20260805T150001Z_" + "b" * 24
 
@@ -190,9 +189,8 @@ def test_application_journals_manager_github_policy_and_denies_agent(
         environment={},
         github_governance_operation_id=OTHER_OPERATION_ID,
         github_governance_expected_default_head=base,
-    ) as handle:
-        with pytest.raises(RCPError) as denied:
-            handle.service.github_governance_configure(denied_request, agent)
+    ) as handle, pytest.raises(RCPError) as denied:
+        handle.service.github_governance_configure(denied_request, agent)
     assert denied.value.code == "authorization_denied"
 
 

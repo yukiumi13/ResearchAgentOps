@@ -14,7 +14,6 @@ from researchctl.services.post_merge import (
     write_post_merge_artifact,
 )
 
-
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 app = typer.Typer(
     name="researchctl-linear-host",

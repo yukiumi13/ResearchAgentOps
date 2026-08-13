@@ -17,7 +17,6 @@ from researchctl.services.run_preflight import (
     StaticIdentityResolver,
 )
 
-
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 
 

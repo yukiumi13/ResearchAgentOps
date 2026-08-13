@@ -6,7 +6,6 @@ from typing import Literal
 from researchctl.domain.models import GitHubGovernancePolicy
 from researchctl.serialization import canonical_digest
 
-
 CheckStatus = Literal["pass", "warn", "error"]
 REQUIRED_GITHUB_CHECKS = (
     "researchctl/source-tests",

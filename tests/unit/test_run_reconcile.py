@@ -25,7 +25,6 @@ from researchctl.services.reconcile import (
 )
 from researchctl.services.run_records import GitRunRecordRepository
 
-
 NOW = datetime(2026, 8, 3, 15, 0, 0, tzinfo=UTC)
 PROJECT_ID = "project_20260803T150000Z_" + "a" * 24
 ATTEMPT_ID = "attempt_20260803T150000Z_" + "b" * 24

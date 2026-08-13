@@ -22,7 +22,6 @@ from researchctl.services.submission_delivery import (
     SubmissionPullRequestReceipt,
 )
 
-
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _SUBMISSION_BRANCH = re.compile(
     r"^research/submission/(submission_\d{8}T\d{6}Z_[0-9a-f]{24})$"

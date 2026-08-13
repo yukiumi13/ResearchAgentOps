@@ -13,7 +13,6 @@ from researchctl.domain.models import (
     TaskRecord,
 )
 
-
 REPORT_RENDERER_ID = "research-report.v2"
 REPORT_RENDERER_VERSION = 2
 

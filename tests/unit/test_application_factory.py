@@ -37,7 +37,6 @@ from researchctl.services.requests import (
     TaskCreateRequest,
 )
 
-
 NOW = datetime(2026, 8, 2, 12, 34, 56, tzinfo=UTC)
 BOOTSTRAP_ID = "bootstrap_20260802T123456Z_" + "8" * 24
 

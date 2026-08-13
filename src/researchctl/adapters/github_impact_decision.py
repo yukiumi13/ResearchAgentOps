@@ -8,7 +8,6 @@ from researchctl.services.submission_delivery import (
     SubmissionPullRequestReceipt,
 )
 
-
 _GIT_OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _DECISION_BRANCH = re.compile(
     r"^research/impact-decision/"

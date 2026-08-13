@@ -14,7 +14,6 @@ from researchctl.adapters._subprocess import (
 )
 from researchctl.errors import RCPError
 
-
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _RAW_OBJECT_ID = re.compile(
     r"^(?:[0-9a-f]{40}|[0-9a-f]{64}|0{40}|0{64})$"

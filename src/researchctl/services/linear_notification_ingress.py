@@ -32,7 +32,6 @@ from researchctl.services.requests import (
     linear_notification_request_digest,
 )
 
-
 _EXPLICIT = re.compile(
     r"^notify session:(?P<session>session_\d{8}T\d{6}Z_[0-9a-f]{24}) "
     r"commit:(?P<commit>(?:[0-9a-f]{40}|[0-9a-f]{64}))$"

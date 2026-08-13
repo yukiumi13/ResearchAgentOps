@@ -24,7 +24,6 @@ from researchctl.repository import safe_repository_path
 from researchctl.schema import generate_schema_files, schema_manifest_digest
 from researchctl.serialization import load_model
 
-
 _GIT_CONTEXT_ENVIRONMENT = {
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CEILING_DIRECTORIES",

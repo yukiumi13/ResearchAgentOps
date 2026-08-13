@@ -9,6 +9,7 @@ import stat
 import subprocess
 import threading
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -39,7 +40,6 @@ from researchctl.domain.types import (
 from researchctl.errors import RCPError
 from researchctl.serialization import canonical_digest, canonical_json_bytes
 from researchctl.services.run_preflight import RunPreflightReceipt
-
 
 _ATTEMPT_ID = TypeAdapter(RunAttemptId)
 _OPERATION_ID = TypeAdapter(OperationId)
@@ -212,10 +212,8 @@ class _BoundedTail:
         except OSError as error:
             self.read_error = type(error).__name__
         finally:
-            try:
+            with suppress(OSError):
                 stream.close()  # type: ignore[attr-defined]
-            except OSError:
-                pass
 
     @property
     def truncated(self) -> bool:
@@ -802,19 +800,15 @@ class LocalRunExecutor:
         return summary[:_MAX_LOG_SUMMARY_CHARS]
 
     def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
         try:
             process.wait(timeout=self.terminate_grace_seconds)
             return
         except subprocess.TimeoutExpired:
             pass
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         process.wait()
 
     @staticmethod
@@ -978,10 +972,8 @@ class LocalRunExecutor:
             os.replace(temporary, marker_path)
             self._fsync_directory(marker_path.parent)
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 temporary.unlink()
-            except FileNotFoundError:
-                pass
 
     @staticmethod
     def _write_descriptor(descriptor: int, content: bytes) -> None:

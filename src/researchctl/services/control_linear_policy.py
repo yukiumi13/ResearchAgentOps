@@ -3,10 +3,10 @@ from __future__ import annotations
 import fcntl
 import os
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 from pydantic import ValidationError
 

@@ -16,7 +16,6 @@ from researchctl.domain.models import RunResult, RunSpec
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml, load_yaml
 
-
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _RUN_ID = re.compile(r"^run_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _MAX_COMMIT_BYTES = 256 * 1024

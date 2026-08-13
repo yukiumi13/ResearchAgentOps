@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import BinaryIO, TypeVar
+from typing import BinaryIO
 
 from pydantic import BaseModel
 
 from researchctl.errors import RCPError
 
-RequestT = TypeVar("RequestT", bound=BaseModel)
 MAX_JSON_REQUEST_BYTES = 1024 * 1024
 
 
@@ -25,7 +24,10 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def parse_json_request(content: bytes, model: type[RequestT]) -> RequestT:
+def parse_json_request[RequestT: BaseModel](
+    content: bytes,
+    model: type[RequestT],
+) -> RequestT:
     if not content:
         raise RCPError(
             code="empty_json_request",
@@ -57,10 +59,15 @@ def parse_json_request(content: bytes, model: type[RequestT]) -> RequestT:
     return model.model_validate(payload)
 
 
-def read_json_request(stream: BinaryIO, model: type[RequestT]) -> RequestT:
+def read_json_request[RequestT: BaseModel](
+    stream: BinaryIO,
+    model: type[RequestT],
+) -> RequestT:
     content = stream.read(MAX_JSON_REQUEST_BYTES + 1)
     return parse_json_request(content, model)
 
 
-def request_loader(model: type[RequestT]) -> Callable[[BinaryIO], RequestT]:
+def request_loader[RequestT: BaseModel](
+    model: type[RequestT],
+) -> Callable[[BinaryIO], RequestT]:
     return lambda stream: read_json_request(stream, model)

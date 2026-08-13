@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from researchctl.adapters.git_ci import GitCIObjectReader
 from researchctl.adapters.git_impact_decision import GitImpactDecisionAdapter

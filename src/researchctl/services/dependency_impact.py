@@ -5,7 +5,6 @@ from typing import Protocol
 
 from researchctl.domain.models import DependencyChangeReceipt, DependencySet
 
-
 GIT_TREE_CHANGE_PROVIDER_ID = "researchctl.git-tree-diff.v1"
 PATH_DEPENDENCY_EVALUATOR_ID = "researchctl.path-dependency.v1"
 DECLARED_DEPENDENCY_EVALUATOR_ID = "researchctl.declared-dependency.v2"

@@ -23,7 +23,6 @@ from researchctl.services.control_bootstrap import (
     capture_managed_init_manifest,
 )
 
-
 OPERATION_ID = "operation_20260803T130000Z_" + "a" * 24
 OTHER_OPERATION_ID = "operation_20260803T130001Z_" + "b" * 24
 

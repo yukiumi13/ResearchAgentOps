@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 
@@ -19,9 +19,9 @@ from researchctl.adapters.git_scope import GitWriteScopeValidator
 from researchctl.adapters.git_submission import SubmissionCommitReceipt
 from researchctl.adapters.git_worktree import GitWorktreeAdapter
 from researchctl.domain.models import (
+    ProjectPolicy,
     ReportProposal,
     ReportRecord,
-    ProjectPolicy,
     ResearchSubmission,
     RunResult,
     RunSpec,
@@ -37,19 +37,18 @@ from researchctl.services.review_acceptance import (
     AcceptanceBundle,
     ReviewAcceptanceBuilder,
 )
-from researchctl.services.submission_records import SubmissionRecordRepository
 from researchctl.services.submission_delivery import (
     SubmissionBranchDelivery,
     SubmissionDeliveryPort,
     SubmissionPullRequestReceipt,
     render_submission_pull_request,
 )
+from researchctl.services.submission_records import SubmissionRecordRepository
 from researchctl.services.submissions import (
     SubmissionBundle,
     SubmissionBundleBuilder,
     SubmissionEvidence,
 )
-
 
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_MESSAGE = re.compile(
@@ -334,7 +333,7 @@ class SubmissionWorkflowService:
                     "observed_head": observed_head,
                 },
             )
-        submission, proposal, evidence, open_bundle, base_commit = self._load_open_bundle(
+        submission, proposal, evidence, _open_bundle, base_commit = self._load_open_bundle(
             task=task,
             submission_id=request.submission_id,
             commit=request.expected_head,

@@ -21,7 +21,6 @@ from researchctl.services.github_governance import (
     preview_github_governance_apply,
 )
 
-
 _MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024
 _GH_ENVIRONMENT_KEYS = frozenset(
     {

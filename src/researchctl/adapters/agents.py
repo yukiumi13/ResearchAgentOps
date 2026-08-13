@@ -5,10 +5,9 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from researchctl.errors import RCPError
-
 
 _DANGEROUS_FLAGS = {
     "--dangerously-bypass-approvals-and-sandbox",
@@ -116,7 +115,9 @@ class CodexCliAdapter:
 
 
 class ClaudeCliAdapter:
-    _SESSION_EVENT_TYPES = {"assistant", "result", "system", "user"}
+    _SESSION_EVENT_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"assistant", "result", "system", "user"}
+    )
 
     def start_command(
         self,

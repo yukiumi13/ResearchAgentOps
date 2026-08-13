@@ -19,7 +19,6 @@ from researchctl.serialization import dump_yaml
 from researchctl.services.control_tasks import ControlTaskRecordRepository
 from researchctl.services.task_records import TaskRecordRepository
 
-
 OPERATION_ID = "operation_20260803T120000Z_" + "a" * 24
 OTHER_OPERATION_ID = "operation_20260803T120001Z_" + "b" * 24
 

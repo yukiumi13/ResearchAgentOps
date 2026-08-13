@@ -11,7 +11,6 @@ from researchctl.services.factory import open_post_merge_application
 from researchctl.services.github_post_merge import AuthenticatedGitHubPostMergeBridge
 from researchctl.services.post_merge import write_post_merge_artifact
 
-
 app = typer.Typer(
     name="researchctl-github-post-merge",
     help="Authenticate one merged GitHub PR and enqueue its accepted result.",

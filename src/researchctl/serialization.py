@@ -4,14 +4,13 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
 
 from researchctl.domain.types import Sha256Digest
 
-ModelT = TypeVar("ModelT", bound=BaseModel)
 _MAX_YAML_ALIASES = 50
 
 _MAX_YAML_BYTES = 2 * 1024 * 1024
@@ -299,7 +298,7 @@ def validation_error_details(
     return rendered
 
 
-def load_model(path: Path, model_type: type[ModelT]) -> ModelT:
+def load_model[ModelT: BaseModel](path: Path, model_type: type[ModelT]) -> ModelT:
     if path.stat().st_size > _MAX_YAML_BYTES:
         raise SerializationError(
             f"YAML input exceeds {_MAX_YAML_BYTES} byte limit"

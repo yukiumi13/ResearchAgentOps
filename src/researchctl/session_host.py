@@ -12,7 +12,6 @@ from researchctl.domain.enums import SessionState
 from researchctl.errors import RCPError
 from researchctl.runtime import RuntimeStore
 
-
 _PASSTHROUGH_ENVIRONMENT = {
     "ANTHROPIC_API_KEY",
     "CLAUDE_CONFIG_DIR",

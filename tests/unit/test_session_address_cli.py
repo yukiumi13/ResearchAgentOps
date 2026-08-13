@@ -16,7 +16,6 @@ from researchctl.services.requests import (
     SessionShowRequest,
 )
 
-
 SESSION_ID = "session_20260803T120000Z_" + "a" * 24
 TASK_ID = "task_20260803T120000Z_" + "b" * 24
 COMMIT = "c" * 40

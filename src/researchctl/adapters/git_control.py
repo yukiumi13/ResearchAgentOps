@@ -14,7 +14,6 @@ from researchctl.adapters._subprocess import (
 from researchctl.constants import LINEAR_PROJECTION_POLICY_PATH, PROJECT_POLICY_PATH
 from researchctl.errors import RCPError
 
-
 _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _CONTROL_COMMANDS = frozenset({"task.create", "task.update", "task.cancel"})
 _LINEAR_COMMAND = "linear.configure"

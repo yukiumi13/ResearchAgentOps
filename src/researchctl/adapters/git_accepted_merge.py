@@ -27,7 +27,6 @@ from researchctl.serialization import (
 )
 from researchctl.services.linear_delivery import AcceptedMergeSnapshot
 
-
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 

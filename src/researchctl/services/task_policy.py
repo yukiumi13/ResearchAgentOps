@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from researchctl.domain.enums import TaskState
 
-
 TASK_STATE_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.PLANNED: frozenset(
         {TaskState.PLANNED, TaskState.READY, TaskState.CANCELED}

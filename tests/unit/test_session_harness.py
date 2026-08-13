@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Mapping
 
 import pytest
 
@@ -19,7 +19,6 @@ from researchctl.services.requests import (
 from researchctl.services.session_harness import LocalSessionHarness, build_session_prompt
 from researchctl.session_host import run as run_session_host
 from researchctl.session_host import sanitized_agent_environment
-
 
 NOW = datetime(2026, 8, 2, 12, 34, 56, tzinfo=UTC)
 PROJECT_ID = "project_20260802T123456Z_" + "9" * 24

@@ -13,7 +13,6 @@ from researchctl.adapters._subprocess import (
 from researchctl.adapters.git_worktree import GitWorktreeAdapter, WorktreeSpec
 from researchctl.errors import RCPError
 
-
 _SUBMISSION_ID = re.compile(r"^submission_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _DECISION_ID = re.compile(r"^decision_\d{8}T\d{6}Z_[0-9a-f]{24}$")

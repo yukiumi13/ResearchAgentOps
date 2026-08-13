@@ -4,9 +4,9 @@ import secrets
 import sys
 import time
 import uuid
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Mapping
 
 from researchctl.adapters import (
     AgentCliContract,

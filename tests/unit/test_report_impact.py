@@ -32,7 +32,6 @@ from researchctl.services.report_impact import (
 )
 from researchctl.services.requests import ImpactBatchCreateRequest
 
-
 IMPACT_ID = "impact_20260803T120000Z_" + "1" * 24
 TARGET_COMMIT = "d" * 40
 TARGET_TREE = "e" * 40

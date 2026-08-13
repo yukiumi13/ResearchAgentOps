@@ -27,12 +27,11 @@ from researchctl.domain.models import (
     StatusUpdate,
 )
 from researchctl.errors import RCPError
-from researchctl.serialization import canonical_json_bytes
 from researchctl.runtime.models import (
     AttentionItem,
     LinearDeliveryClaim,
-    LinearDeliveryRecord,
     LinearDeliveryReceiptRecord,
+    LinearDeliveryRecord,
     OperationEvent,
     OperationRecord,
     OutboxRecord,
@@ -43,6 +42,7 @@ from researchctl.runtime.models import (
     SessionNotificationReply,
     VerifiedLinearIngressReceipt,
 )
+from researchctl.serialization import canonical_json_bytes
 
 _SCHEMA_VERSION = 3
 _DEFAULT_BUSY_TIMEOUT_MS = 5_000
@@ -578,7 +578,7 @@ class RuntimeStore:
                     "unsafe_runtime_database_path",
                     "Runtime database path must be a regular file, not a link.",
                     context={"path": str(self._path)},
-                )
+                ) from None
         except OSError as exc:
             raise _error(
                 "runtime_database_open_failed",

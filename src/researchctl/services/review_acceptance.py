@@ -13,8 +13,8 @@ from researchctl.domain.enums import (
     SubmissionState,
 )
 from researchctl.domain.models import (
-    ReportProposal,
     ProjectPolicy,
+    ReportProposal,
     ReportRecord,
     ResearchSubmission,
     ReviewDecision,
@@ -26,7 +26,6 @@ from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services.report_renderer import render_accepted_report
 from researchctl.services.submissions import (
     RenderedSubmissionFile,
-    SubmissionBundle,
     SubmissionBundleBuilder,
     SubmissionEvidence,
 )

@@ -20,7 +20,6 @@ from researchctl.errors import UnsafeRepositoryPathError
 from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services.doctor import doctor
 
-
 OTHER_SUBMISSION_ID = "submission_20260802T123456Z_" + "7" * 24
 OTHER_RUN_ID = "run_20260802T123456Z_" + "8" * 24
 OTHER_DECISION_ID = "decision_20260802T123456Z_" + "9" * 24

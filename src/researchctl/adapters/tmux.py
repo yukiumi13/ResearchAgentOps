@@ -14,7 +14,6 @@ from researchctl.adapters._subprocess import (
 )
 from researchctl.errors import RCPError
 
-
 _SESSION_ID = re.compile(
     r"^session_\d{8}T\d{6}Z_[0-9a-f]{24}$"
 )

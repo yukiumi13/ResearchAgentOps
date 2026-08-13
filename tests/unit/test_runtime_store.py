@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import stat
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 
@@ -20,6 +20,10 @@ from researchctl.runtime import (
     attention_dedupe_key,
     hash_session_token,
 )
+from researchctl.runtime.models import (
+    LinearDeliveryReceiptRecord,
+    VerifiedLinearIngressReceipt,
+)
 from researchctl.serialization import canonical_digest, canonical_json_bytes
 
 NOW = datetime(2026, 8, 3, 12, 0, 0, tzinfo=UTC)
@@ -31,6 +35,15 @@ OPERATION_ID = "operation_20260803T120000Z_" + "e" * 24
 OTHER_OPERATION_ID = "operation_20260803T120000Z_" + "f" * 24
 REQUEST_DIGEST = "sha256:" + "1" * 64
 OTHER_REQUEST_DIGEST = "sha256:" + "2" * 64
+
+
+def test_runtime_delivery_annotations_resolve_for_adapter_introspection() -> None:
+    assert "SessionNotificationSourceMarker" in str(
+        get_type_hints(LinearDeliveryReceiptRecord)["source_marker"]
+    )
+    assert "SessionNotificationSourceMarker" in str(
+        get_type_hints(VerifiedLinearIngressReceipt)["source_marker"]
+    )
 
 
 def _session(

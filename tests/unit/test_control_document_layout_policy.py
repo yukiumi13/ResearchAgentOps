@@ -20,7 +20,6 @@ from researchctl.services.control_document_layout_policy import (
 from researchctl.services.factory import open_application
 from researchctl.services.requests import DocumentLayoutConfigureRequest
 
-
 OPERATION_ID = "operation_20260804T140000Z_" + "d" * 24
 OTHER_OPERATION_ID = "operation_20260804T140001Z_" + "e" * 24
 
@@ -186,9 +185,8 @@ def test_application_journals_manager_layout_policy_and_denies_agent(
         environment={},
         document_layout_operation_id=OTHER_OPERATION_ID,
         document_layout_expected_default_head=base,
-    ) as handle:
-        with pytest.raises(RCPError) as denied:
-            handle.service.document_layout_configure(denied_request, agent)
+    ) as handle, pytest.raises(RCPError) as denied:
+        handle.service.document_layout_configure(denied_request, agent)
     assert denied.value.code == "authorization_denied"
 
 

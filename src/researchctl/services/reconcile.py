@@ -46,7 +46,6 @@ from researchctl.serialization import (
 )
 from researchctl.services.local_run import ProcessTerminalObservation
 
-
 _CAPABILITY_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RUN_ID = TypeAdapter(RunId)
 _ATTEMPT_ID = TypeAdapter(RunAttemptId)
@@ -1091,9 +1090,9 @@ class LocalReconcileService:
             reasons.append("capability_digest_invalid")
             hard_conflict = True
 
-        if facts.incomplete_components:
-            classification = ReconcileClassification.UNCERTAIN
-        elif runtime is not None and runtime.host != self._local_host:
+        if facts.incomplete_components or (
+            runtime is not None and runtime.host != self._local_host
+        ):
             classification = ReconcileClassification.UNCERTAIN
         elif facts.tmux_present:
             if runtime is None:

@@ -1,0 +1,163 @@
+schema_version: '0.1'
+document_id: document_20260812T230402Z_d47c9274452ad42422fcb092
+document_kind: project_status_summary
+classification: status/project:snapshot
+slug: system-stability-review
+title: System stability review
+status: proposed
+project_id: null
+basis_commit: 1ffbe6caeee7cb002028238ccc0ba423ee19cc23
+revision: 1
+authored_by:
+  role: external_agent
+  actor_id: codex-system-review
+created_at: '2026-08-12T23:04:02Z'
+updated_at: '2026-08-12T23:04:02Z'
+acceptance: null
+supersedes: null
+tags:
+- architecture
+- performance
+- stability
+- traceability
+sources:
+- key: historical
+  kind: repository_path
+  location: docs/HISTORICAL_PROMPT_MANIFEST.json
+- key: scenarios
+  kind: repository_path
+  location: docs/USER_SCENARIOS.md
+- key: requirements
+  kind: repository_path
+  location: docs/REQUIREMENT_LEDGER.md
+- key: workflows
+  kind: repository_path
+  location: docs/WORKFLOW_COVERAGE.md
+- key: traceability-tests
+  kind: repository_path
+  location: tests/unit/test_traceability.py
+- key: source-tree
+  kind: git_commit
+  location: 1ffbe6caeee7cb002028238ccc0ba423ee19cc23
+- key: benchmark-contract
+  kind: repository_path
+  location: tests/unit/test_benchmarks.py
+- key: ci-workflow
+  kind: repository_path
+  location: .github/workflows/research-source-tests.yml
+- key: governance
+  kind: repository_path
+  location: docs/adr/0015-github-proposal-identity-and-protected-acceptance.md
+- key: document-site
+  kind: repository_path
+  location: tests/unit/test_document_site.py
+as_of: '2026-08-12T23:04:02Z'
+executive_summary: >-
+  The local core is a release candidate, not a production-stable control plane.
+  Historical and post-export requirements are traceable, 910 tests pass, the
+  Python lint baseline is clean, and measured local paths are responsive. Live
+  governance and external transports remain the dominant stability gaps.
+capabilities:
+- key: requirement-coverage
+  title: Requirement and workflow coverage
+  status: verified_local
+  summary: >-
+    All 77 historical prompt anchors map to 33 stable scenarios, every scenario
+    has one of 16 workflow rows and an honest status, and later requirements are
+    tracked separately rather than hidden in the historical count.
+  evidence_keys:
+  - historical
+  - scenarios
+  - requirements
+  - workflows
+  - traceability-tests
+- key: local-core
+  title: Local governed workflow
+  status: partial
+  summary: >-
+    Typed records, local Sessions and Runs, Submission and Impact proposals,
+    deterministic validation, document contracts, and recovery behavior have
+    executable local coverage.
+  evidence_keys:
+  - source-tree
+  missing:
+  - Protected-repository, GitHub App author, Plan reviewer, Linear, SSH, and live provider pilots remain.
+- key: source-quality
+  title: Source quality gate
+  status: verified_local
+  summary: >-
+    The review removed the 183-finding Ruff baseline, fixed runtime annotation
+    introspection and a host-dependent tmux integration fixture, and adds
+    full-repository Ruff plus pytest to the exact-head source workflow.
+  evidence_keys:
+  - ci-workflow
+- key: performance
+  title: Local performance envelope
+  status: partial
+  summary: >-
+    Cold CLI and document commands take about 0.55 to 0.68 seconds on cm04. A
+    50-item, 200-sample warm diagnostic measured inbox reads at p95 0.777 ms and
+    rendering at p95 1.975 ms with zero failures.
+  evidence_keys:
+  - benchmark-contract
+  missing:
+  - The required 30-minute end-to-end production window and external queue measurements have not run.
+- key: language-fitness
+  title: Python language fitness
+  status: verified_local
+  summary: >-
+    No measured local path justifies a rewrite. Python matches Pydantic, Typer,
+    SQLite, subprocess, and MkDocs boundaries; network, GitHub queue, Git, and
+    remote process latency dominate the unfinished workflows.
+  evidence_keys:
+  - benchmark-contract
+  - source-tree
+- key: document-library
+  title: Validated document library
+  status: verified_local
+  summary: >-
+    The policy remains taxonomy authority while a digest-bound manifest feeds
+    an optional strict MkDocs build without a second navigation truth.
+  evidence_keys:
+  - document-site
+- key: protected-acceptance
+  title: Protected manager acceptance
+  status: deployment_pending
+  summary: >-
+    The repository contains exact-head workflows, CODEOWNERS, governance models,
+    and audit/apply adapters, but GitHub currently reports no active ruleset or
+    classic main protection.
+  evidence_keys:
+  - governance
+  missing:
+  - Install and audit required checks, latest CODEOWNER approval, strict base currency, and a distinct Agent App principal.
+active_work:
+- key: stability-proposal
+  summary: Review and merge the measured stability baseline
+  state: ready_for_review
+  owner: person:yukiumi13
+  next_action: Review the proposal diff and exact-head CI evidence before merge.
+risks:
+- key: unprotected-main
+  severity: high
+  risk: Green workflows are advisory while main has no active GitHub merge rule.
+  mitigation: Apply the reviewed governance policy and verify it with researchctl github doctor.
+- key: module-hotspots
+  severity: medium
+  risk: >-
+    RuntimeStore, ApplicationService, domain models, CI dispatch, and document
+    linting are large change surfaces; lint_document_tree alone is 469 lines.
+  mitigation: >-
+    Split only observed domain and transaction hotspots behind existing facades,
+    with characterization tests and no second database or state machine.
+- key: external-evidence
+  severity: medium
+  risk: Fake ports and local adapters do not prove real GitHub, Linear, SSH, or provider behavior.
+  mitigation: Run the R1 protected-repository shadow pilot before expanding the product surface.
+decisions_needed: []
+next_steps:
+- Merge the source-quality and review proposal only after exact-head checks pass.
+- Apply and audit protected main governance with a distinct Agent App author.
+- Run the live Plan reviewer and Linear shadow pilots from one exact release commit.
+- Split the document tree validator and notification transactions only after hotspot-specific characterization tests exist.
+- Retain Python until a recorded workload violates the supported latency or scale envelope.

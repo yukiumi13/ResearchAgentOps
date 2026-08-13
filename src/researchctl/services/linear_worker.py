@@ -27,7 +27,6 @@ from researchctl.services.linear_delivery import (
     strip_linear_transport_envelope,
 )
 
-
 _ACCEPTED_TOPIC = "linear.accepted-result.v1"
 _REPLY_TOPIC = "linear.session-reply.v1"
 LINEAR_SESSION_REPLY_RENDERER_ID = "linear.session-reply-markdown.v2"
@@ -220,7 +219,7 @@ def build_linear_session_reply_event(
         f"- Report: `{report_id or 'none'}`\n"
         f"- Commit reviewed: `{values['commit_sha']}`\n"
         f"- Reply: `{reply_id}`\n"
-    ).encode("utf-8")
+    ).encode()
     payload_digest = f"sha256:{hashlib.sha256(renderer_payload).hexdigest()}"
     marker = _reply_marker(
         event_id=outbox_id,

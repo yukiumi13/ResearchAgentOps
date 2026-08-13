@@ -8,7 +8,6 @@ from researchctl.domain.models import ReportProposal, ResearchSubmission, TaskRe
 from researchctl.errors import RCPError
 from researchctl.services.submissions import SubmissionBundle
 
-
 _MAX_PULL_REQUEST_BODY_BYTES = 60 * 1024
 
 

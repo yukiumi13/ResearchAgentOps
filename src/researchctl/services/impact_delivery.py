@@ -10,7 +10,6 @@ from researchctl.services.report_impact import (
     ReportImpactBundle,
 )
 
-
 _MAX_PULL_REQUEST_BODY_BYTES = 60 * 1024
 
 

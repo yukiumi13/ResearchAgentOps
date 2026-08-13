@@ -10,7 +10,6 @@ from researchctl.adapters.github_impact_decision import (
 from researchctl.adapters.github_submission import GhSubmissionCommandResult
 from researchctl.domain.models import GitHubGovernancePolicy
 
-
 REMOTE_URL = "git@github.example.invalid:owner/project.git"
 DECISION_ID = "decision_20260803T150000Z_" + "a" * 24
 BRANCH = f"research/impact-decision/{DECISION_ID}"

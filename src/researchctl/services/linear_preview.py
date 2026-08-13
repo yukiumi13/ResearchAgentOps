@@ -15,7 +15,6 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 
-
 LINEAR_RENDERER_ID = "linear.accepted-result-markdown.v2"
 LINEAR_RENDERER_VERSION = 2
 

@@ -63,7 +63,6 @@ from researchctl.services.git_report_impact import GitReportImpactAnalyzer
 from researchctl.services.impact_decision import ImpactDecisionBuilder
 from researchctl.services.task_policy import task_transition_allowed
 
-
 CI_DISPATCHER_ID = "researchctl.ci.dispatch.v1"
 CI_DISPATCHER_VERSION = __version__
 _PROJECT_PATH = ".research/project.yaml"

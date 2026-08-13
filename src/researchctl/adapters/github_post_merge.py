@@ -23,7 +23,6 @@ from researchctl.services.github_post_merge import (
     github_artifact_name,
 )
 
-
 _API_VERSION = "2022-11-28"
 _GITHUB_ACTIONS_APP = "github-actions"
 _MAX_JSON_BYTES = 2 * 1024 * 1024

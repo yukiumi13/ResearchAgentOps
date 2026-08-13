@@ -21,7 +21,6 @@ from researchctl.services.github_governance import (
     preview_github_governance_apply,
 )
 
-
 REPOSITORY = "owner/project"
 
 

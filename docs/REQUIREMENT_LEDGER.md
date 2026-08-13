@@ -309,3 +309,20 @@ requirements so traceability does not silently stop at that boundary.
   Read the Docs, or another host has been deployed. A repository can reuse an
   existing source-test runner for strict site validation rather than allocating
   a separate Actions job; presentation/publishing config is manager-owned.
+
+## REQ-20260812-001 - Release review measures coverage, debt, and language fitness
+
+- Source: post-site system stability and implementation review, 2026-08-12.
+- Maps to: `US-014`, `US-025`, `US-027`.
+- Acceptance: a release review separately verifies the 77-prompt historical
+  baseline, later dated requirements, scenario/workflow status, executable test
+  evidence, deployment evidence, source quality, structural hotspots, and
+  measured performance. A mapped scenario is not reported as implemented.
+  Repository CI runs the configured Python linter and tests on the same exact PR
+  head, and the accepted lint baseline contains no grandfathered findings.
+  Language replacement requires a measured user-facing or compute hotspot that
+  cannot be addressed behind an existing port; cold-start cost, local hot-path
+  latency, network/runner queue time, and external command time are reported
+  separately. Large modules are split incrementally by domain or transaction
+  behind the existing public service and SQLite authority, not by introducing a
+  second state machine or performing an unmeasured rewrite.

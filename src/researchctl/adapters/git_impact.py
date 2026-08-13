@@ -19,7 +19,6 @@ from researchctl.adapters.git_worktree import GitWorktreeAdapter, WorktreeSpec
 from researchctl.domain.types import UtcDateTime
 from researchctl.errors import RCPError
 
-
 _IMPACT_ID = re.compile(r"^impact_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _OPERATION_ID = re.compile(r"^operation_\d{8}T\d{6}Z_[0-9a-f]{24}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
