@@ -29,6 +29,10 @@ from researchctl.domain.models import (
     SimpleDocumentSection,
 )
 from researchctl.errors import RCPError
+from researchctl.services.agent_guides import (
+    lint_agent_guide_targets,
+    render_simple_agent_guide,
+)
 from researchctl.services.document_ownership import (
     OwnershipResolution,
     owner_findings,
@@ -199,18 +203,12 @@ def lint_simple_document_tree(
                 )
             )
 
-    if policy.agent_guides:
-        findings.append(
-            DocumentFinding(
-                kind="warning",
-                code="agent_guide_not_enforced",
-                path=", ".join(target.path for target in policy.agent_guides),
-                message=(
-                    "Configured Agent guides are not yet rendered or drift-checked "
-                    "for a version 2 policy."
-                ),
-            )
-        )
+    agent_guide_count = lint_agent_guide_targets(
+        repository,
+        policy.agent_guides,
+        findings,
+        render=lambda guide_format: render_simple_agent_guide(policy, guide_format),
+    )
 
     files = collect_document_files(document_root, findings)
     root_pages = set(policy.root_page_paths())
@@ -424,7 +422,7 @@ def lint_simple_document_tree(
     return SimpleDocumentTreeLintResult(
         root=policy.root,
         policy_version=policy.version,
-        checked_files=len(considered),
+        checked_files=len(considered) + agent_guide_count,
         documents=len(document_facts),
         structured_documents=len(structured_facts),
         assets=len(classified.assets),

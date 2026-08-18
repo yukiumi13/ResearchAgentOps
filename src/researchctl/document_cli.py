@@ -49,6 +49,7 @@ from researchctl.serialization import (
     load_yaml,
     validation_error_details,
 )
+from researchctl.services.agent_guides import render_simple_agent_guide
 from researchctl.services.document_policy import (
     LEGACY_POLICY_VERSION,
     SIMPLE_POLICY_VERSION,
@@ -390,7 +391,7 @@ def _write_ephemeral_output(content: bytes, output_file: Path | None) -> None:
 def _agent_guide_destination(
     repository: Path,
     output_file: Path,
-    policy: DocumentLayoutPolicy,
+    policy: DocumentLayoutPolicy | SimpleDocumentLayoutPolicy,
     requested_format: AgentGuideFormat | None,
 ) -> tuple[Path, AgentGuideFormat]:
     lexical = (
@@ -1967,7 +1968,18 @@ def doc_agent_guide_command(
     """Render project-local instructions that teach Agents the document workflow."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file, command="doc agent-guide")
+        repository, effective = _repository_and_effective_policy(project, policy_file)
+        policy: DocumentLayoutPolicy | SimpleDocumentLayoutPolicy = (
+            effective.require_simple(command="doc agent-guide")
+            if effective.is_simple
+            else effective.require_legacy(command="doc agent-guide")
+        )
+
+        def render(selected: AgentGuideFormat) -> bytes:
+            if isinstance(policy, SimpleDocumentLayoutPolicy):
+                return render_simple_agent_guide(policy, selected)
+            return render_project_agent_guide(policy, selected)
+
         if output_file is None:
             selected_format: AgentGuideFormat
             if guide_format is not None:
@@ -1981,10 +1993,7 @@ def doc_agent_guide_command(
                         remediation="Select one with --format.",
                     )
                 selected_format = next(iter(configured_formats), "claude")
-            typer.echo(
-                render_project_agent_guide(policy, selected_format).decode("utf-8"),
-                nl=False,
-            )
+            typer.echo(render(selected_format).decode("utf-8"), nl=False)
             return
         destination, selected_format = _agent_guide_destination(
             repository,
@@ -1995,7 +2004,7 @@ def doc_agent_guide_command(
         _upsert_agent_guide(
             repository,
             destination,
-            render_project_agent_guide(policy, selected_format),
+            render(selected_format),
             selected_format,
         )
     except Exception as exc:

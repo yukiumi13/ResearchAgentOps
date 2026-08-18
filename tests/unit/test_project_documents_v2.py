@@ -13,10 +13,15 @@ from typer.testing import CliRunner
 from researchctl.cli import app
 from researchctl.domain.models import (
     SIMPLE_MARKDOWN_FRONTMATTER_FIELDS,
+    DocumentLayoutPolicy,
     SimpleDocumentLayoutPolicy,
 )
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml
+from researchctl.services.agent_guides import (
+    agent_guide_markers,
+    render_simple_agent_guide,
+)
 from researchctl.services.codeowners import (
     CODEOWNERS_LOCATIONS,
     CODEOWNERS_MAX_BYTES,
@@ -33,6 +38,10 @@ from researchctl.services.markdown_source import (
     first_heading_title,
     html_block_texts,
     link_destinations,
+)
+from researchctl.services.project_documents import (
+    PROJECT_AGENT_GUIDE_RENDERER_IDS,
+    render_project_agent_guide,
 )
 from researchctl.services.project_documents_v2 import (
     check_simple_document,
@@ -888,7 +897,6 @@ def test_scaffold_output_is_a_valid_minimal_document() -> None:
     "command",
     [
         ["doc", "index"],
-        ["doc", "agent-guide"],
     ],
 )
 def test_version_two_fails_closed_for_unimplemented_commands(
@@ -2685,3 +2693,204 @@ def test_a_real_render_is_claimed_through_both_of_its_markers(
         for block in html_block_texts(text)
     )
     assert any("researchctl-renderer" in quote for quote in blockquote_texts(text))
+
+
+# --------------------------------------------------------------------------
+# Managed Agent guide
+# --------------------------------------------------------------------------
+
+GUIDE_TARGET: list[dict[str, str]] = [{"path": "CLAUDE.md", "format": "claude"}]
+PROJECT_RULES = "# Project rules\n\nRun the tests before pushing.\n"
+
+
+def _guide_policy(**overrides: Any) -> dict[str, Any]:
+    return _structured_policy(agent_guides=[dict(GUIDE_TARGET[0])], **overrides)
+
+
+def _guide(payload: dict[str, Any]) -> str:
+    return render_simple_agent_guide(_simple(payload), "claude").decode("utf-8")
+
+
+def test_the_version_two_agent_guide_renders_to_stdout(tmp_path: Path) -> None:
+    payload = _guide_policy()
+    repository = _repository(tmp_path, payload)
+
+    result = CliRunner().invoke(app, ["doc", "agent-guide", "--project", str(repository)])
+
+    assert result.exit_code == 0, result.stdout + str(result.stderr)
+    assert result.stdout == _guide(payload)
+
+
+def test_the_version_two_guide_states_the_directory_first_contract() -> None:
+    payload = _guide_policy(ownership={"source": "codeowners", "required": True})
+    guide = _guide(payload)
+
+    # The markers are the version 1 markers, so raising a policy replaces the
+    # same managed block instead of leaving two behind. Only the renderer id
+    # says which contract the block describes.
+    assert guide.startswith(
+        "<!-- researchctl-agent-guide:project-document-agent-guide.claude:begin -->"
+    )
+    assert guide.rstrip("\n").endswith(
+        "<!-- researchctl-agent-guide:project-document-agent-guide.claude:end -->"
+    )
+    assert "researchctl-renderer:simple-document-agent-guide.claude.v1" in guide
+    assert "project-document-agent-guide.claude.v5" not in guide
+
+    for statement in (
+        "Its section directory is its type",
+        "no `a/b:c` classification",
+        "title is the first level-one heading",
+        "owners come\nfrom CODEOWNERS, which is the only review authority",
+        "edited comes from Git",
+        "Frontmatter is optional and a document with none is valid",
+        "A structured YAML contract is opt-in per section",
+        "a direct child of the section directory",
+        "regenerate it, never edit it by hand",
+        "repository-root-relative path",
+        "researchctl doc contracts",
+        "researchctl doc scaffold --type SECTION --title TITLE",
+        "researchctl doc check PATH",
+        "researchctl doc render PATH --output-file PATH.md",
+        "researchctl doc tree --project .",
+        "an Agent-authored\ncommit is not acceptance",
+        "must not be\nhidden inside a content proposal",
+        "no `researchctl init`, no Session, no SQLite",
+    ):
+        assert statement in guide, statement
+
+    # The guide lists exactly the fields the frontmatter model accepts.
+    for field in SIMPLE_MARKDOWN_FRONTMATTER_FIELDS:
+        assert f"- `{field}` --" in guide, field
+    assert guide.count(" -- ") == len(SIMPLE_MARKDOWN_FRONTMATTER_FIELDS)
+
+    assert "| Section | Structured contract | Classification compatibility |" in guide
+    assert "| `design` | `design-document` | `design/architecture:document` |" in guide
+    assert "| `profiling` | `analysis-brief` | - |" in guide
+    assert "| `runbooks` | - | - |" in guide
+    assert (
+        "Directory depth below a section: at most 3. "
+        "Accepted root pages: `README.md`. Ownership: CODEOWNERS, required."
+    ) in guide
+
+
+def test_the_guide_upserts_one_block_and_leaves_the_project_rules_alone(
+    tmp_path: Path,
+) -> None:
+    payload = _guide_policy()
+    repository = _repository(tmp_path, payload)
+    (repository / "CLAUDE.md").write_text(PROJECT_RULES, encoding="utf-8")
+    runner = CliRunner()
+    command = [
+        "doc", "agent-guide",
+        "--project", str(repository),
+        "--output-file", "CLAUDE.md",
+    ]
+
+    inserted = runner.invoke(app, command)
+
+    assert inserted.exit_code == 0, inserted.stdout + str(inserted.stderr)
+    assert "Updated:" in inserted.stdout
+    expected = PROJECT_RULES + "\n" + _guide(payload)
+    assert (repository / "CLAUDE.md").read_text(encoding="utf-8") == expected
+
+    repeated = runner.invoke(app, command)
+
+    # Rendering twice is a no-op, so the command is safe to run in CI.
+    assert repeated.exit_code == 0, repeated.stdout + str(repeated.stderr)
+    assert "Unchanged:" in repeated.stdout
+    assert (repository / "CLAUDE.md").read_text(encoding="utf-8") == expected
+    assert lint_simple_document_tree(repository, _simple(payload)).passed
+
+
+def test_doc_tree_enforces_the_configured_version_two_guide(tmp_path: Path) -> None:
+    payload = _guide_policy()
+    repository = _repository(tmp_path, payload)
+
+    absent = lint_simple_document_tree(repository, _simple(payload))
+    assert _invalid(absent) == ["agent_guide_missing"]
+
+    (repository / "CLAUDE.md").write_text(PROJECT_RULES, encoding="utf-8")
+    unmanaged = lint_simple_document_tree(repository, _simple(payload))
+    assert _invalid(unmanaged) == ["agent_guide_mismatch"]
+
+    (repository / "CLAUDE.md").write_text(
+        PROJECT_RULES + "\n" + _guide(payload), encoding="utf-8"
+    )
+    managed = lint_simple_document_tree(repository, _simple(payload))
+    assert managed.passed, _invalid(managed)
+    # docs/README.md plus the guide researchctl just checked.
+    assert managed.checked_files == 2
+
+
+def test_upgrading_to_version_two_replaces_the_version_one_block_in_place(
+    tmp_path: Path,
+) -> None:
+    payload = _guide_policy()
+    repository = _repository(tmp_path, payload)
+
+    # The block a version 1 policy left behind, produced by the real version 1
+    # renderer rather than written by hand.
+    legacy_policy = DocumentLayoutPolicy.model_validate(
+        {
+            "root": "docs",
+            "root_files": [],
+            "routes": [LEGACY_ROUTE],
+            "agent_guides": [dict(GUIDE_TARGET[0])],
+        }
+    )
+    legacy_block = render_project_agent_guide(legacy_policy, "claude").decode("utf-8")
+    trailer = "\n## Local conventions\n\nAsk before renaming a section.\n"
+    (repository / "CLAUDE.md").write_text(
+        PROJECT_RULES + "\n" + legacy_block + trailer, encoding="utf-8"
+    )
+
+    upgraded = CliRunner().invoke(
+        app,
+        [
+            "doc", "agent-guide",
+            "--project", str(repository),
+            "--output-file", "CLAUDE.md",
+        ],
+    )
+
+    assert upgraded.exit_code == 0, upgraded.stdout + str(upgraded.stderr)
+    observed = (repository / "CLAUDE.md").read_text(encoding="utf-8")
+
+    # Project-owned text on both sides of the managed block survives byte for byte.
+    assert observed == PROJECT_RULES + "\n" + _guide(payload) + trailer
+    # Sharing the marker identity is what makes this a replacement rather than
+    # a second block appended below the first.
+    begin, end = agent_guide_markers("claude")
+    assert observed.count(begin) == 1
+    assert observed.count(end) == 1
+    assert PROJECT_AGENT_GUIDE_RENDERER_IDS["claude"] not in observed
+    assert "researchctl-renderer:simple-document-agent-guide.claude.v1" in observed
+    assert lint_simple_document_tree(repository, _simple(payload)).passed
+
+
+def test_any_edit_to_the_managed_block_is_reported_as_drift(tmp_path: Path) -> None:
+    payload = _guide_policy()
+    repository = _repository(tmp_path, payload)
+    rendered = _guide(payload)
+    guide_path = repository / "CLAUDE.md"
+    guide_path.write_text(rendered, encoding="utf-8")
+    assert lint_simple_document_tree(repository, _simple(payload)).passed
+
+    # One character inside the block is enough.
+    tampered = rendered.replace("no Session,", "no session,", 1)
+    assert tampered != rendered
+    guide_path.write_text(tampered, encoding="utf-8")
+    assert _invalid(lint_simple_document_tree(repository, _simple(payload))) == [
+        "agent_guide_mismatch"
+    ]
+
+    # So is leaving the block alone while the policy moves underneath it.
+    guide_path.write_text(rendered, encoding="utf-8")
+    widened = _policy(
+        sections=[*(dict(section) for section in STRUCTURED_SECTIONS), {"path": "notes"}],
+        agent_guides=[dict(GUIDE_TARGET[0])],
+    )
+    assert _invalid(lint_simple_document_tree(repository, _simple(widened))) == [
+        "agent_guide_mismatch"
+    ]

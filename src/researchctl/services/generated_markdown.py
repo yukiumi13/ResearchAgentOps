@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import re
 import tempfile
@@ -54,6 +55,29 @@ def inspect_project_frontmatter(
     prefix = content[: match.end()].rstrip(b"\r\n") + newline + newline
     body = content[match.end() :].lstrip(b"\r\n")
     return ProjectFrontmatterEnvelope(values=payload, prefix=prefix, body=body)
+
+
+def markdown_text(value: object) -> str:
+    """Escape a value so it reads as prose inside a generated table cell."""
+
+    rendered = html.escape(str(value), quote=False).replace("\r\n", "\n").replace("\r", "\n")
+    for character in ("\\", "`", "*", "_", "[", "]", "#", "|"):
+        rendered = rendered.replace(character, f"\\{character}")
+    return "<br>".join(rendered.split("\n"))
+
+
+def markdown_code(value: object) -> str:
+    """Render a value as a code span that cannot be broken by its own content."""
+
+    rendered = str(value).replace("\r", " ").replace("\n", " ")
+    delimiter = "`" if "`" not in rendered else "``"
+    return f"{delimiter}{rendered}{delimiter}"
+
+
+def renderer_marker(renderer_id: str) -> str:
+    """The visible line that tells a reader which renderer owns the block."""
+
+    return f"> Renderer: {markdown_code(f'researchctl-renderer:{renderer_id}')}"
 
 
 def _digest(content: bytes) -> str:
