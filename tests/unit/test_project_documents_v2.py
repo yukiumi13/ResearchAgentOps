@@ -1903,6 +1903,35 @@ def test_nested_yaml_in_a_structured_section_is_an_asset(tmp_path: Path) -> None
     assert result.structured_documents == 0
 
 
+def test_an_uppercase_yaml_source_is_not_a_canonical_structured_source(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    (repository / "docs/design/encoder.YAML").write_text("a: 1\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # The render path is derived by stripping a literal ".yaml", so treating
+    # .YAML as canonical would name a render docs/design/encoder.YAML.md that
+    # nothing builds and no manifest can describe.
+    assert not result.passed
+    assert _invalid(result) == ["document_structured_extension_invalid"]
+    assert result.structured_documents == 0
+    assert result.asset_paths == ()
+
+    # The single-path route has to reach the same verdict as the tree.
+    with pytest.raises(RCPError) as error:
+        check_simple_document(
+            repository,
+            _simple(payload),
+            source=repository / "docs/design/encoder.YAML",
+            relative="docs/design/encoder.YAML",
+        )
+
+    assert error.value.code == "document_structured_extension_invalid"
+
+
 def test_markdown_links_to_assets_are_existence_checked(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     (repository / "docs/design/flow.png").write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -2378,6 +2407,8 @@ def test_doc_tree_json_exposes_facts_and_asset_paths(tmp_path: Path) -> None:
             "classification": None,
             "title": "Full SFT memory at 16k",
             "lifecycle": None,
+            # An analysis brief has no envelope, so it carries no tags.
+            "tags": [],
             "owners": ["@docs-team"],
         }
     ]

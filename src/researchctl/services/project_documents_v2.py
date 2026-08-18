@@ -238,7 +238,9 @@ def lint_simple_document_tree(
     yaml_stems: dict[str, set[str]] = {}
     for file_path in considered:
         relative = file_path.relative_to(repository).as_posix()
-        if file_path.suffix.lower() == ".yaml":
+        # Only a literally lowercase .yaml is a canonical source, so only one
+        # can make a same-stem .md ambiguous.
+        if file_path.suffix == ".yaml":
             parent = posixpath.dirname(relative)
             yaml_stems.setdefault(parent, set()).add(PurePosixPath(relative).stem)
 
@@ -340,22 +342,25 @@ def lint_simple_document_tree(
             classified.markdown.append((file_path, relative, section.path))
             continue
 
-        if section.structured is not None and depth == 0 and suffix == ".yml":
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="document_structured_extension_invalid",
-                    path=relative,
-                    message=(
-                        "Canonical structured sources use the .yaml suffix; rename "
-                        "this file so it is validated rather than published as an "
-                        "asset."
-                    ),
+        if section.structured is not None and depth == 0 and suffix in {".yaml", ".yml"}:
+            # The canonical suffix is literally lowercase .yaml. A near miss is
+            # rejected rather than accepted, because the render path is derived
+            # from it: docs/design/x.YAML would name a render docs/design/x.YAML.md,
+            # which is not the page any reader or manifest expects.
+            if file_path.suffix != ".yaml":
+                findings.append(
+                    DocumentFinding(
+                        kind="invalid",
+                        code="document_structured_extension_invalid",
+                        path=relative,
+                        message=(
+                            "Canonical structured sources use the lowercase .yaml "
+                            "suffix; rename this file so it is validated rather "
+                            "than published as an asset."
+                        ),
+                    )
                 )
-            )
-            continue
-
-        if section.structured is not None and depth == 0 and suffix == ".yaml":
+                continue
             classified.sources.append((file_path, relative, section))
             continue
 
@@ -473,6 +478,21 @@ def require_structured_section(
             remediation=(
                 "Author ordinary Markdown here, or propose a structured contract "
                 "for this section."
+            ),
+            context={"path": relative, "section": section.path},
+        )
+    if PurePosixPath(relative).suffix != ".yaml":
+        # Same rule the tree walk applies: the render path is derived by
+        # stripping a literal ".yaml", so anything else derives a render nobody
+        # publishes.
+        raise RCPError(
+            code="document_structured_extension_invalid",
+            message=(
+                "Canonical structured sources use the lowercase .yaml suffix."
+            ),
+            remediation=(
+                "Rename the file to end in .yaml so it is validated and its "
+                "render path is derived correctly."
             ),
             context={"path": relative, "section": section.path},
         )

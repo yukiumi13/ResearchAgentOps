@@ -1654,6 +1654,251 @@ class DocumentSiteManifest(ProtocolRecord):
         return self
 
 
+#: A version 2 site page is one of three things, and nothing else.
+SimpleDocumentSitePageKind = Literal["root", "ordinary", "structured"]
+
+#: Lifecycle values that retire a structured page from the main navigation.
+_RETIRED_LIFECYCLES = frozenset({"superseded", "deprecated"})
+#: Statuses that retire an ordinary page from the main navigation.
+_RETIRED_STATUSES = frozenset({"deprecated", "archived"})
+
+
+class SimpleDocumentSiteSection(StrictModel):
+    """One policy section. Tuple order in the manifest is policy order."""
+
+    path: DocumentSlug
+
+
+class SimpleDocumentSitePage(StrictModel):
+    """One publishable page, described well enough to place it in a navigation.
+
+    ``section`` and ``section_relative_path`` are the whole hierarchy: a site
+    generator joins them to build nested navigation, so the manifest never
+    carries a second, hand-maintained tree that could disagree with the files.
+    """
+
+    path: RepositoryPath
+    kind: SimpleDocumentSitePageKind
+    section: DocumentSlug | None = None
+    section_relative_path: RepositoryPath | None = None
+    source_path: RepositoryPath | None = None
+    contract: StructuredDocumentSchema | None = None
+    classification: DocumentLabel | None = None
+    title: ShortText
+    status: SimpleDocumentStatus | None = None
+    lifecycle: DocumentLifecycle | None = None
+    tags: tuple[HumanKey, ...] = ()
+    owners: tuple[NonEmptyStr, ...] = ()
+    reviewed_on: date | None = None
+    locked: StrictBool = False
+    depends_on: tuple[RepositoryPath, ...] = ()
+    links: tuple[RepositoryPath, ...] = ()
+    git_history_present: StrictBool
+    last_edited_at: UtcDateTime | None = None
+    content_digest: Sha256Digest
+    source_digest: Sha256Digest | None = None
+    in_history: StrictBool = False
+
+    @model_validator(mode="after")
+    def require_consistent_page_metadata(self) -> SimpleDocumentSitePage:
+        for name, values in (
+            ("tags", self.tags),
+            ("owners", self.owners),
+            ("depends_on", self.depends_on),
+            ("links", self.links),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"site page {name} entries must be unique")
+
+        # Git is the only source of edit time, so the timestamp and the flag
+        # that says whether one exists can never disagree.
+        if self.git_history_present != (self.last_edited_at is not None):
+            raise ValueError("site page Git history flag and timestamp disagree")
+
+        # The tree classifies by lowercased suffix, so README.MD is an ordinary
+        # page there. The manifest matches that rule; disagreeing would make a
+        # legal tree unbuildable.
+        if PurePosixPath(self.path).suffix.lower() != ".md":
+            raise ValueError("every site page is Markdown")
+
+        structured_fields = (self.source_path, self.contract, self.source_digest)
+        if self.kind == "structured":
+            if any(value is None for value in structured_fields):
+                raise ValueError("structured site pages require a canonical source pair")
+            if self.status is not None:
+                raise ValueError("structured site pages carry a lifecycle, not a status")
+            # A structured contract states none of these, so a manifest that
+            # claimed them would be inventing facts its source cannot support.
+            if self.reviewed_on is not None or self.locked or self.depends_on:
+                raise ValueError(
+                    "structured contracts state no review date, lock, or dependency"
+                )
+            classified = self.contract in CLASSIFIED_STRUCTURED_SCHEMAS
+            if classified and (self.classification is None or self.lifecycle is None):
+                raise ValueError("structured envelopes require a classification and lifecycle")
+            if not classified and (
+                self.classification is not None or self.lifecycle is not None
+            ):
+                raise ValueError("this structured contract has no classification or lifecycle")
+            retired = self.lifecycle in _RETIRED_LIFECYCLES
+        else:
+            if any(value is not None for value in structured_fields):
+                raise ValueError("only structured site pages have a canonical source")
+            if self.classification is not None or self.lifecycle is not None:
+                raise ValueError("ordinary site pages carry no classification or lifecycle")
+            if self.status is None:
+                raise ValueError("ordinary site pages require a status")
+            retired = self.status in _RETIRED_STATUSES
+        if self.in_history != retired:
+            raise ValueError("site page history placement does not follow its own status")
+
+        located = (self.section, self.section_relative_path)
+        if self.kind == "root":
+            if any(value is not None for value in located):
+                raise ValueError("root site pages sit directly below the document root")
+            return self
+        if any(value is None for value in located):
+            raise ValueError("section site pages require a section and a relative path")
+        if not self.path.endswith(f"/{self.section}/{self.section_relative_path}"):
+            raise ValueError("site page path does not end in its section-relative path")
+        return self
+
+
+class SimpleDocumentSiteAsset(StrictModel):
+    """One non-Markdown file published exactly as it stands."""
+
+    path: RepositoryPath
+    section: DocumentSlug
+    section_relative_path: RepositoryPath
+    content_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def bind_path_to_its_section(self) -> SimpleDocumentSiteAsset:
+        if PurePosixPath(self.path).suffix.lower() == ".md":
+            raise ValueError("Markdown is a page, never a static asset")
+        if not self.path.endswith(f"/{self.section}/{self.section_relative_path}"):
+            raise ValueError("site asset path does not end in its section-relative path")
+        return self
+
+
+class SimpleDocumentSiteExcludedPath(StrictModel):
+    """One file inside the document root that is deliberately not published."""
+
+    path: RepositoryPath
+    reason: Literal["structured_source", "codeowners"]
+    page_path: RepositoryPath | None = None
+
+    @model_validator(mode="after")
+    def bind_structured_source_to_page(self) -> SimpleDocumentSiteExcludedPath:
+        if (self.reason == "structured_source") != (self.page_path is not None):
+            raise ValueError("only structured source exclusions name a page")
+        return self
+
+
+class SimpleDocumentSiteManifest(ProtocolRecord):
+    """An engine-neutral projection of a passing version 2 document tree.
+
+    Every field restates something a source of truth already decided: the
+    policy fixed the taxonomy, CODEOWNERS fixed review, and Git fixed edit
+    time. The manifest is a build artifact of those, never a place to record
+    something they do not say.
+    """
+
+    manifest_kind: Literal["simple_document_site_manifest"] = "simple_document_site_manifest"
+    policy_version: Literal[2] = 2
+    document_root: RepositoryPath
+    repository_head: GitObjectId | None = None
+    repository_state: Literal["clean", "dirty"]
+    repository_remote: NonEmptyStr | None = None
+    policy_digest: Sha256Digest
+    sections: Annotated[tuple[SimpleDocumentSiteSection, ...], Field(min_length=1)]
+    pages: tuple[SimpleDocumentSitePage, ...] = ()
+    assets: tuple[SimpleDocumentSiteAsset, ...] = ()
+    excluded_paths: tuple[SimpleDocumentSiteExcludedPath, ...] = ()
+    manifest_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def require_consistent_tree_projection(self) -> SimpleDocumentSiteManifest:
+        sections = tuple(section.path for section in self.sections)
+        if len(sections) != len(set(sections)):
+            raise ValueError("site manifest sections must be unique")
+
+        page_paths = tuple(page.path for page in self.pages)
+        asset_paths = tuple(asset.path for asset in self.assets)
+        excluded_paths = tuple(item.path for item in self.excluded_paths)
+        for name, paths in (
+            ("page", page_paths),
+            ("asset", asset_paths),
+            ("excluded", excluded_paths),
+        ):
+            if len(paths) != len(set(paths)):
+                raise ValueError(f"site manifest {name} paths must be unique")
+        if (
+            set(page_paths) & set(asset_paths)
+            or set(page_paths) & set(excluded_paths)
+            or set(asset_paths) & set(excluded_paths)
+        ):
+            raise ValueError("a site manifest path cannot hold two roles")
+
+        structured_pairs = {
+            (page.source_path, page.path)
+            for page in self.pages
+            if page.kind == "structured"
+        }
+        excluded_source_pairs = {
+            (item.path, item.page_path)
+            for item in self.excluded_paths
+            if item.reason == "structured_source"
+        }
+        if structured_pairs != excluded_source_pairs:
+            raise ValueError(
+                "structured site pages and source exclusions must have a one-to-one mapping"
+            )
+
+        codeowners = tuple(
+            item.path for item in self.excluded_paths if item.reason == "codeowners"
+        )
+        if len(codeowners) > 1:
+            raise ValueError("only one CODEOWNERS file can govern one repository")
+
+        root_prefix = f"{self.document_root}/"
+        for item in self.excluded_paths:
+            if not item.path.startswith(root_prefix):
+                raise ValueError("a site manifest only excludes paths under its root")
+        for page in self.pages:
+            if page.kind == "root":
+                if page.path.count("/") != root_prefix.count("/") or not page.path.startswith(
+                    root_prefix
+                ):
+                    raise ValueError("root site pages are direct children of the document root")
+                continue
+            if page.section not in sections:
+                raise ValueError("site page names a section the policy does not declare")
+            if page.path != f"{root_prefix}{page.section}/{page.section_relative_path}":
+                raise ValueError("site page path is not inside its declared section")
+            if page.kind != "structured":
+                continue
+            expected_source = page.path.removesuffix(".md") + ".yaml"
+            if page.source_path != expected_source:
+                raise ValueError("a structured page and its canonical source must share a stem")
+            if not page.source_path.startswith(f"{root_prefix}{page.section}/"):
+                raise ValueError("a canonical source sits inside its page's section")
+            if page.source_path.count("/") != root_prefix.count("/") + 1:
+                raise ValueError("canonical sources are direct children of their section")
+        for asset in self.assets:
+            if asset.section not in sections:
+                raise ValueError("site asset names a section the policy does not declare")
+            if asset.path != f"{root_prefix}{asset.section}/{asset.section_relative_path}":
+                raise ValueError("site asset path is not inside its declared section")
+
+        from researchctl.serialization import canonical_digest
+
+        payload = self.model_dump(mode="json", exclude={"manifest_digest"})
+        if self.manifest_digest != canonical_digest(payload):
+            raise ValueError("simple document site manifest digest does not match its content")
+        return self
+
+
 class DocumentEnvelope(ProtocolRecord):
     document_id: DocumentId
     document_kind: DocumentKind

@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit, urlunsplit
 
@@ -231,3 +232,75 @@ def status_porcelain(repository: GitRepository) -> tuple[str, ...]:
 def current_head(repository: GitRepository) -> str | None:
     result = _git(repository.root, "rev-parse", "HEAD", check=False)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+@dataclass(frozen=True, slots=True)
+class PathHistory:
+    """When Git last recorded a change to one exact path.
+
+    ``present`` is false for a path Git has never committed -- a new file, or a
+    file that exists only in the working tree. There is deliberately no
+    filesystem fallback: an mtime records when a checkout happened, not when
+    anyone edited the document, so a missing history is reported as missing
+    rather than approximated.
+    """
+
+    present: bool
+    last_edited_at: datetime | None = None
+
+
+def last_commit_timestamp(
+    repository: GitRepository,
+    relative_path: str,
+) -> PathHistory:
+    """Return the latest commit time for one exact repository-relative path.
+
+    Only a successful, empty ``git log`` means the path has no history. A Git
+    invocation that fails, or output this function cannot parse, is an error
+    and is raised: reporting it as "no history" would let a broken environment
+    quietly erase every edit time a caller is about to publish.
+    """
+
+    # Validate before Git sees it: a caller must not be able to turn a document
+    # path into an arbitrary pathspec or walk out of the repository.
+    safe_repository_path(repository.root, relative_path)
+    if current_head(repository) is None:
+        # A repository with no commits has no history for any path. That is an
+        # answer, not a failure -- but an unresolvable HEAD looks exactly the
+        # same from ``rev-parse`` alone. A checked, read-only status separates
+        # an unborn branch from a Git state broken enough to report every
+        # document as never edited.
+        _git(repository.root, "status", "--porcelain=v1", "--untracked-files=no")
+        return PathHistory(present=False)
+    result = _git(
+        repository.root,
+        "log",
+        "-1",
+        # Renames are the normal way a document moves, and the edit history of
+        # the file before its move is still its edit history.
+        "--follow",
+        # %cI is committer date in strict ISO 8601; it never depends on a
+        # configured log.date or on the caller's locale.
+        "--format=%cI",
+        "--",
+        # Literal pathspec magic: a document path is a path, never a glob.
+        f":(literal){relative_path}",
+    )
+    recorded = result.stdout.strip()
+    if not recorded:
+        return PathHistory(present=False)
+    try:
+        stamp = datetime.fromisoformat(recorded.splitlines()[0].strip())
+    except ValueError as error:
+        raise RCPError(
+            code="git_history_unreadable",
+            message=f"Git returned an unparseable commit date: {recorded!r}",
+            context={"path": relative_path},
+        ) from error
+    if stamp.tzinfo is None:
+        raise RCPError(
+            code="git_history_unreadable",
+            message="Git returned a commit date with no time zone.",
+            context={"path": relative_path, "recorded": recorded},
+        )
+    return PathHistory(present=True, last_edited_at=stamp.astimezone(UTC))

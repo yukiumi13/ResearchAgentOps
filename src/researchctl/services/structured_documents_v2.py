@@ -102,6 +102,8 @@ class SimpleStructuredFacts:
     classification: str | None
     title: str
     lifecycle: str | None
+    #: Envelope tags. An analysis brief has no envelope, so it has none.
+    tags: tuple[str, ...] = ()
     owners: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
@@ -113,6 +115,7 @@ class SimpleStructuredFacts:
             "classification": self.classification,
             "title": self.title,
             "lifecycle": self.lifecycle,
+            "tags": list(self.tags),
             "owners": list(self.owners),
         }
 
@@ -290,10 +293,13 @@ def lint_structured_pair(
         classification: str | None = None
         lifecycle: str | None = None
         title = document.question
+        # An analysis brief has no envelope, so it has no tags to report.
+        tags: tuple[str, ...] = ()
     else:
         classification = document.classification
         lifecycle = document.status
         title = document.title
+        tags = tuple(document.tags)
 
     if not render_present:
         findings.append(
@@ -364,6 +370,7 @@ def lint_structured_pair(
         classification=classification,
         title=title,
         lifecycle=lifecycle,
+        tags=tags,
         owners=owners,
     )
     return findings, facts
