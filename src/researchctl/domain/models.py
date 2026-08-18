@@ -428,6 +428,130 @@ class DocumentLayoutPolicy(StrictModel):
         )
 
 
+StructuredDocumentSchema = Literal[
+    "design-document",
+    "project-status-summary",
+    "analysis-brief",
+]
+SimpleDocumentStatus = Literal["draft", "active", "deprecated", "archived"]
+
+
+#: Structured contracts whose envelope carries a required ``a/b:c`` label.
+CLASSIFIED_STRUCTURED_SCHEMAS: tuple[str, ...] = (
+    "design-document",
+    "project-status-summary",
+)
+
+
+class SimpleSectionStructure(StrictModel):
+    """Opt-in canonical YAML contract for one section.
+
+    ``classification`` exists only so a structured envelope that already
+    requires an ``a/b:c`` label keeps a policy-level counterpart to compare
+    against. It is never a taxonomy for ordinary Markdown, and a contract that
+    has no such field cannot declare one.
+    """
+
+    contract: StructuredDocumentSchema
+    classification: DocumentLabel | None = None
+
+    @model_validator(mode="after")
+    def bind_classification_to_its_contract(self) -> SimpleSectionStructure:
+        classified = self.contract in CLASSIFIED_STRUCTURED_SCHEMAS
+        if classified and self.classification is None:
+            raise ValueError(
+                f"{self.contract} envelopes require a policy-level classification"
+            )
+        if not classified and self.classification is not None:
+            raise ValueError(
+                f"{self.contract} has no classification field to compare against"
+            )
+        return self
+
+
+class SimpleDocumentSection(StrictModel):
+    """One direct child directory of the document root.
+
+    The directory name is the document type. There is no separate label,
+    ``document_type``, or ``directory`` field to keep in sync.
+    """
+
+    path: DocumentSlug
+    structured: SimpleSectionStructure | None = None
+
+
+class SimpleDocumentOwnershipPolicy(StrictModel):
+    source: Literal["codeowners"] = "codeowners"
+    required: StrictBool = False
+
+
+class SimpleDocumentLayoutPolicy(StrictModel):
+    """Directory-first standalone document policy.
+
+    ``version`` is an explicit discriminator. A policy file without it, or with
+    ``version: 1``, remains the strict v1 :class:`DocumentLayoutPolicy`.
+    """
+
+    version: Literal[2]
+    root: RepositoryPath = "docs"
+    sections: Annotated[tuple[SimpleDocumentSection, ...], Field(min_length=1)]
+    root_pages: tuple[RepositoryPath, ...] = ()
+    max_depth: Annotated[StrictInt, Field(ge=1, le=8)] = 3
+    ownership: SimpleDocumentOwnershipPolicy | None = None
+    agent_guides: tuple[AgentGuideTarget, ...] = ()
+
+    @model_validator(mode="after")
+    def require_closed_unambiguous_layout(self) -> SimpleDocumentLayoutPolicy:
+        if self.root == ".":
+            raise ValueError("simple document root must identify a repository directory")
+        root_parts = PurePosixPath(self.root).parts
+
+        section_paths = tuple(section.path for section in self.sections)
+        if len(section_paths) != len(set(section_paths)):
+            raise ValueError("simple document section paths must be unique")
+
+        page_paths = tuple(self.root_pages)
+        if len(page_paths) != len(set(page_paths)):
+            raise ValueError("simple document root_pages must be unique")
+        for page in page_paths:
+            if page == "." or PurePosixPath(page).suffix.lower() != ".md":
+                raise ValueError("simple document root_pages must be Markdown files")
+            if len(PurePosixPath(page).parts) != 1:
+                raise ValueError(
+                    "simple document root_pages must be direct children of the root"
+                )
+
+        guide_paths = tuple(item.path for item in self.agent_guides)
+        if len(guide_paths) != len(set(guide_paths)):
+            raise ValueError("agent guide paths must be unique")
+        for guide_path in guide_paths:
+            guide_parts = PurePosixPath(guide_path).parts
+            if guide_parts[: len(root_parts)] == root_parts:
+                raise ValueError("agent guides must live outside the document root")
+            if PurePosixPath(guide_path).suffix.lower() != ".md":
+                raise ValueError("agent guides must be Markdown files")
+        return self
+
+    def section_directory(self, section: SimpleDocumentSection) -> str:
+        return f"{self.root}/{section.path}"
+
+    def section_for_path(self, relative: str) -> SimpleDocumentSection | None:
+        """Return the section owning a repository-relative path, if any."""
+
+        root_parts = PurePosixPath(self.root).parts
+        parts = PurePosixPath(relative).parts
+        if parts[: len(root_parts)] != root_parts or len(parts) <= len(root_parts) + 1:
+            return None
+        candidate = parts[len(root_parts)]
+        return next(
+            (section for section in self.sections if section.path == candidate),
+            None,
+        )
+
+    def root_page_paths(self) -> tuple[str, ...]:
+        return tuple(f"{self.root}/{page}" for page in self.root_pages)
+
+
 class GitHubAgentAppPrincipal(StrictModel):
     app_id: Annotated[StrictInt, Field(ge=1)]
     installation_id: Annotated[StrictInt, Field(ge=1)]
@@ -1325,6 +1449,40 @@ class MarkdownFrontmatter(StrictModel):
             if undeclared:
                 differences.append("undeclared source keys: " + ", ".join(undeclared))
             raise ValueError("Markdown provenance source mismatch; " + "; ".join(differences))
+        return self
+
+
+SIMPLE_MARKDOWN_FRONTMATTER_FIELDS: tuple[str, ...] = (
+    "status",
+    "tags",
+    "reviewed_on",
+    "locked",
+    "depends_on",
+    "superseded_by",
+)
+
+
+class SimpleMarkdownFrontmatter(StrictModel):
+    """Optional metadata block for an ordinary Markdown document.
+
+    Every field has a default, so a document with no frontmatter at all is a
+    valid active, untagged, unreviewed, unlocked document. The title is not a
+    field here: the first level-one heading is the only title.
+    """
+
+    status: SimpleDocumentStatus = "active"
+    tags: tuple[HumanKey, ...] = ()
+    reviewed_on: date | None = None
+    locked: StrictBool = False
+    depends_on: tuple[RepositoryPath, ...] = ()
+    superseded_by: RepositoryPath | None = None
+
+    @model_validator(mode="after")
+    def require_unique_metadata(self) -> SimpleMarkdownFrontmatter:
+        if len(self.tags) != len(set(self.tags)):
+            raise ValueError("document tags must be unique")
+        if len(self.depends_on) != len(set(self.depends_on)):
+            raise ValueError("document depends_on entries must be unique")
         return self
 
 

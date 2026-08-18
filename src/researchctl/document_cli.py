@@ -27,6 +27,7 @@ from researchctl.domain.models import (
     MarkdownFrontmatter,
     ProjectPolicy,
     ProjectStatusSummary,
+    SimpleDocumentLayoutPolicy,
 )
 from researchctl.domain.types import RepositoryPath
 from researchctl.errors import RCPError
@@ -44,6 +45,13 @@ from researchctl.serialization import (
     load_model,
     load_yaml,
     validation_error_details,
+)
+from researchctl.services.document_policy import (
+    LEGACY_POLICY_VERSION,
+    SIMPLE_POLICY_VERSION,
+    EffectiveDocumentPolicy,
+    build_effective_policy,
+    load_effective_policy,
 )
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
@@ -65,6 +73,12 @@ from researchctl.services.project_documents import (
     render_project_document,
     render_standalone_document_policy_template,
     require_adopted_document_policy,
+)
+from researchctl.services.project_documents_v2 import (
+    SimpleDocumentTreeLintResult,
+    check_simple_document,
+    lint_simple_document_tree,
+    scaffold_simple_document,
 )
 from researchctl.services.requests import DocumentLayoutConfigureRequest
 from researchctl.services.research_writing import (
@@ -176,7 +190,7 @@ def _abort(error: RCPError, *, command: str, json_output: bool) -> NoReturn:
 
 
 def _emit_lint(
-    result: DocumentLintResult | DocumentTreeLintResult,
+    result: DocumentLintResult | DocumentTreeLintResult | SimpleDocumentTreeLintResult,
     *,
     command: str,
     json_output: bool,
@@ -189,6 +203,11 @@ def _emit_lint(
         if isinstance(result, DocumentLintResult):
             typer.echo(f"Document: {result.document_id} ({result.document_kind})")
             typer.echo(f"Classification: {result.classification}")
+        elif isinstance(result, SimpleDocumentTreeLintResult):
+            typer.echo(f"Policy version: {result.policy_version}")
+            typer.echo(f"Root: {result.root}")
+            typer.echo(f"Checked: {result.checked_files} files")
+            typer.echo(f"Documents: {result.documents}")
         else:
             typer.echo(f"Root: {result.root}")
             typer.echo(f"Checked: {result.checked_files} files")
@@ -517,32 +536,38 @@ def _upsert_agent_guide(
     typer.echo(f"{outcome}: {destination}")
 
 
-def _repository_and_policy(
+def _policy_validation_error(error: ValidationError, path: Path) -> RCPError:
+    return RCPError(
+        code="validation_error",
+        message=f"Document policy schema validation failed in {path}.",
+        remediation=(
+            "Fix the listed policy fields and rerun "
+            "`researchctl doc tree --project PROJECT`."
+        ),
+        context={
+            "path": str(path),
+            "details": validation_error_details(error, source_path=path),
+        },
+    )
+
+
+def _effective_policy_from_file(path: Path) -> EffectiveDocumentPolicy:
+    try:
+        effective = load_effective_policy(path)
+    except ValidationError as error:
+        raise _policy_validation_error(error, path) from error
+    if effective.legacy is not None:
+        require_adopted_document_policy(effective.legacy)
+    return effective
+
+
+def _repository_and_effective_policy(
     project: Path,
     policy_file: Path | None,
-) -> tuple[Path, DocumentLayoutPolicy]:
-    def policy_validation_error(error: ValidationError, path: Path) -> RCPError:
-        return RCPError(
-            code="validation_error",
-            message=f"Document policy schema validation failed in {path}.",
-            remediation=(
-                "Fix the listed policy fields and rerun "
-                "`researchctl doc tree --project PROJECT`."
-            ),
-            context={
-                "path": str(path),
-                "details": validation_error_details(error, source_path=path),
-            },
-        )
-
+) -> tuple[Path, EffectiveDocumentPolicy]:
     repository = discover_repository(project).root
     if policy_file is not None:
-        try:
-            policy = load_model(policy_file, DocumentLayoutPolicy)
-        except ValidationError as error:
-            raise policy_validation_error(error, policy_file) from error
-        require_adopted_document_policy(policy)
-        return repository, policy
+        return repository, _effective_policy_from_file(policy_file)
     managed_policy = repository / PROJECT_POLICY_PATH
     standalone_policy = repository / _STANDALONE_POLICY
     if managed_policy.is_file() and not managed_policy.is_symlink():
@@ -554,16 +579,15 @@ def _repository_and_policy(
         try:
             policy = load_model(managed_policy, ProjectPolicy).document_layout
         except ValidationError as error:
-            raise policy_validation_error(error, managed_policy) from error
+            raise _policy_validation_error(error, managed_policy) from error
         require_adopted_document_policy(policy)
-        return repository, policy
+        return repository, EffectiveDocumentPolicy(
+            version=LEGACY_POLICY_VERSION,
+            source=managed_policy,
+            legacy=policy,
+        )
     if standalone_policy.is_file() and not standalone_policy.is_symlink():
-        try:
-            policy = load_model(standalone_policy, DocumentLayoutPolicy)
-        except ValidationError as error:
-            raise policy_validation_error(error, standalone_policy) from error
-        require_adopted_document_policy(policy)
-        return repository, policy
+        return repository, _effective_policy_from_file(standalone_policy)
     if standalone_policy.is_symlink():
         raise RCPError(
             code="document_policy_invalid",
@@ -577,6 +601,16 @@ def _repository_and_policy(
             "researchctl init."
         ),
     )
+
+
+def _repository_and_policy(
+    project: Path,
+    policy_file: Path | None,
+    *,
+    command: str = "this command",
+) -> tuple[Path, DocumentLayoutPolicy]:
+    repository, effective = _repository_and_effective_policy(project, policy_file)
+    return repository, effective.require_legacy(command=command)
 
 
 def _baseline_repository_and_document_root(
@@ -1016,7 +1050,13 @@ def doc_schema_command(
 def doc_scaffold_command(
     document_type: Annotated[
         str,
-        typer.Option("--type", help="Document type from the effective policy."),
+        typer.Option(
+            "--type",
+            help=(
+                "Document type from the effective policy. Under a version 2 policy "
+                "this is the section directory name."
+            ),
+        ),
     ],
     title: Annotated[str, typer.Option("--title", help="Initial document title.")],
     project: Annotated[Path, typer.Option("--project", "-C")] = Path("."),
@@ -1025,15 +1065,46 @@ def doc_scaffold_command(
         typer.Option("--policy-file", help="Standalone DocumentLayoutPolicy YAML."),
     ] = None,
     owner: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--owner",
-            help="Frontmatter owner or structured external-agent actor ID.",
+            help=(
+                "Classification-route option: frontmatter owner or structured "
+                "external-agent actor ID. Version 2 policies resolve ownership from "
+                "CODEOWNERS and reject this option."
+            ),
         ),
-    ] = "person:TODO",
-    supersedes: Annotated[list[str] | None, typer.Option("--supersedes")] = None,
-    derived_from: Annotated[list[str] | None, typer.Option("--derived-from")] = None,
-    see_also: Annotated[list[str] | None, typer.Option("--see-also")] = None,
+    ] = None,
+    supersedes: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--supersedes",
+            help=(
+                "Classification-route relation. Version 2 documents declare "
+                "superseded_by in their own frontmatter."
+            ),
+        ),
+    ] = None,
+    derived_from: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--derived-from",
+            help=(
+                "Classification-route relation. Version 2 documents declare "
+                "depends_on in their own frontmatter."
+            ),
+        ),
+    ] = None,
+    see_also: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--see-also",
+            help=(
+                "Classification-route relation. Version 2 documents use ordinary "
+                "Markdown links."
+            ),
+        ),
+    ] = None,
     output_file: Annotated[
         Path | None,
         typer.Option("--output-file", help="Write the scaffold to this path."),
@@ -1042,7 +1113,67 @@ def doc_scaffold_command(
     """Generate a schema-valid source skeleton for one accepted route type."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
+        repository, effective = _repository_and_effective_policy(project, policy_file)
+        if effective.is_simple:
+            simple_policy = effective.require_simple(command="doc scaffold")
+            unsupported = {
+                "--owner": owner is not None,
+                "--supersedes": bool(supersedes),
+                "--derived-from": bool(derived_from),
+                "--see-also": bool(see_also),
+            }
+            supplied = sorted(name for name, given in unsupported.items() if given)
+            if supplied:
+                raise RCPError(
+                    code="document_scaffold_option_unsupported",
+                    message=(
+                        "Classification-route scaffold options do not apply to a "
+                        f"version {SIMPLE_POLICY_VERSION} policy: "
+                        + ", ".join(supplied)
+                        + "."
+                    ),
+                    remediation=(
+                        "Drop these options. Ownership resolves from CODEOWNERS, and "
+                        "a document declares depends_on and superseded_by in its own "
+                        "frontmatter."
+                    ),
+                    context={"options": supplied},
+                )
+            section = next(
+                (
+                    candidate
+                    for candidate in simple_policy.sections
+                    if candidate.path == document_type
+                ),
+                None,
+            )
+            if section is None:
+                raise RCPError(
+                    code="document_type_unaccepted",
+                    message="Document type is not a section of the effective policy.",
+                    remediation=(
+                        "Pass --type with one of the policy's section directory names."
+                    ),
+                    context={
+                        "document_type": document_type,
+                        "sections": [item.path for item in simple_policy.sections],
+                    },
+                )
+            if section.structured is not None:
+                raise RCPError(
+                    code="document_structured_scaffold_unsupported",
+                    message=(
+                        "Structured sections are not scaffolded by this policy "
+                        "version yet."
+                    ),
+                    context={
+                        "document_type": document_type,
+                        "contract": section.structured.contract,
+                    },
+                )
+            _write_or_echo(scaffold_simple_document(title=title), output_file)
+            return
+        policy = effective.require_legacy(command="doc scaffold")
         route = next(
             (candidate for candidate in policy.routes if candidate.document_type == document_type),
             None,
@@ -1059,7 +1190,7 @@ def doc_scaffold_command(
         content = _scaffold_for_route(
             route=route,
             title=title,
-            owner=owner,
+            owner=owner or "person:TODO",
             basis_commit=current_head(repository_record) or "0" * 40,
             now=now,
             relations={
@@ -1071,6 +1202,216 @@ def doc_scaffold_command(
         _write_or_echo(content, output_file)
     except Exception as exc:
         _abort(_error(exc), command="doc.scaffold", json_output=False)
+
+
+def _simple_check_data(
+    repository: Path,
+    policy: SimpleDocumentLayoutPolicy,
+    *,
+    source: Path,
+    relative: str,
+) -> dict[str, object]:
+    """Validate one ordinary Markdown document against its section."""
+
+    findings, facts, section = check_simple_document(
+        repository,
+        policy,
+        source=source,
+        relative=relative,
+    )
+    reported = [finding.as_dict() for finding in findings]
+    passed = not any(finding["kind"] == "invalid" for finding in reported)
+    data: dict[str, object] = {
+        "path": relative,
+        "policy_version": policy.version,
+        "section": section,
+        "document_type": section,
+        "contract": "markdown",
+        "terminal_result": "passed" if passed else "invalid",
+        "findings": reported,
+    }
+    data.update(
+        {
+            key: value
+            for key, value in facts.as_dict().items()
+            if key not in {"path", "section"}
+        }
+    )
+    return data
+
+
+def _legacy_check_data(
+    repository: Path,
+    policy: DocumentLayoutPolicy,
+    *,
+    source: Path,
+    relative: str,
+) -> dict[str, object]:
+    """Validate one source against its accepted classification route."""
+
+    route = _route_for_relative(policy, relative)
+    nested = PurePosixPath(relative).relative_to(route.directory)
+    findings: list[dict[str, str]] = []
+    if len(nested.parts) - 1 > policy.max_depth:
+        findings.append(
+            {
+                "kind": "invalid",
+                "code": "document_path_too_deep",
+                "path": relative,
+                "message": "Document path exceeds the configured maximum depth.",
+            }
+        )
+    prose: dict[str, object] | None = None
+    if route.contract == "markdown-frontmatter":
+        if source.suffix.lower() != ".md":
+            raise RCPError(
+                code="document_extension_invalid",
+                message="Markdown-frontmatter routes accept only .md files.",
+            )
+        frontmatter, body = load_markdown_frontmatter(
+            source.read_text(encoding="utf-8"),
+            path=relative,
+        )
+        if frontmatter.type != route.document_type:
+            findings.append(
+                {
+                    "kind": "invalid",
+                    "code": "document_type_path_mismatch",
+                    "path": relative,
+                    "message": (
+                        f"Frontmatter type {frontmatter.type} does not match route "
+                        f"type {route.document_type}."
+                    ),
+                }
+            )
+        for relation in route.required_relations:
+            if not getattr(frontmatter.relations, relation):
+                findings.append(
+                    {
+                        "kind": "invalid",
+                        "code": "document_required_relation_missing",
+                        "path": f"{relative}:relations.{relation}",
+                        "message": f"Route requires a non-empty {relation} relation.",
+                    }
+                )
+        for item in frontmatter.provenance:
+            if item.value not in body:
+                findings.append(
+                    {
+                        "kind": "invalid",
+                        "code": "document_provenance_value_missing",
+                        "path": f"{relative}:provenance.{item.key}",
+                        "message": (
+                            f"Provenance value {item.value!r} does not occur in "
+                            "the Markdown body."
+                        ),
+                    }
+                )
+        for relation in ("supersedes", "derived_from", "see_also"):
+            for target in getattr(frontmatter.relations, relation):
+                status, resolved = inspect_document_relation_target(
+                    repository,
+                    document_root=policy.root,
+                    target=target,
+                )
+                if status == "legacy":
+                    findings.append(
+                        {
+                            "kind": "invalid",
+                            "code": "document_relation_path_legacy",
+                            "path": f"{relative}:relations.{relation}",
+                            "message": (
+                                "Relation paths are repository-root relative; "
+                                f"replace {target!r} with {resolved!r}."
+                            ),
+                        }
+                    )
+                elif status == "missing":
+                    findings.append(
+                        {
+                            "kind": "invalid",
+                            "code": "document_relation_target_missing",
+                            "path": f"{relative}:relations.{relation}",
+                            "message": f"Relation target does not exist: {resolved}.",
+                        }
+                    )
+    elif route.contract == "analysis-brief":
+        if source.suffix.lower() != ".yaml":
+            raise RCPError(
+                code="document_extension_invalid",
+                message="Structured document routes accept canonical .yaml sources.",
+            )
+        if len(nested.parts) != 1:
+            findings.append(
+                {
+                    "kind": "invalid",
+                    "code": "structured_document_path_noncanonical",
+                    "path": relative,
+                    "message": "Structured document sources must be direct route children.",
+                }
+            )
+        try:
+            brief = load_model(source, AnalysisBrief)
+        except ValidationError as error:
+            raise _analysis_brief_schema_error(error, source) from error
+        result = lint_analysis_brief(brief)
+        findings.extend(
+            {
+                "kind": "invalid",
+                "code": finding.code,
+                "path": finding.field_path,
+                "message": finding.message,
+            }
+            for finding in result.findings
+        )
+        prose = {
+            **result.prose.as_dict(),
+            "max_english_words": result.max_english_words,
+            "max_cjk_characters": result.max_cjk_characters,
+        }
+    else:
+        if source.suffix.lower() != ".yaml":
+            raise RCPError(
+                code="document_extension_invalid",
+                message="Structured document routes accept canonical .yaml sources.",
+            )
+        document = load_project_document(source)
+        result = lint_project_document(document, policy=policy)
+        findings.extend(finding.as_dict() for finding in result.findings)
+        if document.classification != route.classification:
+            findings.append(
+                {
+                    "kind": "invalid",
+                    "code": "document_classification_path_mismatch",
+                    "path": relative,
+                    "message": (
+                        f"Document classification {document.classification} does not match "
+                        f"path route {route.classification}."
+                    ),
+                }
+            )
+        expected = f"{route.directory}/{document.slug}.yaml"
+        if relative != expected:
+            findings.append(
+                {
+                    "kind": "invalid",
+                    "code": "structured_document_path_noncanonical",
+                    "path": relative,
+                    "message": f"Document classification and slug require path {expected}.",
+                }
+            )
+    passed = not any(finding["kind"] == "invalid" for finding in findings)
+    data: dict[str, object] = {
+        "path": relative,
+        "document_type": route.document_type,
+        "classification": route.classification,
+        "contract": route.contract,
+        "terminal_result": "passed" if passed else "invalid",
+        "findings": findings,
+    }
+    if prose is not None:
+        data["prose"] = prose
+    return data
 
 
 @doc_app.command("check")
@@ -1091,171 +1432,24 @@ def doc_check_command(
     command = "doc.check"
     validation_source: Path | None = None
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
+        repository, effective = _repository_and_effective_policy(project, policy_file)
         source, relative = _document_relative_path(repository, document_file)
         validation_source = source
-        route = _route_for_relative(policy, relative)
-        nested = PurePosixPath(relative).relative_to(route.directory)
-        findings: list[dict[str, str]] = []
-        if len(nested.parts) - 1 > policy.max_depth:
-            findings.append(
-                {
-                    "kind": "invalid",
-                    "code": "document_path_too_deep",
-                    "path": relative,
-                    "message": "Document path exceeds the configured maximum depth.",
-                }
+        if effective.is_simple:
+            data = _simple_check_data(
+                repository,
+                effective.require_simple(command="doc check"),
+                source=source,
+                relative=relative,
             )
-        prose: dict[str, object] | None = None
-        if route.contract == "markdown-frontmatter":
-            if source.suffix.lower() != ".md":
-                raise RCPError(
-                    code="document_extension_invalid",
-                    message="Markdown-frontmatter routes accept only .md files.",
-                )
-            frontmatter, body = load_markdown_frontmatter(
-                source.read_text(encoding="utf-8"),
-                path=relative,
-            )
-            if frontmatter.type != route.document_type:
-                findings.append(
-                    {
-                        "kind": "invalid",
-                        "code": "document_type_path_mismatch",
-                        "path": relative,
-                        "message": (
-                            f"Frontmatter type {frontmatter.type} does not match route "
-                            f"type {route.document_type}."
-                        ),
-                    }
-                )
-            for relation in route.required_relations:
-                if not getattr(frontmatter.relations, relation):
-                    findings.append(
-                        {
-                            "kind": "invalid",
-                            "code": "document_required_relation_missing",
-                            "path": f"{relative}:relations.{relation}",
-                            "message": f"Route requires a non-empty {relation} relation.",
-                        }
-                    )
-            for item in frontmatter.provenance:
-                if item.value not in body:
-                    findings.append(
-                        {
-                            "kind": "invalid",
-                            "code": "document_provenance_value_missing",
-                            "path": f"{relative}:provenance.{item.key}",
-                            "message": (
-                                f"Provenance value {item.value!r} does not occur in "
-                                "the Markdown body."
-                            ),
-                        }
-                    )
-            for relation in ("supersedes", "derived_from", "see_also"):
-                for target in getattr(frontmatter.relations, relation):
-                    status, resolved = inspect_document_relation_target(
-                        repository,
-                        document_root=policy.root,
-                        target=target,
-                    )
-                    if status == "legacy":
-                        findings.append(
-                            {
-                                "kind": "invalid",
-                                "code": "document_relation_path_legacy",
-                                "path": f"{relative}:relations.{relation}",
-                                "message": (
-                                    "Relation paths are repository-root relative; "
-                                    f"replace {target!r} with {resolved!r}."
-                                ),
-                            }
-                        )
-                    elif status == "missing":
-                        findings.append(
-                            {
-                                "kind": "invalid",
-                                "code": "document_relation_target_missing",
-                                "path": f"{relative}:relations.{relation}",
-                                "message": f"Relation target does not exist: {resolved}.",
-                            }
-                        )
-        elif route.contract == "analysis-brief":
-            if source.suffix.lower() != ".yaml":
-                raise RCPError(
-                    code="document_extension_invalid",
-                    message="Structured document routes accept canonical .yaml sources.",
-                )
-            if len(nested.parts) != 1:
-                findings.append(
-                    {
-                        "kind": "invalid",
-                        "code": "structured_document_path_noncanonical",
-                        "path": relative,
-                        "message": "Structured document sources must be direct route children.",
-                    }
-                )
-            try:
-                brief = load_model(source, AnalysisBrief)
-            except ValidationError as error:
-                raise _analysis_brief_schema_error(error, source) from error
-            result = lint_analysis_brief(brief)
-            findings.extend(
-                {
-                    "kind": "invalid",
-                    "code": finding.code,
-                    "path": finding.field_path,
-                    "message": finding.message,
-                }
-                for finding in result.findings
-            )
-            prose = {
-                **result.prose.as_dict(),
-                "max_english_words": result.max_english_words,
-                "max_cjk_characters": result.max_cjk_characters,
-            }
         else:
-            if source.suffix.lower() != ".yaml":
-                raise RCPError(
-                    code="document_extension_invalid",
-                    message="Structured document routes accept canonical .yaml sources.",
-                )
-            document = load_project_document(source)
-            result = lint_project_document(document, policy=policy)
-            findings.extend(finding.as_dict() for finding in result.findings)
-            if document.classification != route.classification:
-                findings.append(
-                    {
-                        "kind": "invalid",
-                        "code": "document_classification_path_mismatch",
-                        "path": relative,
-                        "message": (
-                            f"Document classification {document.classification} does not match "
-                            f"path route {route.classification}."
-                        ),
-                    }
-                )
-            expected = f"{route.directory}/{document.slug}.yaml"
-            if relative != expected:
-                findings.append(
-                    {
-                        "kind": "invalid",
-                        "code": "structured_document_path_noncanonical",
-                        "path": relative,
-                        "message": f"Document classification and slug require path {expected}.",
-                    }
-                )
-        passed = not any(finding["kind"] == "invalid" for finding in findings)
-        data: dict[str, object] = {
-            "path": relative,
-            "document_type": route.document_type,
-            "classification": route.classification,
-            "contract": route.contract,
-            "terminal_result": "passed" if passed else "invalid",
-            "findings": findings,
-        }
-        if prose is not None:
-            data["prose"] = prose
+            data = _legacy_check_data(
+                repository,
+                effective.require_legacy(command="doc check"),
+                source=source,
+                relative=relative,
+            )
+        passed = data["terminal_result"] == "passed"
     except Exception as exc:
         _abort(
             _error(exc, source_path=validation_source),
@@ -1268,13 +1462,16 @@ def doc_check_command(
         typer.echo(f"Outcome: {data['terminal_result']}")
         typer.echo(f"Path: {data['path']}")
         typer.echo(f"Contract: {data['contract']}")
-        if prose is not None:
+        prose = data.get("prose")
+        if isinstance(prose, dict):
             typer.echo(
                 "Prose: "
                 f"{prose['english_words']}/{prose['max_english_words']} English words, "
                 f"{prose['cjk_characters']}/{prose['max_cjk_characters']} CJK characters"
             )
-        for finding in findings:
+        reported = data["findings"]
+        assert isinstance(reported, list)
+        for finding in reported:
             typer.echo(
                 f"  {finding['kind']}: {finding['path']} "
                 f"[{finding['code']}] {finding['message']}"
@@ -1296,7 +1493,7 @@ def doc_lint_command(
     """Validate document schema, semantics, and accepted classification."""
 
     try:
-        _repository, policy = _repository_and_policy(project, policy_file)
+        _repository, policy = _repository_and_policy(project, policy_file, command="doc lint")
         document = load_project_document(document_file)
         result = lint_project_document(document, policy=policy)
     except Exception as exc:
@@ -1324,7 +1521,7 @@ def doc_render_command(
     """Render a passing routed YAML source as deterministic Markdown."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
+        repository, policy = _repository_and_policy(project, policy_file, command="doc render")
         source, relative = _document_relative_path(repository, document_file)
         route = _route_for_relative(policy, relative)
         if route.contract == "markdown-frontmatter":
@@ -1399,27 +1596,45 @@ def doc_tree_command(
 ) -> None:
     """Validate configured documents, Agent guides, and generated pairs."""
 
+    result: DocumentTreeLintResult | SimpleDocumentTreeLintResult
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
-        baseline_repository: Path | None = None
-        baseline_document_root: str | None = None
-        baseline_policy_missing = False
-        if baseline_project is not None:
-            (
-                baseline_repository,
-                baseline_document_root,
-                baseline_policy_missing,
-            ) = _baseline_repository_and_document_root(
-                baseline_project,
-                fallback_root=policy.root,
+        repository, effective = _repository_and_effective_policy(project, policy_file)
+        if effective.is_simple:
+            if baseline_project is not None:
+                raise RCPError(
+                    code="document_baseline_unsupported",
+                    message=(
+                        "Frozen/locked baseline comparison is not implemented for a "
+                        f"version {SIMPLE_POLICY_VERSION} document policy yet."
+                    ),
+                    remediation="Rerun `doc tree` without --baseline-project.",
+                    context={"policy_version": effective.version},
+                )
+            result = lint_simple_document_tree(
+                repository,
+                effective.require_simple(command="doc tree"),
             )
-        result = lint_document_tree(
-            repository,
-            policy,
-            baseline_root=baseline_repository,
-            baseline_document_root=baseline_document_root,
-            baseline_policy_missing=baseline_policy_missing,
-        )
+        else:
+            policy = effective.require_legacy(command="doc tree")
+            baseline_repository: Path | None = None
+            baseline_document_root: str | None = None
+            baseline_policy_missing = False
+            if baseline_project is not None:
+                (
+                    baseline_repository,
+                    baseline_document_root,
+                    baseline_policy_missing,
+                ) = _baseline_repository_and_document_root(
+                    baseline_project,
+                    fallback_root=policy.root,
+                )
+            result = lint_document_tree(
+                repository,
+                policy,
+                baseline_root=baseline_repository,
+                baseline_document_root=baseline_document_root,
+                baseline_policy_missing=baseline_policy_missing,
+            )
     except Exception as exc:
         _abort(_error(exc), command="doc.tree", json_output=json_output)
     _emit_lint(result, command="doc.tree", json_output=json_output)
@@ -1450,7 +1665,11 @@ def doc_site_manifest_command(
     """Emit a validated, engine-neutral documentation-site manifest."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
+        repository, policy = _repository_and_policy(
+            project,
+            policy_file,
+            command="doc site-manifest",
+        )
         manifest = build_document_site_manifest(repository, policy)
         if require_clean and manifest.repository_state != "clean":
             raise RCPError(
@@ -1480,7 +1699,7 @@ def doc_index_command(
     """Render the configured type/classification/directory index."""
 
     try:
-        _repository, policy = _repository_and_policy(project, policy_file)
+        _repository, policy = _repository_and_policy(project, policy_file, command="doc index")
         _write_or_echo(render_document_index(policy), output_file)
     except Exception as exc:
         _abort(_error(exc), command="doc.index", json_output=False)
@@ -1529,19 +1748,49 @@ def doc_policy_lint_command(
                 message="Document policy must be an existing non-symlink regular file.",
                 context={"path": str(policy_file)},
             )
-        policy = load_model(policy_file, DocumentLayoutPolicy)
-        require_adopted_document_policy(policy)
-        data = {
-            "path": str(policy_file),
-            "terminal_result": "passed",
-            "routes": len(policy.routes),
-            "agent_guides": len(policy.agent_guides),
-            "classification_depth": {
-                "minimum": policy.classification_depth.minimum,
-                "maximum": policy.classification_depth.maximum,
-            },
-            "max_depth": policy.max_depth,
-        }
+        effective = build_effective_policy(
+            load_yaml(policy_file.read_text(encoding="utf-8")),
+            path=policy_file,
+        )
+        if effective.simple is not None:
+            simple_policy = effective.simple
+            data = {
+                "path": str(policy_file),
+                "terminal_result": "passed",
+                "policy_version": simple_policy.version,
+                "root": simple_policy.root,
+                "sections": [item.path for item in simple_policy.sections],
+                "structured_sections": [
+                    item.path
+                    for item in simple_policy.sections
+                    if item.structured is not None
+                ],
+                "root_pages": list(simple_policy.root_pages),
+                "agent_guides": len(simple_policy.agent_guides),
+                "ownership": (
+                    None
+                    if simple_policy.ownership is None
+                    else {
+                        "source": simple_policy.ownership.source,
+                        "required": simple_policy.ownership.required,
+                    }
+                ),
+                "max_depth": simple_policy.max_depth,
+            }
+        else:
+            policy = effective.require_legacy(command="doc policy-lint")
+            require_adopted_document_policy(policy)
+            data = {
+                "path": str(policy_file),
+                "terminal_result": "passed",
+                "routes": len(policy.routes),
+                "agent_guides": len(policy.agent_guides),
+                "classification_depth": {
+                    "minimum": policy.classification_depth.minimum,
+                    "maximum": policy.classification_depth.maximum,
+                },
+                "max_depth": policy.max_depth,
+            }
     except Exception as exc:
         _abort(
             _error(exc, source_path=policy_file),
@@ -1553,6 +1802,17 @@ def doc_policy_lint_command(
     else:
         typer.echo("Outcome: passed")
         typer.echo(f"Policy: {data['path']}")
+        if data.get("policy_version") == SIMPLE_POLICY_VERSION:
+            sections = data["sections"]
+            if not isinstance(sections, list):
+                raise AssertionError("policy sections output must be a list")
+            typer.echo(f"Policy version: {data['policy_version']}")
+            typer.echo(f"Root: {data['root']}")
+            typer.echo(f"Sections: {', '.join(sections)}")
+            typer.echo(f"Root pages: {', '.join(data['root_pages'] or ['-'])}")
+            typer.echo(f"Agent guides: {data['agent_guides']}")
+            typer.echo(f"Filesystem max depth: {data['max_depth']}")
+            return
         typer.echo(f"Routes: {data['routes']}")
         typer.echo(f"Agent guides: {data['agent_guides']}")
         depth = data["classification_depth"]
@@ -1584,7 +1844,7 @@ def doc_agent_guide_command(
     """Render project-local instructions that teach Agents the document workflow."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file)
+        repository, policy = _repository_and_policy(project, policy_file, command="doc agent-guide")
         if output_file is None:
             selected_format: AgentGuideFormat
             if guide_format is not None:
