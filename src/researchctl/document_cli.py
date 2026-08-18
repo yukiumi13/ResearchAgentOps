@@ -22,6 +22,7 @@ from researchctl.domain.models import (
     AnalysisBrief,
     DesignDocument,
     DocumentLayoutPolicy,
+    DocumentRelationKind,
     DocumentRoute,
     DocumentSchema,
     MarkdownFrontmatter,
@@ -78,6 +79,8 @@ from researchctl.services.project_documents_v2 import (
     SimpleDocumentTreeLintResult,
     check_simple_document,
     lint_simple_document_tree,
+    render_structured_document,
+    require_structured_section,
     scaffold_simple_document,
 )
 from researchctl.services.requests import DocumentLayoutConfigureRequest
@@ -208,6 +211,9 @@ def _emit_lint(
             typer.echo(f"Root: {result.root}")
             typer.echo(f"Checked: {result.checked_files} files")
             typer.echo(f"Documents: {result.documents}")
+            typer.echo(f"Structured documents: {result.structured_documents}")
+            typer.echo(f"Assets: {result.assets}")
+            typer.echo(f"CODEOWNERS: {result.codeowners_path or 'none'}")
         else:
             typer.echo(f"Root: {result.root}")
             typer.echo(f"Checked: {result.checked_files} files")
@@ -790,19 +796,29 @@ def _contract_data(contract: DocumentSchema) -> dict[str, object]:
     }
 
 
-def _scaffold_for_route(
+def _scaffold_source(
     *,
-    route: DocumentRoute,
+    contract: DocumentSchema,
+    document_type: str,
+    classification: str | None,
+    required_relations: tuple[DocumentRelationKind, ...],
     title: str,
     owner: str,
     basis_commit: str,
     now: datetime,
     relations: dict[str, tuple[str, ...]],
 ) -> bytes:
-    if route.contract == "markdown-frontmatter":
+    """Render one contract's source skeleton.
+
+    The caller supplies the route fields the contract actually reads, so a
+    version 2 section can reuse these renderers without inventing a
+    classification route it does not have.
+    """
+
+    if contract == "markdown-frontmatter":
         missing = [
             relation
-            for relation in route.required_relations
+            for relation in required_relations
             if not relations[relation]
         ]
         if missing:
@@ -817,7 +833,7 @@ def _scaffold_for_route(
             )
         frontmatter = MarkdownFrontmatter.model_validate(
             {
-                "type": route.document_type,
+                "type": document_type,
                 "title": title,
                 "owner": owner,
                 "last_updated": now.date().isoformat(),
@@ -852,7 +868,7 @@ def _scaffold_for_route(
             + f"# {title}\n\n"
             + "Replace this paragraph with the governed document body.\n"
         ).encode("utf-8")
-    if route.contract == "analysis-brief":
+    if contract == "analysis-brief":
         document = AnalysisBrief.model_validate(
             {
                 "question": title,
@@ -877,7 +893,7 @@ def _scaffold_for_route(
 
     common: dict[str, object] = {
         "document_id": new_id("document", now=now),
-        "classification": route.classification,
+        "classification": classification,
         "slug": _slugify(title),
         "title": title,
         "status": "draft",
@@ -888,7 +904,7 @@ def _scaffold_for_route(
         "updated_at": now.isoformat(),
         "sources": [],
     }
-    if route.contract == "design-document":
+    if contract == "design-document":
         document = DesignDocument.model_validate(
             {
                 **common,
@@ -948,7 +964,7 @@ def _scaffold_for_route(
             }
         )
         return dump_yaml(document).encode("utf-8")
-    if route.contract == "project-status-summary":
+    if contract == "project-status-summary":
         common["sources"] = [
             {
                 "key": "source",
@@ -976,7 +992,7 @@ def _scaffold_for_route(
             }
         )
         return dump_yaml(document).encode("utf-8")
-    raise AssertionError(f"unsupported document contract: {route.contract}")
+    raise AssertionError(f"unsupported document contract: {contract}")
 
 
 @doc_app.command("contracts")
@@ -1105,6 +1121,16 @@ def doc_scaffold_command(
             ),
         ),
     ] = None,
+    contract: Annotated[
+        str | None,
+        typer.Option(
+            "--contract",
+            help=(
+                "Version 2 only: scaffold this section's configured structured "
+                "contract instead of ordinary Markdown."
+            ),
+        ),
+    ] = None,
     output_file: Annotated[
         Path | None,
         typer.Option("--output-file", help="Write the scaffold to this path."),
@@ -1159,19 +1185,65 @@ def doc_scaffold_command(
                         "sections": [item.path for item in simple_policy.sections],
                     },
                 )
-            if section.structured is not None:
+            if contract is None:
+                # Ordinary Markdown stays the default everywhere, including in a
+                # section that also enables a structured contract.
+                _write_or_echo(scaffold_simple_document(title=title), output_file)
+                return
+            if section.structured is None:
                 raise RCPError(
-                    code="document_structured_scaffold_unsupported",
+                    code="document_structured_contract_unconfigured",
                     message=(
-                        "Structured sections are not scaffolded by this policy "
-                        "version yet."
+                        f"Section {section.path!r} does not enable a structured "
+                        "contract."
+                    ),
+                    remediation=(
+                        "Drop --contract to scaffold ordinary Markdown, or propose a "
+                        "structured contract for this section."
+                    ),
+                    context={"document_type": document_type, "contract": contract},
+                )
+            if contract != section.structured.contract:
+                raise RCPError(
+                    code="document_structured_contract_mismatch",
+                    message=(
+                        f"Section {section.path!r} enables "
+                        f"{section.structured.contract!r}, not {contract!r}."
+                    ),
+                    remediation=(
+                        "Pass --contract "
+                        f"{section.structured.contract}, or drop --contract to "
+                        "scaffold ordinary Markdown."
                     ),
                     context={
                         "document_type": document_type,
-                        "contract": section.structured.contract,
+                        "contract": contract,
+                        "configured_contract": section.structured.contract,
                     },
                 )
-            _write_or_echo(scaffold_simple_document(title=title), output_file)
+            repository_record = discover_repository(repository)
+            now = datetime.now(UTC).replace(microsecond=0)
+            _write_or_echo(
+                _scaffold_source(
+                    contract=section.structured.contract,
+                    document_type=section.path,
+                    classification=section.structured.classification,
+                    required_relations=(),
+                    title=title,
+                    # Version 2 resolves ownership from CODEOWNERS, so there is no
+                    # --owner to thread here; the envelope's authored_by is a
+                    # placeholder the author replaces.
+                    owner="person:TODO",
+                    basis_commit=current_head(repository_record) or "0" * 40,
+                    now=now,
+                    relations={
+                        "supersedes": (),
+                        "derived_from": (),
+                        "see_also": (),
+                    },
+                ),
+                output_file,
+            )
             return
         policy = effective.require_legacy(command="doc scaffold")
         route = next(
@@ -1187,8 +1259,11 @@ def doc_scaffold_command(
             )
         repository_record = discover_repository(repository)
         now = datetime.now(UTC).replace(microsecond=0)
-        content = _scaffold_for_route(
-            route=route,
+        content = _scaffold_source(
+            contract=route.contract,
+            document_type=route.document_type,
+            classification=route.classification,
+            required_relations=route.required_relations,
             title=title,
             owner=owner or "person:TODO",
             basis_commit=current_head(repository_record) or "0" * 40,
@@ -1211,9 +1286,9 @@ def _simple_check_data(
     source: Path,
     relative: str,
 ) -> dict[str, object]:
-    """Validate one ordinary Markdown document against its section."""
+    """Validate one routed path against its section."""
 
-    findings, facts, section = check_simple_document(
+    findings, facts = check_simple_document(
         repository,
         policy,
         source=source,
@@ -1221,20 +1296,22 @@ def _simple_check_data(
     )
     reported = [finding.as_dict() for finding in findings]
     passed = not any(finding["kind"] == "invalid" for finding in reported)
+    section = facts.get("section")
     data: dict[str, object] = {
         "path": relative,
         "policy_version": policy.version,
+        "kind": facts.get("kind"),
         "section": section,
         "document_type": section,
-        "contract": "markdown",
+        "contract": facts.get("contract"),
         "terminal_result": "passed" if passed else "invalid",
         "findings": reported,
     }
     data.update(
         {
             key: value
-            for key, value in facts.as_dict().items()
-            if key not in {"path", "section"}
+            for key, value in facts.items()
+            if key not in {"path", "kind", "section", "contract"}
         }
     )
     return data
@@ -1521,7 +1598,28 @@ def doc_render_command(
     """Render a passing routed YAML source as deterministic Markdown."""
 
     try:
-        repository, policy = _repository_and_policy(project, policy_file, command="doc render")
+        repository, effective = _repository_and_effective_policy(project, policy_file)
+        if effective.is_simple:
+            simple_policy = effective.require_simple(command="doc render")
+            source, relative = _document_relative_path(repository, document_file)
+            section = require_structured_section(simple_policy, relative)
+            structure = section.structured
+            assert structure is not None
+            try:
+                # doc tree reaches the renderer through this same helper, so a
+                # source can never render here and fail there.
+                content = render_structured_document(
+                    section=section,
+                    source=source,
+                    relative=relative,
+                )
+            except ValidationError as error:
+                if structure.contract == "analysis-brief":
+                    raise _analysis_brief_schema_error(error, source) from error
+                raise
+            _write_or_echo(content, output_file)
+            return
+        policy = effective.require_legacy(command="doc render")
         source, relative = _document_relative_path(repository, document_file)
         route = _route_for_relative(policy, relative)
         if route.contract == "markdown-frontmatter":
@@ -1599,26 +1697,29 @@ def doc_tree_command(
     result: DocumentTreeLintResult | SimpleDocumentTreeLintResult
     try:
         repository, effective = _repository_and_effective_policy(project, policy_file)
+        baseline_repository: Path | None = None
+        baseline_document_root: str | None = None
+        baseline_policy_missing = False
         if effective.is_simple:
+            simple_policy = effective.require_simple(command="doc tree")
             if baseline_project is not None:
-                raise RCPError(
-                    code="document_baseline_unsupported",
-                    message=(
-                        "Frozen/locked baseline comparison is not implemented for a "
-                        f"version {SIMPLE_POLICY_VERSION} document policy yet."
-                    ),
-                    remediation="Rerun `doc tree` without --baseline-project.",
-                    context={"policy_version": effective.version},
+                (
+                    baseline_repository,
+                    baseline_document_root,
+                    baseline_policy_missing,
+                ) = _baseline_repository_and_document_root(
+                    baseline_project,
+                    fallback_root=simple_policy.root,
                 )
             result = lint_simple_document_tree(
                 repository,
-                effective.require_simple(command="doc tree"),
+                simple_policy,
+                baseline_root=baseline_repository,
+                baseline_document_root=baseline_document_root,
+                baseline_policy_missing=baseline_policy_missing,
             )
         else:
             policy = effective.require_legacy(command="doc tree")
-            baseline_repository: Path | None = None
-            baseline_document_root: str | None = None
-            baseline_policy_missing = False
             if baseline_project is not None:
                 (
                     baseline_repository,

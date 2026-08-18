@@ -70,3 +70,37 @@ def link_destinations(text: str) -> tuple[str, ...]:
 
     walk(parse_markdown(text))
     return tuple(destinations)
+
+
+def html_block_texts(text: str) -> tuple[str, ...]:
+    """Return the source of every block-level raw HTML token, in order.
+
+    Only real HTML blocks are reported. A comment quoted inside a fenced or
+    indented code sample is code, and a comment written mid-paragraph is inline
+    prose; neither is a block the renderers would ever emit.
+    """
+
+    return tuple(
+        token.content
+        for token in parse_markdown(text)
+        if token.type == "html_block"
+    )
+
+
+def blockquote_texts(text: str) -> tuple[str, ...]:
+    """Return the flattened text of every outermost block quote, in order."""
+
+    quotes: list[str] = []
+    parts: list[str] = []
+    depth = 0
+    for token in parse_markdown(text):
+        if token.type == "blockquote_open":
+            depth += 1
+        elif token.type == "blockquote_close":
+            depth -= 1
+            if depth == 0:
+                quotes.append(" ".join(part for part in parts if part))
+                parts = []
+        elif depth and token.type == "inline":
+            parts.append(_inline_text(token))
+    return tuple(quotes)

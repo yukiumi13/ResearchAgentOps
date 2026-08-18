@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -16,12 +17,25 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml
+from researchctl.services.codeowners import (
+    CODEOWNERS_LOCATIONS,
+    CODEOWNERS_MAX_BYTES,
+    discover_codeowners,
+    parse_codeowners,
+)
 from researchctl.services.document_policy import (
     build_effective_policy,
     select_policy_version,
 )
-from researchctl.services.markdown_source import first_heading_title, link_destinations
+from researchctl.services.generated_markdown import claims_generated_markdown
+from researchctl.services.markdown_source import (
+    blockquote_texts,
+    first_heading_title,
+    html_block_texts,
+    link_destinations,
+)
 from researchctl.services.project_documents_v2 import (
+    check_simple_document,
     lint_simple_document_tree,
     resolve_repository_link,
     scaffold_simple_document,
@@ -65,6 +79,70 @@ def _simple(payload: dict[str, Any] | None = None) -> SimpleDocumentLayoutPolicy
     effective = build_effective_policy(payload if payload is not None else _policy())
     assert effective.simple is not None
     return effective.simple
+
+
+STRUCTURED_SECTIONS: list[dict[str, Any]] = [
+    {
+        "path": "design",
+        "structured": {
+            "contract": "design-document",
+            "classification": "design/architecture:document",
+        },
+    },
+    {"path": "profiling", "structured": {"contract": "analysis-brief"}},
+    {"path": "runbooks"},
+]
+
+
+def _structured_policy(**overrides: Any) -> dict[str, Any]:
+    return _policy(sections=[dict(section) for section in STRUCTURED_SECTIONS], **overrides)
+
+
+def _write_structured_pair(
+    repository: Path,
+    *,
+    section: str,
+    contract: str,
+    title: str,
+    stem: str,
+) -> tuple[Path, Path]:
+    """Author one canonical source and its render through the real commands."""
+
+    runner = CliRunner()
+    source = repository / "docs" / section / f"{stem}.yaml"
+    scaffolded = runner.invoke(
+        app,
+        [
+            "doc",
+            "scaffold",
+            "--type",
+            section,
+            "--title",
+            title,
+            "--contract",
+            contract,
+            "--project",
+            str(repository),
+            "--output-file",
+            str(source),
+        ],
+    )
+    assert scaffolded.exit_code == 0, scaffolded.stdout
+    render = source.with_suffix(".md")
+    rendered = runner.invoke(
+        app,
+        [
+            "doc",
+            "render",
+            str(source),
+            "--project",
+            str(repository),
+            "--output-file",
+            str(render),
+        ],
+    )
+    assert rendered.exit_code == 0, rendered.stdout
+    return source, render
 
 
 def _codes(result: Any) -> list[str]:
@@ -563,42 +641,63 @@ def test_missing_root_page_and_missing_section_directory_are_distinguished(
     assert "document_section_directory_missing" in warnings
 
 
-def test_structured_section_content_is_reported_as_unvalidated(tmp_path: Path) -> None:
-    payload = _policy(
-        sections=[
-            {
-                "path": "design",
-                "structured": {
-                    "contract": "design-document",
-                    "classification": "design/architecture:document",
-                },
-            },
-            {"path": "runbooks"},
-        ]
-    )
+def test_a_structured_pair_and_ordinary_markdown_share_one_section(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
     repository = _repository(tmp_path, payload)
-    (repository / "docs/design/thing.yaml").write_text("{}\n", encoding="utf-8")
-    (repository / "docs/design/thing.md").write_text("# Thing\n", encoding="utf-8")
+    _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    # A hand-written note with a different stem stays an ordinary document.
+    (repository / "docs/profiling/encoder-performance-tuning.md").write_text(
+        "# Encoder performance tuning\n\nNotes beside the brief.\n",
+        encoding="utf-8",
+    )
 
     result = lint_simple_document_tree(repository, _simple(payload))
 
-    assert result.passed
-    warning = next(
-        item
-        for item in result.findings
-        if item.code == "document_structured_section_unvalidated"
-    )
-    assert warning.path == "docs/design"
-    assert result.documents == 1
+    assert result.passed, _invalid(result)
+    assert result.structured_documents == 1
+    # docs/README.md plus the hand-written note; the render is not a document.
+    assert result.documents == 2
+    assert [facts.path for facts in result.document_facts] == [
+        "docs/README.md",
+        "docs/profiling/encoder-performance-tuning.md",
+    ]
+    structured = result.structured_facts[0]
+    assert structured.source_path == "docs/profiling/full-sft-memory-at-16k.yaml"
+    assert structured.render_path == "docs/profiling/full-sft-memory-at-16k.md"
+    assert structured.contract == "analysis-brief"
+    assert structured.classification is None
 
 
-def test_ordinary_sections_reject_non_markdown_files(tmp_path: Path) -> None:
+def test_ordinary_sections_publish_non_markdown_files_as_assets(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path)
+    (repository / "docs/design/diagrams").mkdir()
+    (repository / "docs/design/diagrams/flow.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repository / "docs/design/report.pdf").write_bytes(b"%PDF-1.4\n")
     (repository / "docs/design/data.yaml").write_text("a: 1\n", encoding="utf-8")
 
     result = lint_simple_document_tree(repository, _simple())
 
-    assert _invalid(result) == ["document_extension_invalid"]
+    # No content sniffing and no MIME check: a non-Markdown file is published
+    # as it stands.
+    assert result.passed
+    assert _invalid(result) == []
+    assert result.assets == 3
+    assert result.asset_paths == (
+        "docs/design/data.yaml",
+        "docs/design/diagrams/flow.png",
+        "docs/design/report.pdf",
+    )
+    assert result.documents == 1
 
 
 # --------------------------------------------------------------------------
@@ -807,11 +906,128 @@ def test_version_two_fails_closed_for_unimplemented_commands(
     )
 
 
-def test_version_two_refuses_a_frozen_baseline_until_it_is_implemented(
+def _versioned_repository(root: Path, *, version: int) -> Path:
+    """Build a repository whose only document is locked by its own contract."""
+
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / "docs/design").mkdir(parents=True, exist_ok=True)
+    if version == 2:
+        (root / ".researchctl-docs.yaml").write_text(
+            dump_yaml(_policy()),
+            encoding="utf-8",
+        )
+        (root / "docs/README.md").write_text("# Documentation\n", encoding="utf-8")
+        (root / "docs/runbooks").mkdir(exist_ok=True)
+        body = "---\nlocked: true\n---\n\n# Locked\n\nImmobilized text.\n"
+    else:
+        (root / ".researchctl-docs.yaml").write_text(
+            dump_yaml(
+                {
+                    "root": "docs",
+                    "routes": [dict(LEGACY_ROUTE, document_type="design", directory="docs/design")],
+                }
+            ),
+            encoding="utf-8",
+        )
+        body = (
+            "---\n"
+            "type: design\n"
+            "title: Locked\n"
+            "owner: person:manager\n"
+            "last_updated: 2026-01-01\n"
+            "validity: frozen\n"
+            "---\n"
+            "\n# Locked\n\nImmobilized text.\n"
+        )
+    (root / "docs/design/locked.md").write_text(body, encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("head_version", [1, 2])
+@pytest.mark.parametrize("baseline_version", [1, 2])
+def test_a_locked_baseline_document_is_protected_across_policy_versions(
     tmp_path: Path,
+    head_version: int,
+    baseline_version: int,
 ) -> None:
-    repository = _repository(tmp_path / "head")
+    baseline = _versioned_repository(
+        tmp_path / "base", version=baseline_version
+    )
+    head = _versioned_repository(tmp_path / "head", version=head_version)
+    # The baseline's own locked bytes are what the head must preserve.
+    locked = (baseline / "docs/design/locked.md").read_bytes()
+    (head / "docs/design/locked.md").write_bytes(locked)
+
+    runner = CliRunner()
+    unchanged = runner.invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+    assert "frozen_document_modified" not in unchanged.stdout
+
+    (head / "docs/design/locked.md").write_bytes(locked + b"Appended.\n")
+    modified = runner.invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+    assert modified.exit_code == 2
+    assert '"code": "frozen_document_modified"' in modified.stdout
+
+    (head / "docs/design/locked.md").unlink()
+    deleted = runner.invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+    assert deleted.exit_code == 2
+    assert '"code": "frozen_document_modified"' in deleted.stdout
+
+    (head / "docs/design/locked.md").symlink_to(head / "docs/README.md")
+    replaced = runner.invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+    assert replaced.exit_code == 2
+    assert '"code": "frozen_document_modified"' in replaced.stdout
+
+
+def test_an_unlocked_baseline_document_places_no_restriction(tmp_path: Path) -> None:
     baseline = _repository(tmp_path / "base")
+    (baseline / "docs/design/free.md").write_text("# Free\n", encoding="utf-8")
+    head = _repository(tmp_path / "head")
+    (head / "docs/design/free.md").write_text("# Free, rewritten\n", encoding="utf-8")
 
     result = CliRunner().invoke(
         app,
@@ -819,15 +1035,15 @@ def test_version_two_refuses_a_frozen_baseline_until_it_is_implemented(
             "doc",
             "tree",
             "--project",
-            str(repository),
+            str(head),
             "--baseline-project",
             str(baseline),
             "--json",
         ],
     )
 
-    assert result.exit_code == 2
-    assert '"code": "document_baseline_unsupported"' in result.stdout
+    assert result.exit_code == 0, result.stdout
+    assert "frozen_document_modified" not in result.stdout
 
 
 # --------------------------------------------------------------------------
@@ -913,37 +1129,76 @@ def test_version_one_policy_lint_output_is_unchanged(tmp_path: Path) -> None:
     }
 
 
-def test_structured_sections_refuse_check_and_scaffold_for_now(tmp_path: Path) -> None:
-    payload = _policy(
-        sections=[
-            {
-                "path": "design",
-                "structured": {
-                    "contract": "design-document",
-                    "classification": "design/architecture:document",
-                },
-            },
-            {"path": "runbooks"},
-        ]
-    )
+def test_doc_check_accepts_both_kinds_inside_a_structured_section(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
     repository = _repository(tmp_path, payload)
-    (repository / "docs/design/thing.yaml").write_text("{}\n", encoding="utf-8")
+    source, _render = _write_structured_pair(
+        repository,
+        section="design",
+        contract="design-document",
+        title="Splice the encoder",
+        stem="splice-the-encoder",
+    )
+    note = repository / "docs/design/encoder-notes.md"
+    note.write_text("# Encoder notes\n", encoding="utf-8")
 
-    checked = CliRunner().invoke(
+    runner = CliRunner()
+    structured = runner.invoke(
+        app,
+        ["doc", "check", str(source), "--project", str(repository), "--json"],
+    )
+    assert structured.exit_code == 0, structured.stdout
+    structured_data = json.loads(structured.stdout)["data"]
+    assert structured_data["kind"] == "structured"
+    assert structured_data["contract"] == "design-document"
+    assert structured_data["terminal_result"] == "passed"
+
+    ordinary = runner.invoke(
+        app,
+        ["doc", "check", str(note), "--project", str(repository), "--json"],
+    )
+    assert ordinary.exit_code == 0, ordinary.stdout
+    ordinary_data = json.loads(ordinary.stdout)["data"]
+    assert ordinary_data["kind"] == "markdown"
+    assert ordinary_data["contract"] == "markdown"
+    assert ordinary_data["title"] == "Encoder notes"
+
+
+def test_scaffold_defaults_to_markdown_inside_a_structured_section(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+
+    result = CliRunner().invoke(
         app,
         [
             "doc",
-            "check",
-            str(repository / "docs/design/thing.yaml"),
+            "scaffold",
+            "--type",
+            "design",
+            "--title",
+            "Encoder notes",
             "--project",
             str(repository),
-            "--json",
         ],
     )
-    assert checked.exit_code == 2
-    assert '"code": "document_structured_check_unsupported"' in checked.stdout
 
-    scaffolded = CliRunner().invoke(
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout.startswith("---\n")
+    assert "# Encoder notes" in result.stdout
+    assert "document_id" not in result.stdout
+
+
+def test_scaffold_contract_must_match_the_configured_structured_contract(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+
+    mismatch = CliRunner().invoke(
         app,
         [
             "doc",
@@ -952,13 +1207,35 @@ def test_structured_sections_refuse_check_and_scaffold_for_now(tmp_path: Path) -
             "design",
             "--title",
             "Thing",
+            "--contract",
+            "analysis-brief",
             "--project",
             str(repository),
         ],
     )
-    assert scaffolded.exit_code == 2
-    assert "document_structured_scaffold_unsupported" in (
-        scaffolded.stdout + str(scaffolded.stderr)
+    assert mismatch.exit_code == 2
+    assert "document_structured_contract_mismatch" in (
+        mismatch.stdout + str(mismatch.stderr)
+    )
+
+    unconfigured = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "scaffold",
+            "--type",
+            "runbooks",
+            "--title",
+            "Thing",
+            "--contract",
+            "analysis-brief",
+            "--project",
+            str(repository),
+        ],
+    )
+    assert unconfigured.exit_code == 2
+    assert "document_structured_contract_unconfigured" in (
+        unconfigured.stdout + str(unconfigured.stderr)
     )
 
 
@@ -1046,14 +1323,20 @@ def test_a_document_with_no_delimiter_is_untouched(tmp_path: Path) -> None:
 
 def test_absent_ownership_configuration_reports_nothing(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
+    (repository / ".github").mkdir()
+    # Even a defective CODEOWNERS is silent when the policy configures no
+    # ownership source at all.
+    (repository / ".github/CODEOWNERS").write_text("!nope @a\n", encoding="utf-8")
 
     result = lint_simple_document_tree(repository, _simple())
 
     assert result.passed
-    assert "document_ownership_not_implemented" not in _codes(result)
+    assert not [code for code in _codes(result) if "codeowners" in code]
+    assert not [code for code in _codes(result) if code == "document_owner_unresolved"]
+    assert result.document_facts[0].owners == ()
 
 
-def test_optional_ownership_warns_once(tmp_path: Path) -> None:
+def test_optional_ownership_warns_when_no_codeowners_exists(tmp_path: Path) -> None:
     payload = _policy(ownership={"source": "codeowners", "required": False})
     repository = _repository(tmp_path, payload)
     (repository / "docs/design/a.md").write_text("# A\n", encoding="utf-8")
@@ -1064,17 +1347,16 @@ def test_optional_ownership_warns_once(tmp_path: Path) -> None:
     ownership = [
         finding
         for finding in result.findings
-        if finding.code == "document_ownership_not_implemented"
+        if finding.code == "document_codeowners_missing"
     ]
     assert result.passed
     assert len(ownership) == 1
     assert ownership[0].kind == "warning"
-    assert ownership[0].path == "ownership"
+    for location in CODEOWNERS_LOCATIONS:
+        assert location in ownership[0].message
 
 
-def test_required_ownership_fails_closed_until_codeowners_lands(
-    tmp_path: Path,
-) -> None:
+def test_required_ownership_fails_when_no_codeowners_exists(tmp_path: Path) -> None:
     payload = _policy(ownership={"source": "codeowners", "required": True})
     repository = _repository(tmp_path, payload)
     (repository / "docs/design/a.md").write_text("# A\n", encoding="utf-8")
@@ -1084,12 +1366,11 @@ def test_required_ownership_fails_closed_until_codeowners_lands(
     ownership = [
         finding
         for finding in result.findings
-        if finding.code == "document_ownership_not_implemented"
+        if finding.code == "document_codeowners_missing"
     ]
     assert not result.passed
     assert len(ownership) == 1
     assert ownership[0].kind == "invalid"
-    assert "ownership.required is true" in ownership[0].message
 
 
 def test_doc_tree_fails_when_required_ownership_cannot_be_resolved(
@@ -1108,8 +1389,9 @@ def test_doc_tree_fails_when_required_ownership_cannot_be_resolved(
     assert result.exit_code == 2
     payload = json.loads(result.stdout)
     assert payload["success"] is False
+    assert payload["data"]["codeowners_path"] is None
     assert [finding["code"] for finding in payload["data"]["findings"]] == [
-        "document_ownership_not_implemented"
+        "document_codeowners_missing"
     ]
 
 
@@ -1370,3 +1652,1006 @@ def test_root_pages_accept_a_direct_child() -> None:
     # A leading "./" is normalized away by the repository path type, so it still
     # names a direct child rather than a second segment.
     assert _simple(_policy(root_pages=["./README.md"])).root_pages == ("README.md",)
+
+# --------------------------------------------------------------------------
+# Ownership resolves from CODEOWNERS and nowhere else
+# --------------------------------------------------------------------------
+
+
+def test_codeowners_accepts_github_owner_forms_and_rejects_the_rest() -> None:
+    ruleset = parse_codeowners(
+        "\n".join(
+            [
+                "# A comment, then a blank line.",
+                "",
+                "*                    @fallback",
+                "docs/design/         @docs-team @org/writers ops@example.com",
+                "docs/runbooks/*.md   @org/sre",
+                "docs/unowned/",
+                "!docs/negated        @a",
+                "[owners]",
+                "docs/bad             not-an-owner",
+            ]
+        ),
+        path=".github/CODEOWNERS",
+    )
+
+    assert [rule.pattern for rule in ruleset.rules] == [
+        "*",
+        "docs/design/",
+        "docs/runbooks/*.md",
+        "docs/unowned/",
+    ]
+    assert ruleset.owners_for("docs/design/a.md") == (
+        "@docs-team",
+        "@org/writers",
+        "ops@example.com",
+    )
+    assert ruleset.owners_for("docs/runbooks/r.md") == ("@org/sre",)
+    assert ruleset.owners_for("src/main.py") == ("@fallback",)
+    # A rule with no owners is legal and un-assigns ownership.
+    assert ruleset.owners_for("docs/unowned/z.md") == ()
+    assert [problem.line for problem in ruleset.problems] == [7, 8, 9]
+    assert "negated" in ruleset.problems[0].message
+    assert "GitLab" in ruleset.problems[1].message
+    assert "not-an-owner" in ruleset.problems[2].message
+
+
+def test_codeowners_resolution_uses_the_last_matching_rule() -> None:
+    ruleset = parse_codeowners(
+        "\n".join(
+            [
+                "docs/design/ @first",
+                "docs/design/ @second",
+                "* @catch-all",
+                "docs/design/a.md @specific",
+            ]
+        ),
+        path="CODEOWNERS",
+    )
+
+    # GitHub reads the file top to bottom and the last match wins, so a broad
+    # rule placed late overrides the narrow rules above it.
+    assert ruleset.owners_for("docs/design/b.md") == ("@catch-all",)
+    assert ruleset.owners_for("docs/design/a.md") == ("@specific",)
+
+
+def test_codeowners_discovery_follows_github_precedence(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "docs/CODEOWNERS").write_text("* @docs-copy\n", encoding="utf-8")
+    assert discover_codeowners(repository).path == "docs/CODEOWNERS"
+
+    (repository / "CODEOWNERS").write_text("* @root\n", encoding="utf-8")
+    assert discover_codeowners(repository).path == "CODEOWNERS"
+
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text("* @github\n", encoding="utf-8")
+    discovery = discover_codeowners(repository)
+    assert discovery.path == ".github/CODEOWNERS"
+    assert discovery.ruleset is not None
+    assert discovery.ruleset.owners_for("docs/README.md") == ("@github",)
+
+
+def test_a_codeowners_symlink_fails_instead_of_falling_through(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": False})
+    repository = _repository(tmp_path, payload)
+    (repository / "CODEOWNERS").write_text("* @root\n", encoding="utf-8")
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").symlink_to(repository / "CODEOWNERS")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # Falling through to the lower-precedence file would resolve owners GitHub
+    # never consults, so an untrustworthy candidate is a hard error.
+    unreadable = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_codeowners_unreadable"
+    ]
+    assert not result.passed
+    assert len(unreadable) == 1
+    assert unreadable[0].path == ".github/CODEOWNERS"
+    assert result.codeowners_path is None
+
+
+def test_resolved_owners_reach_the_document_and_structured_facts(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy(ownership={"source": "codeowners", "required": True})
+    repository = _repository(tmp_path, payload)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text(
+        "* @fallback\ndocs/profiling/ @perf-team ops@example.com\n",
+        encoding="utf-8",
+    )
+    _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    (repository / "docs/profiling/encoder-performance-tuning.md").write_text(
+        "# Encoder performance tuning\n", encoding="utf-8"
+    )
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert result.passed, _invalid(result)
+    assert result.codeowners_path == ".github/CODEOWNERS"
+    owners = {facts.path: facts.owners for facts in result.document_facts}
+    assert owners["docs/README.md"] == ("@fallback",)
+    assert owners["docs/profiling/encoder-performance-tuning.md"] == (
+        "@perf-team",
+        "ops@example.com",
+    )
+    # A generated page is owned through the Markdown readers actually see.
+    assert result.structured_facts[0].owners == ("@perf-team", "ops@example.com")
+
+
+@pytest.mark.parametrize(
+    ("required", "kind", "passed"),
+    [(True, "invalid", False), (False, "warning", True)],
+)
+def test_an_unmatched_document_is_reported_by_the_required_flag(
+    tmp_path: Path,
+    required: bool,
+    kind: str,
+    passed: bool,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": required})
+    repository = _repository(tmp_path, payload)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text(
+        "docs/design/ @docs-team\n", encoding="utf-8"
+    )
+    (repository / "docs/design/a.md").write_text("# A\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    unresolved = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_owner_unresolved"
+    ]
+    assert result.passed is passed
+    # docs/design/a.md matches; only the root page is left unowned.
+    assert [finding.path for finding in unresolved] == ["docs/README.md"]
+    assert unresolved[0].kind == kind
+
+
+def test_the_effective_codeowners_inside_the_root_is_neither_page_nor_asset(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": True})
+    repository = _repository(tmp_path, payload)
+    (repository / "docs/CODEOWNERS").write_text("* @docs-team\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert result.passed, _invalid(result)
+    assert result.codeowners_path == "docs/CODEOWNERS"
+    assert result.assets == 0
+    assert "docs/CODEOWNERS" not in [facts.path for facts in result.document_facts]
+    assert "document_root_file_unclassified" not in _codes(result)
+
+
+def test_a_shadowed_codeowners_inside_the_root_is_reported_as_such(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": True})
+    repository = _repository(tmp_path, payload)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text("* @github\n", encoding="utf-8")
+    (repository / "docs/CODEOWNERS").write_text("* @ignored\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    shadowed = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_codeowners_shadowed"
+    ]
+    assert not result.passed
+    assert [finding.path for finding in shadowed] == ["docs/CODEOWNERS"]
+    assert ".github/CODEOWNERS" in shadowed[0].message
+
+
+def test_codeowners_syntax_defects_are_reported_with_their_line(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": False})
+    repository = _repository(tmp_path, payload)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text(
+        "* @ok\n!docs/x @a\n", encoding="utf-8"
+    )
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    syntax = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_codeowners_syntax_invalid"
+    ]
+    # A defect is invalid even when ownership itself is optional: the file is
+    # present and says something GitHub will not do.
+    assert not result.passed
+    assert [finding.path for finding in syntax] == [".github/CODEOWNERS:2"]
+
+
+# --------------------------------------------------------------------------
+# Static assets
+# --------------------------------------------------------------------------
+
+
+def test_nested_yaml_in_a_structured_section_is_an_asset(tmp_path: Path) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    (repository / "docs/design/fixtures").mkdir()
+    (repository / "docs/design/fixtures/data.yaml").write_text(
+        "a: 1\n", encoding="utf-8"
+    )
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # Only a direct child is canonical, so nested YAML is published, not parsed.
+    assert result.passed, _invalid(result)
+    assert result.asset_paths == ("docs/design/fixtures/data.yaml",)
+    assert result.structured_documents == 0
+
+
+def test_markdown_links_to_assets_are_existence_checked(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "docs/design/flow.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repository / "docs/design/a.md").write_text(
+        "# A\n\n![flow](flow.png)\n\n![gone](missing.png)\n",
+        encoding="utf-8",
+    )
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    missing = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_link_target_missing"
+    ]
+    assert len(missing) == 1
+    assert missing[0].path == "docs/design/a.md:missing.png"
+    facts = next(
+        item for item in result.document_facts if item.path == "docs/design/a.md"
+    )
+    assert facts.links == ("docs/design/flow.png",)
+
+
+def test_root_direct_files_still_require_an_explicit_root_page(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / "docs/notes.md").write_text("# Notes\n", encoding="utf-8")
+    (repository / "docs/logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    unclassified = [
+        finding
+        for finding in result.findings
+        if finding.code == "document_root_file_unclassified"
+    ]
+    assert [finding.path for finding in unclassified] == [
+        "docs/logo.png",
+        "docs/notes.md",
+    ]
+    assert result.assets == 0
+
+
+def test_symlinks_remain_a_hard_error_in_a_section(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    (repository / "docs/design/real.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repository / "docs/design/link.png").symlink_to(
+        repository / "docs/design/real.png"
+    )
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    assert "document_symlink_forbidden" in _invalid(result)
+
+
+# --------------------------------------------------------------------------
+# Structured and plain coexistence
+# --------------------------------------------------------------------------
+
+
+def test_a_markerless_same_stem_markdown_file_is_an_ambiguity_error(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    assert source.exists()
+    render.write_text("# Full SFT memory at 16k\n\nHand written.\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # A stale render must not be able to pass itself off as an ordinary
+    # document; an ordinary document uses a different stem.
+    assert _invalid(result) == ["document_render_marker_missing"]
+    assert render.relative_to(repository).as_posix() not in [
+        facts.path for facts in result.document_facts
+    ]
+
+
+def test_a_damaged_render_marker_is_not_treated_as_ordinary_markdown(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    _source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    damaged = re.sub(
+        r"body=sha256:[0-9a-f]{64}",
+        "body=sha256:" + "0" * 64,
+        render.read_text(encoding="utf-8"),
+    )
+    render.write_text(damaged, encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert _invalid(result) == ["document_render_marker_invalid"]
+    assert result.documents == 1
+
+
+def test_a_generated_render_without_a_source_is_an_orphan(tmp_path: Path) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    source.unlink()
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert _invalid(result) == ["document_render_orphaned"]
+    assert result.findings[-1].path == render.relative_to(repository).as_posix()
+
+
+def test_an_envelope_classification_must_match_its_section(tmp_path: Path) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    source, _render = _write_structured_pair(
+        repository,
+        section="design",
+        contract="design-document",
+        title="Splice the encoder",
+        stem="splice-the-encoder",
+    )
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "classification: design/architecture:document",
+            "classification: implementation/architecture:note",
+        ),
+        encoding="utf-8",
+    )
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert "document_classification_section_mismatch" in _invalid(result)
+
+
+def test_a_structured_source_needs_a_generated_pair(tmp_path: Path) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    _source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    render.unlink()
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert _invalid(result) == ["document_render_missing"]
+
+
+# --------------------------------------------------------------------------
+# The configured contract, not the file, selects the model
+# --------------------------------------------------------------------------
+
+
+MIXED_ENVELOPE_SECTIONS: list[dict[str, Any]] = [
+    {
+        "path": "design",
+        "structured": {
+            "contract": "design-document",
+            "classification": "design/architecture:document",
+        },
+    },
+    {
+        "path": "status",
+        "structured": {
+            "contract": "project-status-summary",
+            # Deliberately the same label as the design section, so a status
+            # summary filed under design would satisfy every classification
+            # check and the document kind is the only thing left to catch it.
+            "classification": "design/architecture:document",
+        },
+    },
+    {"path": "profiling", "structured": {"contract": "analysis-brief"}},
+]
+
+
+def _misfiled_status_summary(tmp_path: Path) -> tuple[Path, Path]:
+    """Author a valid status summary, then file it under the design section."""
+
+    payload = _policy(sections=[dict(section) for section in MIXED_ENVELOPE_SECTIONS])
+    repository = _repository(tmp_path, payload)
+    source, render = _write_structured_pair(
+        repository,
+        section="status",
+        contract="project-status-summary",
+        title="Where the work stands",
+        stem="where-the-work-stands",
+    )
+    misfiled = repository / "docs/design/where-the-work-stands.yaml"
+    misfiled.write_bytes(source.read_bytes())
+    misfiled.with_suffix(".md").write_bytes(render.read_bytes())
+    source.unlink()
+    render.unlink()
+    return repository, misfiled
+
+
+def test_the_tree_rejects_a_valid_document_of_the_wrong_kind(tmp_path: Path) -> None:
+    repository, _misfiled = _misfiled_status_summary(tmp_path)
+    payload = _policy(sections=[dict(section) for section in MIXED_ENVELOPE_SECTIONS])
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # Classification, slug, and render all agree; only the kind is wrong.
+    assert _invalid(result) == ["document_contract_kind_mismatch"]
+    assert result.structured_documents == 0
+
+
+def test_doc_check_rejects_a_valid_document_of_the_wrong_kind(
+    tmp_path: Path,
+) -> None:
+    repository, misfiled = _misfiled_status_summary(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "check", str(misfiled), "--project", str(repository), "--json"],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)["data"]
+    assert [finding["code"] for finding in data["findings"]] == [
+        "document_contract_kind_mismatch"
+    ]
+
+
+def test_doc_render_rejects_a_valid_document_of_the_wrong_kind(
+    tmp_path: Path,
+) -> None:
+    repository, misfiled = _misfiled_status_summary(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "render", str(misfiled), "--project", str(repository)],
+    )
+
+    assert result.exit_code == 2
+    assert "document_contract_kind_mismatch" in (result.stdout + str(result.stderr))
+
+
+def test_an_envelope_cannot_satisfy_an_analysis_brief_section(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(sections=[dict(section) for section in MIXED_ENVELOPE_SECTIONS])
+    repository = _repository(tmp_path, payload)
+    source, _render = _write_structured_pair(
+        repository,
+        section="design",
+        contract="design-document",
+        title="Splice the encoder",
+        stem="splice-the-encoder",
+    )
+    (repository / "docs/profiling").mkdir(exist_ok=True)
+    misfiled = repository / "docs/profiling/splice-the-encoder.yaml"
+    misfiled.write_bytes(source.read_bytes())
+
+    findings, _facts = check_simple_document(
+        repository,
+        _simple(payload),
+        source=misfiled,
+        relative="docs/profiling/splice-the-encoder.yaml",
+    )
+
+    assert [finding.code for finding in findings if finding.kind == "invalid"] == [
+        "document_contract_kind_mismatch"
+    ]
+
+
+# --------------------------------------------------------------------------
+# Generated Markdown is an output, never a checkable source
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("damage", [None, "prefix", "comment"])
+def test_doc_check_refuses_renderer_owned_markdown(
+    tmp_path: Path,
+    damage: str | None,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    _source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    text = render.read_text(encoding="utf-8")
+    if damage == "prefix":
+        text = text.replace("<!-- researchctl-generated:", "<!-- researchctl-generated")
+    elif damage == "comment":
+        # Only the visible renderer header survives.
+        text = "\n".join(
+            line for line in text.splitlines() if "researchctl-generated" not in line
+        )
+    render.write_text(text, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "check", str(render), "--project", str(repository), "--json"],
+    )
+
+    assert result.exit_code == 2
+    reported = json.loads(result.stdout)["errors"]
+    assert [error["code"] for error in reported] == [
+        "document_generated_markdown_not_checkable"
+    ]
+    # The diagnostic must point at the canonical source, not just say "no".
+    assert (
+        reported[0]["context"]["canonical_source"]
+        == "docs/profiling/full-sft-memory-at-16k.yaml"
+    )
+    assert "researchctl doc render" in reported[0]["remediation"]
+
+
+@pytest.mark.parametrize("damage", ["prefix", "comment"])
+def test_a_damaged_renderer_claim_never_falls_back_to_ordinary_markdown(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    text = render.read_text(encoding="utf-8")
+    if damage == "prefix":
+        text = text.replace("<!-- researchctl-generated:", "<!-- researchctl-generated")
+    else:
+        text = "\n".join(
+            line for line in text.splitlines() if "researchctl-generated" not in line
+        )
+    render.write_text(text, encoding="utf-8")
+
+    paired = lint_simple_document_tree(repository, _simple(payload))
+    assert _invalid(paired) == ["document_render_marker_invalid"]
+    assert paired.documents == 1
+
+    # The same damaged file with no canonical source is an orphan, not prose.
+    source.unlink()
+    orphaned = lint_simple_document_tree(repository, _simple(payload))
+    assert _invalid(orphaned) == ["document_render_orphaned"]
+    assert orphaned.documents == 1
+
+
+# --------------------------------------------------------------------------
+# Omitted ownership means no ownership
+# --------------------------------------------------------------------------
+
+
+def test_valid_codeowners_rules_are_ignored_when_ownership_is_omitted(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text(
+        "* @fallback\ndocs/design/ @docs-team\n", encoding="utf-8"
+    )
+    (repository / "docs/design/a.md").write_text("# A\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    # The policy has not adopted CODEOWNERS, so nothing is resolved from it.
+    assert result.passed, _invalid(result)
+    assert result.codeowners_path is None
+    assert {facts.owners for facts in result.document_facts} == {()}
+    assert not [code for code in _codes(result) if "codeowners" in code]
+    assert "document_owner_unresolved" not in _codes(result)
+
+
+def test_a_shadowed_codeowners_is_silent_when_ownership_is_omitted(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text("* @github\n", encoding="utf-8")
+    (repository / "docs/CODEOWNERS").write_text("* @ignored\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    assert "document_codeowners_shadowed" not in _codes(result)
+    # With no ownership source configured, the stray file is just an
+    # undeclared file in the document root.
+    assert _invalid(result) == ["document_root_file_unclassified"]
+    assert result.findings[0].path == "docs/CODEOWNERS"
+
+
+def test_an_effective_codeowners_in_the_root_is_excluded_without_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    (repository / "docs/CODEOWNERS").write_text("* @docs-team\n", encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple())
+
+    # Exclusion is the one thing discovery is still used for: GitHub reads this
+    # file, so it is review configuration rather than a page.
+    assert result.passed, _invalid(result)
+    assert result.codeowners_path is None
+    assert result.assets == 0
+    assert "docs/CODEOWNERS" not in [facts.path for facts in result.document_facts]
+
+
+# --------------------------------------------------------------------------
+# The JSON result carries the facts a validated tree produced
+# --------------------------------------------------------------------------
+
+
+def test_doc_tree_json_exposes_facts_and_asset_paths(tmp_path: Path) -> None:
+    payload = _structured_policy(ownership={"source": "codeowners", "required": True})
+    repository = _repository(tmp_path, payload)
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_text("* @docs-team\n", encoding="utf-8")
+    _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    (repository / "docs/design/flow.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (repository / "docs/design/a.md").write_text(
+        "---\nstatus: draft\ntags: [encoder]\n---\n\n# A\n\n![flow](flow.png)\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "tree", "--project", str(repository), "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    data = json.loads(result.stdout)["data"]
+    assert data["asset_paths"] == ["docs/design/flow.png"]
+    assert [facts["path"] for facts in data["document_facts"]] == [
+        "docs/README.md",
+        "docs/design/a.md",
+    ]
+    authored = data["document_facts"][1]
+    assert authored["title"] == "A"
+    assert authored["status"] == "draft"
+    assert authored["tags"] == ["encoder"]
+    assert authored["owners"] == ["@docs-team"]
+    assert authored["links"] == ["docs/design/flow.png"]
+    assert data["structured_facts"] == [
+        {
+            "source_path": "docs/profiling/full-sft-memory-at-16k.yaml",
+            "render_path": "docs/profiling/full-sft-memory-at-16k.md",
+            "section": "profiling",
+            "contract": "analysis-brief",
+            "classification": None,
+            "title": "Full SFT memory at 16k",
+            "lifecycle": None,
+            "owners": ["@docs-team"],
+        }
+    ]
+    # The JSON envelope must stay serializable end to end.
+    assert json.loads(json.dumps(data)) == data
+
+
+# --------------------------------------------------------------------------
+# Baseline enforcement must not depend on a schema-valid baseline policy
+# --------------------------------------------------------------------------
+
+
+def test_a_stale_baseline_policy_still_protects_locked_bytes(tmp_path: Path) -> None:
+    baseline = _versioned_repository(tmp_path / "base", version=2)
+    # Readable YAML that exposes root, but is not valid under any current
+    # model: an unknown policy version, an unknown key, and a sections value of
+    # the wrong type. Requiring a schema-valid baseline here would deadlock the
+    # very change set that repairs the policy.
+    (baseline / ".researchctl-docs.yaml").write_text(
+        dump_yaml(
+            {
+                "version": 99,
+                "root": "docs",
+                "sections": "not-a-list",
+                "unknown_future_key": {"nested": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    head = _versioned_repository(tmp_path / "head", version=2)
+    locked = (baseline / "docs/design/locked.md").read_bytes()
+    (head / "docs/design/locked.md").write_bytes(locked + b"Appended.\n")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    codes = [
+        finding["code"] for finding in json.loads(result.stdout)["data"]["findings"]
+    ]
+    assert "frozen_document_modified" in codes
+    assert "document_baseline_policy_invalid" not in codes
+
+
+# --------------------------------------------------------------------------
+# A renderer claim is a shape, not a mention
+# --------------------------------------------------------------------------
+
+
+DOCUMENTATION_ABOUT_MARKERS = """# How generated pages are marked
+
+Every generated page carries a `researchctl-generated` provenance comment and
+the visible `researchctl-renderer` header above it. Do not edit either by hand.
+
+A rendered analysis brief begins like this:
+
+```markdown
+> Renderer: `researchctl-renderer:research-analysis-brief.v4`
+<!-- researchctl-generated:research-analysis-brief.v4;source=sha256:abc;body=sha256:def -->
+```
+
+The marker line is what `researchctl doc tree` reads to tell a render from an
+ordinary document.
+"""
+
+
+def test_prose_and_code_samples_about_the_marker_stay_ordinary() -> None:
+    # Documentation about the contract is not an instance of the contract.
+    assert claims_generated_markdown(DOCUMENTATION_ABOUT_MARKERS.encode()) is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "<!-- researchctl-generated:research-analysis-brief.v4;body=sha256:a -->",
+        "<!-- researchctl-generated research-analysis-brief.v4 -->",
+        "<!--researchctl-generated",
+        "<!--   researchctl-generated;truncated",
+        "> Renderer: `researchctl-renderer:research-analysis-brief.v4`",
+    ],
+)
+def test_a_damaged_or_intact_claim_is_still_a_claim(line: str) -> None:
+    assert claims_generated_markdown(f"# Title\n\n{line}\n".encode()) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "The `researchctl-generated` comment records the source digest.",
+        "Look for researchctl-generated at the top of the file.",
+        "See researchctl-renderer for the renderer identifier.",
+        "> This quoted note mentions researchctl-renderer but is not a Renderer header.",
+        "    <!-- researchctl-generated:v1 -->",
+    ],
+)
+def test_a_mention_of_the_marker_is_not_a_claim(line: str) -> None:
+    assert claims_generated_markdown(f"# Title\n\n{line}\n".encode()) is False
+
+
+def test_a_runbook_about_markers_is_an_ordinary_document(tmp_path: Path) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    (repository / "docs/runbooks").mkdir(exist_ok=True)
+    note = repository / "docs/runbooks/generated-pages.md"
+    note.write_text(DOCUMENTATION_ABOUT_MARKERS, encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert result.passed, _invalid(result)
+    assert "docs/runbooks/generated-pages.md" in [
+        facts.path for facts in result.document_facts
+    ]
+    assert "document_render_orphaned" not in _codes(result)
+
+    checked = CliRunner().invoke(
+        app,
+        ["doc", "check", str(note), "--project", str(repository), "--json"],
+    )
+    assert checked.exit_code == 0, checked.stdout
+    assert json.loads(checked.stdout)["data"]["title"] == "How generated pages are marked"
+
+
+# --------------------------------------------------------------------------
+# CODEOWNERS syntax GitHub does not accept, and the size GitHub refuses
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "fragment"),
+    [
+        ("!docs/x @a", "negated"),
+        ("docs/[a-z]*.md @a", "character ranges"),
+        ("*.[md] @a", "character ranges"),
+        ("\\#docs/x @a", "escapes a leading"),
+    ],
+)
+def test_the_parser_rejects_syntax_github_does_not_support(
+    line: str,
+    fragment: str,
+) -> None:
+    ruleset = parse_codeowners(f"* @fallback\n{line}\n", path="CODEOWNERS")
+
+    assert [rule.pattern for rule in ruleset.rules] == ["*"]
+    assert [problem.line for problem in ruleset.problems] == [2]
+    assert fragment in ruleset.problems[0].message
+
+
+def test_a_gitlab_section_header_keeps_its_own_diagnostic() -> None:
+    ruleset = parse_codeowners(
+        "[owners]\n^[Docs]\n[Docs][2]\n", path="CODEOWNERS"
+    )
+
+    assert ruleset.rules == ()
+    assert [problem.line for problem in ruleset.problems] == [1, 2, 3]
+    assert all("GitLab" in problem.message for problem in ruleset.problems)
+
+
+def test_an_oversized_codeowners_does_not_fall_through_to_lower_precedence(
+    tmp_path: Path,
+) -> None:
+    payload = _policy(ownership={"source": "codeowners", "required": True})
+    repository = _repository(tmp_path, payload)
+    (repository / "CODEOWNERS").write_text("* @root\n", encoding="utf-8")
+    (repository / ".github").mkdir()
+    (repository / ".github/CODEOWNERS").write_bytes(
+        b"#" * (CODEOWNERS_MAX_BYTES - 1) + b"\n"
+    )
+
+    discovery = discover_codeowners(repository)
+    assert discovery.path == ".github/CODEOWNERS"
+    assert discovery.ruleset is None
+    assert discovery.error is not None
+    assert str(CODEOWNERS_MAX_BYTES) in discovery.error
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    # GitHub loads no owners from an oversized file, so resolving them from the
+    # root CODEOWNERS would report ownership the repository does not have.
+    assert not result.passed
+    assert _invalid(result) == ["document_codeowners_unreadable"]
+    assert result.codeowners_path is None
+    assert {facts.owners for facts in result.document_facts} == {()}
+
+
+def test_a_codeowners_just_under_the_limit_is_read(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    rule = b"* @fallback\n"
+    padding = b"#" + b"a" * (CODEOWNERS_MAX_BYTES - len(rule) - 3) + b"\n"
+    (repository / "CODEOWNERS").write_bytes(padding + rule)
+    assert (repository / "CODEOWNERS").stat().st_size == CODEOWNERS_MAX_BYTES - 1
+
+    discovery = discover_codeowners(repository)
+
+    assert discovery.error is None
+    assert discovery.ruleset is not None
+    assert discovery.ruleset.owners_for("docs/README.md") == ("@fallback",)
+
+
+NESTED_FENCE_SAMPLE = """# Quoting a rendered page
+
+To show the whole header, the sample is fenced with four backticks so the inner
+three-backtick fence stays literal:
+
+````markdown
+```
+> Renderer: `researchctl-renderer:research-analysis-brief.v4`
+<!-- researchctl-generated:research-analysis-brief.v4;body=sha256:abc -->
+```
+````
+
+That is the entire generated header.
+"""
+
+
+def test_a_four_backtick_fence_keeps_a_nested_marker_as_code() -> None:
+    content = NESTED_FENCE_SAMPLE.encode()
+
+    # The inner three-backtick line must not close the four-backtick fence, so
+    # the marker never reaches the document as a block.
+    assert html_block_texts(NESTED_FENCE_SAMPLE) == ()
+    assert blockquote_texts(NESTED_FENCE_SAMPLE) == ()
+    assert claims_generated_markdown(content) is False
+
+
+def test_a_document_quoting_a_render_in_a_nested_fence_stays_ordinary(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    (repository / "docs/runbooks").mkdir(exist_ok=True)
+    note = repository / "docs/runbooks/quoting-renders.md"
+    note.write_text(NESTED_FENCE_SAMPLE, encoding="utf-8")
+
+    result = lint_simple_document_tree(repository, _simple(payload))
+
+    assert result.passed, _invalid(result)
+    facts = next(
+        item
+        for item in result.document_facts
+        if item.path == "docs/runbooks/quoting-renders.md"
+    )
+    assert facts.title == "Quoting a rendered page"
+    assert "document_render_orphaned" not in _codes(result)
+
+
+def test_a_real_render_is_claimed_through_both_of_its_markers(
+    tmp_path: Path,
+) -> None:
+    payload = _structured_policy()
+    repository = _repository(tmp_path, payload)
+    _source, render = _write_structured_pair(
+        repository,
+        section="profiling",
+        contract="analysis-brief",
+        title="Full SFT memory at 16k",
+        stem="full-sft-memory-at-16k",
+    )
+    text = render.read_text(encoding="utf-8")
+
+    assert claims_generated_markdown(text.encode()) is True
+    # The provenance comment is a real HTML block and the visible header is a
+    # real block quote, so losing either one still leaves a claim.
+    assert any(
+        block.strip().startswith("<!-- researchctl-generated")
+        for block in html_block_texts(text)
+    )
+    assert any("researchctl-renderer" in quote for quote in blockquote_texts(text))

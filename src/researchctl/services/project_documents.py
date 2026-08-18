@@ -73,7 +73,7 @@ class DocumentFinding:
         }
 
 
-def _schema_validation_findings(
+def schema_validation_findings(
     error: ValidationError,
     *,
     source_path: Path,
@@ -704,7 +704,7 @@ def _is_within(path: str, directory: str) -> bool:
     )
 
 
-def _collect_files(root: Path, findings: list[DocumentFinding]) -> list[Path]:
+def collect_document_files(root: Path, findings: list[DocumentFinding]) -> list[Path]:
     collected: list[Path] = []
 
     def walk(directory: Path) -> None:
@@ -874,7 +874,7 @@ def lint_document_tree(
             ),
         )
 
-    files = _collect_files(document_root, findings)
+    files = collect_document_files(document_root, findings)
     agent_guide_count = _lint_agent_guides(repository, policy, findings)
     root_files = set(policy.root_files)
     legacy = {item.path: item for item in policy.legacy_files}
@@ -973,7 +973,7 @@ def lint_document_tree(
                 )
             except ValidationError as error:
                 findings.extend(
-                    _schema_validation_findings(
+                    schema_validation_findings(
                         error,
                         source_path=file_path,
                         relative_path=relative,
@@ -1080,7 +1080,7 @@ def lint_document_tree(
                 document = load_project_document(file_path)
         except ValidationError as error:
             findings.extend(
-                _schema_validation_findings(
+                schema_validation_findings(
                     error,
                     source_path=file_path,
                     relative_path=relative,
@@ -1272,7 +1272,7 @@ def lint_document_tree(
                 )
             )
             continue
-        artifact_files = _collect_files(artifact_root, findings)
+        artifact_files = collect_document_files(artifact_root, findings)
         artifact_file_count += len(artifact_files)
         allowed_extensions = set(artifact_policy.allowed_extensions)
         for artifact_file in artifact_files:
@@ -1297,7 +1297,7 @@ def lint_document_tree(
             baseline_document_root
             or (baseline_policy.root if baseline_policy is not None else policy.root)
         )
-        _lint_frozen_documents(
+        lint_locked_baseline_documents(
             repository,
             baseline_repository,
             selected_baseline_root,
@@ -1376,7 +1376,7 @@ def build_document_site_manifest(
     git_repository = discover_repository(repository)
     document_root = repository / policy.root
     collection_findings: list[DocumentFinding] = []
-    files = _collect_files(document_root, collection_findings)
+    files = collect_document_files(document_root, collection_findings)
     if any(finding.kind == "invalid" for finding in collection_findings):
         raise RCPError(
             code="document_site_tree_changed",
@@ -1576,7 +1576,7 @@ def render_document_site_manifest(manifest: DocumentSiteManifest) -> bytes:
     ).encode("utf-8")
 
 
-def _lint_frozen_documents(
+def lint_locked_baseline_documents(
     repository: Path,
     baseline_repository: Path,
     baseline_document_root_path: str,
@@ -1584,6 +1584,14 @@ def _lint_frozen_documents(
     *,
     allow_missing_root: bool = False,
 ) -> None:
+    """Hold every document the baseline immobilized at its exact bytes.
+
+    The scan is deliberately version-blind. It reads only the baseline's own
+    document root and each Markdown file's raw frontmatter, looking for either
+    immutability marker, so a policy upgrade in the same change set can never
+    release a document the protected base had locked.
+    """
+
     if baseline_repository.is_symlink() or not baseline_repository.is_dir():
         raise RCPError(
             code="document_baseline_invalid",
@@ -1622,7 +1630,7 @@ def _lint_frozen_documents(
         return
 
     baseline_findings: list[DocumentFinding] = []
-    baseline_files = _collect_files(baseline_document_root, baseline_findings)
+    baseline_files = collect_document_files(baseline_document_root, baseline_findings)
     for finding in baseline_findings:
         findings.append(
             DocumentFinding(
@@ -1678,7 +1686,7 @@ def _lint_frozen_documents(
                 )
             )
             continue
-        if frontmatter.get("validity") != "frozen":
+        if frontmatter.get("validity") != "frozen" and frontmatter.get("locked") is not True:
             continue
         current_file = repository / relative
         try:
