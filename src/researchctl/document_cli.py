@@ -25,10 +25,12 @@ from researchctl.domain.models import (
     DocumentRelationKind,
     DocumentRoute,
     DocumentSchema,
+    DocumentSiteManifest,
     MarkdownFrontmatter,
     ProjectPolicy,
     ProjectStatusSummary,
     SimpleDocumentLayoutPolicy,
+    SimpleDocumentSiteManifest,
 )
 from researchctl.domain.types import RepositoryPath
 from researchctl.errors import RCPError
@@ -90,6 +92,10 @@ from researchctl.services.research_writing import (
     render_analysis_brief,
     writing_findings_as_validation_details,
 )
+from researchctl.services.simple_document_site import (
+    build_simple_document_site_manifest,
+    render_simple_document_site_manifest,
+)
 
 doc_app = typer.Typer(
     help="Draft policy, lint, render, and classify governed project documents.",
@@ -109,6 +115,8 @@ DiscoverableDocumentSchema = Literal[
     "design-document",
     "project-status-summary",
     "document-site-manifest",
+    "simple-document-layout-policy",
+    "simple-document-site-manifest",
 ]
 _REPOSITORY_PATH = TypeAdapter(RepositoryPath)
 
@@ -1765,13 +1773,22 @@ def doc_site_manifest_command(
 ) -> None:
     """Emit a validated, engine-neutral documentation-site manifest."""
 
+    manifest: DocumentSiteManifest | SimpleDocumentSiteManifest
     try:
-        repository, policy = _repository_and_policy(
-            project,
-            policy_file,
-            command="doc site-manifest",
-        )
-        manifest = build_document_site_manifest(repository, policy)
+        repository, effective = _repository_and_effective_policy(project, policy_file)
+        if effective.is_simple:
+            manifest = build_simple_document_site_manifest(
+                repository,
+                effective.require_simple(command="doc site-manifest"),
+            )
+        else:
+            manifest = build_document_site_manifest(
+                repository,
+                effective.require_legacy(command="doc site-manifest"),
+            )
+        # Publishing rule, not a manifest rule: it reads the same field on both
+        # kinds, so neither policy version can be published from a dirty tree
+        # while the other cannot.
         if require_clean and manifest.repository_state != "clean":
             raise RCPError(
                 code="document_site_repository_dirty",
@@ -1780,7 +1797,12 @@ def doc_site_manifest_command(
                     "Commit or discard the relevant changes, then regenerate the manifest."
                 ),
             )
-        _write_ephemeral_output(render_document_site_manifest(manifest), output_file)
+        rendered = (
+            render_document_site_manifest(manifest)
+            if isinstance(manifest, DocumentSiteManifest)
+            else render_simple_document_site_manifest(manifest)
+        )
+        _write_ephemeral_output(rendered, output_file)
     except Exception as exc:
         _abort(_error(exc), command="doc.site-manifest", json_output=False)
 

@@ -888,7 +888,6 @@ def test_scaffold_output_is_a_valid_minimal_document() -> None:
     "command",
     [
         ["doc", "index"],
-        ["doc", "site-manifest"],
         ["doc", "agent-guide"],
     ],
 )

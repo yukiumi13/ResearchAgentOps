@@ -21,7 +21,7 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 from researchctl.repository import discover_repository, last_commit_timestamp
-from researchctl.schema import SCHEMA_MODELS
+from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 from researchctl.serialization import canonical_digest, dump_yaml
 from researchctl.services import simple_document_site
 from researchctl.services.document_policy import build_effective_policy
@@ -548,3 +548,123 @@ def test_the_history_helper_separates_an_unborn_repository_from_a_broken_one(
         last_commit_timestamp(git_repository, "docs/README.md")
 
     assert error.value.code == "git_command_failed"
+
+
+# --------------------------------------------------------------------------
+# CLI wiring
+# --------------------------------------------------------------------------
+
+
+def test_the_cli_streams_and_replaces_a_version_two_manifest(
+    site_repository: Path,
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+
+    streamed = runner.invoke(app, ["doc", "site-manifest", "-C", str(site_repository)])
+
+    assert streamed.exit_code == 0, streamed.stdout + str(streamed.stderr)
+    payload = json.loads(streamed.stdout)
+    assert payload["manifest_kind"] == "simple_document_site_manifest"
+    assert payload["policy_version"] == 2
+    # The command publishes exactly what the service builds, with nothing added.
+    assert streamed.stdout.encode("utf-8") == render_simple_document_site_manifest(
+        _manifest(site_repository)
+    )
+
+    output = tmp_path / "site-manifest.json"
+    first = runner.invoke(
+        app,
+        ["doc", "site-manifest", "-C", str(site_repository), "--output-file", str(output)],
+    )
+    assert first.exit_code == 0, first.stdout + str(first.stderr)
+    written = output.read_bytes()
+    assert json.loads(written)["repository_state"] == "clean"
+
+    repeated = runner.invoke(
+        app,
+        ["doc", "site-manifest", "-C", str(site_repository), "--output-file", str(output)],
+    )
+    # An unchanged tree produces the same bytes, so replacement is a no-op.
+    assert repeated.exit_code == 0, repeated.stdout + str(repeated.stderr)
+    assert "Unchanged:" in repeated.stdout
+    assert output.read_bytes() == written
+
+    _write(site_repository, "docs/runbooks/draft-note.md", "# Draft note\n")
+    updated = runner.invoke(
+        app,
+        ["doc", "site-manifest", "-C", str(site_repository), "--output-file", str(output)],
+    )
+    assert updated.exit_code == 0, updated.stdout + str(updated.stderr)
+    assert "Updated:" in updated.stdout
+    assert json.loads(output.read_bytes())["repository_state"] == "dirty"
+
+
+def test_require_clean_refuses_a_dirty_version_two_repository(
+    site_repository: Path,
+) -> None:
+    runner = CliRunner()
+    command = ["doc", "site-manifest", "-C", str(site_repository), "--require-clean"]
+
+    accepted = runner.invoke(app, command)
+    assert accepted.exit_code == 0, accepted.stdout + str(accepted.stderr)
+    assert json.loads(accepted.stdout)["repository_state"] == "clean"
+
+    _write(site_repository, "docs/runbooks/draft-note.md", "# Draft note\n")
+    rejected = runner.invoke(app, command)
+
+    # The same code and remediation both policy versions have always used.
+    assert rejected.exit_code == 2
+    assert "document_site_repository_dirty" in rejected.stderr
+    assert "Commit or discard the relevant changes" in rejected.stderr
+
+
+def test_an_explicit_policy_file_drives_the_version_two_manifest(
+    site_repository: Path,
+    tmp_path: Path,
+) -> None:
+    # A section the in-repository policy does not declare, written outside the
+    # repository so the tree stays clean.
+    external = tmp_path / "external-docs.yaml"
+    external.write_text(
+        dump_yaml(_policy(sections=[*SECTIONS, {"path": "notes"}])),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc", "site-manifest",
+            "-C", str(site_repository),
+            "--policy-file", str(external),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + str(result.stderr)
+    payload = json.loads(result.stdout)
+    assert [section["path"] for section in payload["sections"]] == [
+        "design",
+        "runbooks",
+        "notes",
+    ]
+    assert payload["policy_digest"] != _manifest(site_repository).policy_digest
+
+
+@pytest.mark.parametrize(
+    ("contract", "title"),
+    [
+        ("simple-document-layout-policy", "SimpleDocumentLayoutPolicy"),
+        ("simple-document-site-manifest", "SimpleDocumentSiteManifest"),
+    ],
+)
+def test_doc_schema_discovers_both_version_two_contracts(
+    contract: str,
+    title: str,
+) -> None:
+    result = CliRunner().invoke(app, ["doc", "schema", "--contract", contract])
+
+    assert result.exit_code == 0, result.stdout + str(result.stderr)
+    assert result.stdout.encode("utf-8") == generate_schema_files()[
+        f"{contract}.schema.json"
+    ]
+    assert json.loads(result.stdout)["title"] == title
