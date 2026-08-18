@@ -221,36 +221,69 @@ recorded measurements from an exact release commit.
 
 ### WF-15 - Portable Project Document Contracts
 
+One CLI serves two policy versions. The explicit `version` key in the policy
+file selects the branch; anything other than `1` or `2` fails closed.
+
+Recommended directory-first branch (`version: 2`):
+
 ```text
-complete policy template -> standalone policy lint -> manager-reviewed project policy
--> checked classification depth and classification/type/contract/directory routes
+incomplete section-less template -> repository inventory -> filled sections
+-> standalone policy lint -> manager-reviewed project policy
+-> section directories are the types, deeper folders organize and version
+-> CODEOWNERS resolves owners, Git resolves edit time, first heading is the title
 -> deterministic project-local Agent guide -> human or Agent discovers policy
--> authors canonical source -> schema/path/relation/tree lint
+-> optional six-field frontmatter or none -> depends_on/superseded_by lineage
+-> opt-in structured YAML per section -> tree lint over documents, assets, guide
+-> version-blind locked/frozen baseline comparison
+-> local/editor/CI findings -> repository review
+-> closed-world site manifest -> optional MkDocs navigation/build
+-> protected-main static publication
+```
+
+Compatibility route branch (`version: 1`, ADR 0014):
+
+```text
+complete route template -> placeholder rationale rejection -> standalone policy lint
+-> manager-reviewed project policy
+-> checked classification depth and classification/type/contract/directory routes
+-> strict frontmatter -> schema/path/relation/tree lint
 -> optional thin deterministic Markdown projection
 -> project-frontmatter envelope preservation and generated-body comparison
 -> deterministic index comparison -> compatibility-read trusted baseline root
 -> raw baseline frontmatter discovery -> frozen byte comparison
--> local/editor/CI findings -> repository review
 -> validated engine-neutral site manifest -> optional MkDocs navigation/build
--> protected-main static publication
 ```
 
 Without `researchctl init`, `.researchctl-docs.yaml` supplies the complete static
-policy and CODEOWNERS protects policy changes. Managed repositories use the same
-policy shape under ProjectPolicy and manager-only `doc.configure-layout`.
-Machine artifact roots use explicit extension allowlists and reject Markdown,
-so prose can move to `docs/` without changing script-consumed `data/` paths.
-Configured Claude/AGENTS guide blocks expose the no-fallback workflow and current
-routes; tree lint rejects missing or stale instructions. Semantic namespace depth
-and route filesystem depth are separate bounded policy fields. Local policy-
-template/lint, schema/tree/index/guide/frozen checks, structured-source discovery,
-project-frontmatter preservation, YAML diagnostics, and source-workflow wiring
-are verified. The engine-neutral site manifest and optional MkDocs projection
-are locally verified: RCP remains taxonomy/validation authority while MkDocs
-owns Markdown-to-HTML, navigation presentation, search, themes, and strict site
-builds. No static host has been deployed. An editor/language-server adapter,
-protected publication pilot, and protected-repository acceptance pilot remain
-open.
+policy for either version and CODEOWNERS protects policy changes. Both versions
+share one command surface, one finding-code vocabulary, one JSON envelope, and
+one Agent-guide marker identity, so raising a policy replaces the same managed
+block rather than leaving two behind. The vocabulary is shared rather than the
+code list: findings keep the same kind/code/path/message shape and `document_*`
+naming, and many codes are common, but each version raises codes only its own
+model can produce. Tree lint still rejects a missing or stale guide.
+
+Version 2 is verified locally: version discrimination and fail-closed rejection,
+section and depth rules, canonical `.yaml` enforcement, CODEOWNERS ownership
+resolution, Git-derived edit time including unborn and unreadable repositories,
+the optional frontmatter model with superseded-key diagnostics, lineage
+resolution, locked/frozen baseline immutability across an upgrade, structured
+pair rendering, contract and schema discovery, the deliberately incomplete
+template, the managed guide including in-place replacement of a version 1 block,
+the closed-world manifest, and a real strict MkDocs build over a version 2
+fixture. Version 1 keeps its own unchanged suite: policy template and rationale
+rejection, schema/tree/index/guide/frozen checks, machine artifact roots that
+reject Markdown, project-frontmatter preservation, and YAML diagnostics.
+
+Version 2 is standalone-policy-first. A managed repository's ProjectPolicy
+`document_layout` and manager-only `doc.configure-layout` are still read as
+version 1, and `doc index` is not implemented for version 2 and fails closed. A
+managed version 2 migration is a separate manager-owned change and has not
+landed. No static host has been deployed. ResearchAgentOps itself still runs on
+its version 1 policy, so no long-lived repository has yet been converted from
+routes to sections. That conversion pilot, an editor/language-server adapter, a
+protected publication pilot, and a protected-repository acceptance pilot remain
+open. ADR 0017 records the directory-first decision and these limits.
 
 ResearchAgentOps itself supplies a presentation-only `mkdocs.yml` with no
 hand-maintained navigation. Its existing `researchctl/source-tests` job creates

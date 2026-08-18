@@ -2,7 +2,7 @@
 type: reference
 title: Post-export requirement ledger
 owner: person:yukiumi13
-last_updated: 2026-08-13
+last_updated: 2026-08-18
 validity: valid
 tags: [requirements, traceability, governance]
 references:
@@ -372,3 +372,36 @@ later requirements so traceability does not silently stop at that boundary.
   proposal cannot add or remap a route. A policy change required by an
   indivisible legacy migration is isolated to the exact compatibility entry and
   called out for explicit manager/CODEOWNER review.
+
+## REQ-20260818-001 - Directory-first documents are the recommended model
+
+- Source: post-dogfood document authoring-cost review and g3doc-style layout
+  evaluation, 2026-08-18.
+- Maps to: `US-014`, `US-015`, `US-022`, `US-031`.
+- Acceptance: a standalone policy declares its contract with an explicit
+  `version`, and any value other than the supported ones fails closed. Under
+  version 2 a direct child directory of the document root is the document type,
+  deeper folders only organize or version documents within that type, and tags
+  stay descriptive. CODEOWNERS is the sole owner and review authority, Git is the
+  edit-time authority, and the first level-one heading is the title, so no
+  document restates them. Frontmatter is optional with no required fields and
+  accepts only `status`, `tags`, `reviewed_on`, `locked`, `depends_on`, and
+  `superseded_by`; superseded version 1 keys are diagnosed with their
+  replacement. Lineage is limited to `depends_on` and `superseded_by` as
+  repository-root-relative paths. A structured YAML contract is opt-in per
+  section and never displaces ordinary Markdown in that section. RCP validates
+  ordinary Markdown and never reformats it; the only Markdown it writes is
+  renderer output beside a canonical source and the managed Agent-guide block.
+  `doc policy-lint`, `doc tree`, and a strict site build from an ephemeral
+  manifest are the CI checks, and the MkDocs adapter consumes only that manifest
+  without owning taxonomy or acquiring a hand-maintained `nav`. The version 2
+  template is valid YAML that intentionally fails `policy-lint` until the adopter
+  inventories the repository and fills `sections`. Version 1 route policies,
+  their `a/b:c` classifications, and `--policy-version 1` template bytes remain
+  supported and unchanged. An Agent may author documents on a proposal branch
+  only; repository CI, CODEOWNER review, and a protected merge decide acceptance,
+  and policy, section, structured-contract, CODEOWNERS, or managed-guide changes
+  stay manager-owned. Version 2 is standalone-policy-first: managed ProjectPolicy
+  `document_layout` and `doc.configure-layout` remain version 1 pending a
+  separate migration, `doc index` is unimplemented for version 2, and no static
+  host or converted long-lived repository may be claimed.

@@ -240,60 +240,128 @@ the update canonical research truth.
 
 ## Portable Project Documents
 
-Document contracts can be adopted without `researchctl init`. Put a strict
-`DocumentLayoutPolicy` in `.researchctl-docs.yaml`, protect that file with
-CODEOWNERS, and run the same static checks locally or in any CI:
+Document contracts can be adopted without `researchctl init`. Put a standalone
+policy in `.researchctl-docs.yaml`, protect that file with CODEOWNERS, and run
+the same static checks locally or in any CI.
+
+There are two policy versions. Version 2 is directory-first and is the
+recommended model for a repository adopting document governance now; it is what
+the commands below use. Version 1 is the classification-route model of ADR 0014,
+is still fully supported, and is described under **Version 1 Route Policies** at
+the end of this section. ADR 0017 records why the default moved.
 
 ```bash
 researchctl doc policy-template --agent-format claude \
   --output-file .researchctl-docs.yaml
-# Inspect the repository, customize routes, and replace every TEMPLATE: rationale.
+# Inventory the repository, then list the section directories it actually has.
 researchctl doc policy-lint .researchctl-docs.yaml
-mkdir -p docs
+```
+
+`policy-template` defaults to `--policy-version 2`. What it writes is valid YAML
+and every field except one is ready to adopt as rendered, but `sections` ships
+empty and `policy-lint` deliberately refuses the candidate until you fill it in.
+Directory names are facts about one repository, and a template that linted while
+empty would invite copying another project's layout. The template is a starting
+proposal, never an accepted taxonomy: the completed policy still goes through
+manager/CODEOWNER review. `policy-lint` needs neither a Git repository nor
+`researchctl init`.
+
+A finished version 2 policy is short, and the directory names in it are the
+whole taxonomy:
+
+```yaml
+version: 2
+root: docs
+sections:
+  - path: runbooks
+  - path: reference
+  - path: experiments
+    structured:
+      contract: analysis-brief
+root_pages: [README.md]
+max_depth: 3
+ownership:
+  source: codeowners
+  required: true
+agent_guides:
+  - path: CLAUDE.md
+    format: claude
+```
+
+```bash
+mkdir -p docs/runbooks docs/reference docs/experiments
 researchctl doc agent-guide --project . --output-file CLAUDE.md
-researchctl doc index --project . --output-file docs/INDEX.md
 researchctl doc tree --project .
 researchctl doc tree --project . --json
 ```
 
-`policy-template` is an explicit, schema-valid starting proposal, not an accepted
-universal taxonomy. Every route contains a structured `rationale` placeholder.
-`policy-lint` rejects those template values until the author cites the existing
-project artifacts that justify each retained or replacement route. The default
-generated index is `docs/INDEX.md`, leaving a human-authored `docs/README.md`
-alone. Put the customized policy through manager/CODEOWNER review. `policy-lint`
-needs neither a Git repository nor `researchctl init`.
+A section directory is the document type. Folders below a section organize or
+version documents within that type and never create a new one; `max_depth`
+bounds how deep they go. A document's title is its first level-one heading, its
+owners come from CODEOWNERS, and the date it was last edited comes from Git. Tags
+group documents for readers and grant no routing or approval authority.
 
-After adoption, Agents can discover and use every writing contract without
-reading the installed Python package:
+Agents can discover exactly what this policy accepts without reading the
+installed Python package:
 
 ```bash
-researchctl doc contracts
-researchctl doc schema --contract markdown-frontmatter
-researchctl doc scaffold --type runbook --title "Operate the evaluation worker" \
-  --output-file docs/runbooks/evaluation-worker.md
-researchctl doc check docs/runbooks/evaluation-worker.md --json
+researchctl doc contracts --project .
+researchctl doc schema --contract simple-markdown-frontmatter
+```
 
-# analysis-brief, design-document, and project-status-summary routes use YAML.
-researchctl doc check docs/brief/memory.yaml --json
-researchctl doc render docs/brief/memory.yaml --output-file docs/brief/memory.md
+`doc contracts` lists the built-in authoring contracts; adding `--project .` also
+reports, section by section, which of them your policy accepts. It fails with
+`document_policy_missing` rather than describing a default layout when the
+project has no policy.
+
+An ordinary document is Markdown under the `simple-markdown-frontmatter`
+contract. Frontmatter is optional and a document with none is valid; when
+present it accepts only `status`, `tags`, `reviewed_on`, `locked`, `depends_on`,
+and `superseded_by`. The version 1 keys it no longer accepts — `type`, `title`,
+`owner`, `last_updated`, `validity`, and the `references`, `sources`,
+`provenance`, and `relations` blocks — are each diagnosed with the replacement
+that supersedes them, so an author migrating a file is told to delete `owner`
+rather than only that it is forbidden.
+
+Classification is a separate matter: it was never a frontmatter key. Under a
+version 1 policy it is route metadata that lives in the policy file, and a
+version 2 tree has no equivalent anywhere, because the section directory is the
+taxonomy. A `classification` key written into frontmatter is diagnosed on that
+basis.
+
+```bash
+researchctl doc scaffold --project . --type runbooks \
+  --title "Operate the evaluation worker" \
+  --output-file docs/runbooks/evaluation-worker.md
+researchctl doc check docs/runbooks/evaluation-worker.md --project . --json
+
+# A section that declared a structured contract keeps canonical YAML.
+researchctl doc scaffold --project . --type experiments --contract analysis-brief \
+  --title "Memory ceiling" --output-file docs/experiments/memory.yaml
+researchctl doc check docs/experiments/memory.yaml --project . --json
+researchctl doc render docs/experiments/memory.yaml --project . \
+  --output-file docs/experiments/memory.md
 researchctl doc tree --project . --json
 ```
 
-`doc contracts` reports each contract's canonical source format, required
-top-level fields, schema command, and render command. `doc scaffold` selects a
-project route by `document_type`; `doc check` dispatches by the path's route, so
-an Agent does not need to memorize the legacy `brief lint` versus `doc tree`
-command split. For a standalone AnalysisBrief without document policy, use
-`brief lint` and `brief render`; those commands validate the model but do not
-validate repository routing or tracked same-stem source/render placement.
+Structured YAML is opt-in per section. Inside a section that declared one, the
+canonical `.yaml` source is a direct child, its same-stem Markdown is renderer
+output that is never hand-edited, and ordinary Markdown stays legal beside them.
+A section that declares nothing holds only ordinary Markdown, which still
+satisfies `simple-markdown-frontmatter`; what it needs is no structured YAML
+contract, no canonical source, and no renderer. For a standalone AnalysisBrief
+with no document policy, `brief lint` and `brief render` validate the model but
+not repository placement.
 
-RCP's renderer is deliberately a thin optional projection from a validated
-typed model to stable Markdown source. It owns deterministic section order,
-tables, provenance markers, and source/body consistency. It is not a general
-Markdown parser, HTML renderer, theme system, or documentation-site framework;
-projects may use mature Markdown tooling for those downstream jobs while RCP
-remains the schema/lint authority.
+RCP validates ordinary Markdown and never rewrites it. There is no formatter for
+prose: the only Markdown bytes the tool owns are renderer output beside a
+canonical YAML source and the managed block inside a configured Agent guide. The
+renderer itself is a thin optional projection from a validated typed model to
+stable Markdown source, owning deterministic section order, tables, provenance
+markers, and source/body consistency. It is not a general Markdown parser, HTML
+renderer, theme system, or documentation-site framework; projects may use mature
+Markdown tooling for those downstream jobs while RCP remains the schema/lint
+authority.
 
 For a browsable document library, install the optional MkDocs adapter and build
 from an ephemeral validated manifest:
@@ -302,7 +370,7 @@ from an ephemeral validated manifest:
 pip install 'research-control-plane[docs-site]'
 researchctl doc site-manifest --project . --require-clean \
   --output-file /tmp/researchctl-site-manifest.json
-researchctl doc schema --contract document-site-manifest
+researchctl doc schema --contract simple-document-site-manifest
 RESEARCHCTL_SITE_MANIFEST=/tmp/researchctl-site-manifest.json \
   mkdocs build --strict --site-dir build/site
 ```
@@ -318,21 +386,44 @@ plugins:
       require_clean: true
 ```
 
-`doc site-manifest` first requires the complete governed tree to pass. Its
-strict JSON records policy order, page title/type/classification, validity or
-lifecycle, relations, canonical-source path, repository identity/state, and
-exact content/source digests. Structured YAML and legacy non-Markdown are
-explicit exclusions. The manifest is a replaceable build artifact, not tracked
-authority; write it outside the repository or to an ignored build directory.
+`doc site-manifest` first requires the complete governed tree to pass, then emits
+the manifest kind its policy version produces: `simple-document-site-manifest`
+for version 2 and `document-site-manifest` for version 1. Both are strict,
+deterministic, engine-neutral JSON. What they genuinely share is the document
+root, repository identity and clean/dirty state, a policy digest, an ordered page
+list with each page's kind, title, canonical-source path where one exists, and
+exact content and source digests, plus deliberate exclusions and a
+self-authenticating manifest digest.
 
-The plugin validates the manifest and every page/source byte, rejects dirty
-publication when configured, removes canonical YAML from the site, rejects
-unlisted Markdown, generates navigation from policy route order, and injects
-display metadata plus an immutable source link when the remote is recognized.
-MkDocs owns Markdown-to-HTML, search, live reload, and themes. GitHub Pages or
-Read the Docs may host the strict build from protected `main`, but neither owns
-taxonomy or acceptance. No `mkdocs.yml nav` becomes a second directory truth,
-and MkDocs remains absent from the core install.
+Beyond that the two differ. A version 2 page carries its section, owners, tags,
+review date, Git edit time, and either an ordinary `status` or a structured
+`lifecycle`; a version 1 page carries route order, document type,
+classification, relations, and either a `validity` or a structured `lifecycle`,
+and has no owners field at all, because ownership under that model is a
+frontmatter string rather than a resolved fact. Only the version 2 manifest
+enumerates static assets, and that enumeration is what makes its published set a
+closed world: with every page and asset listed, the adapter can reject anything
+else in the document root, while a version 1 build retains unlisted static files
+it cannot enumerate.
+
+The manifest is a replaceable build artifact, not tracked authority; write it
+outside the repository or to an ignored build directory.
+
+The plugin reads only the manifest and verifies every byte it names, refusing
+dirty publication when configured. Under a version 2 manifest it verifies pages,
+canonical sources, and assets, drops the exclusions — canonical YAML and any
+CODEOWNERS file inside the document root — rejects anything else there that the
+manifest did not list, builds nested navigation from the section order, strips
+optional frontmatter before rendering, and injects display-only owner, review,
+edit, tag, status, and lock metadata. Under a version 1 manifest it keeps its
+original behaviour: route-order navigation, route metadata, exclusion of
+declared paths, rejection of unlisted Markdown, and retention of unlisted static
+files, which that manifest cannot enumerate. Both add an immutable source link
+when the remote is recognized. MkDocs owns Markdown-to-HTML, search, live reload,
+and themes. GitHub Pages or Read the Docs may host the strict build from
+protected `main`, but neither owns taxonomy or acceptance. No `mkdocs.yml nav`
+becomes a second directory truth, and MkDocs remains absent from the core
+install.
 
 This repository keeps that presentation-only configuration in `mkdocs.yml` and
 reuses the existing `researchctl/source-tests` runner for the strict build. The
@@ -340,25 +431,8 @@ canary does not create another Actions job and does not deploy Pages. The
 CODEOWNERS rule covers `mkdocs.yml` because a future accepted publication must
 not let an unreviewed presentation change hide validated pages.
 
-An existing project may preserve its own frontmatter around a generated body by
-configuring a structured route:
-
-```yaml
-generated_markdown_frontmatter:
-  required_fields: [type, name, last_update, status, sources, summary]
-```
-
-Create the target `.md` with that project-owned frontmatter before the first
-`doc render`. RCP checks those keys and preserves the envelope, but the project's
-own linter owns their value semantics. RCP owns only the generated body and its
-digest. This option does not apply to manual `markdown-frontmatter` routes.
-
-The policy-adoption PR should attach the exact `doc policy-lint` result and the
-`doc tree --json` envelope. Review automation should consume that JSON rather
-than a manually paraphrased pass/fail statement.
-
-Standalone Agents also need a repository-local discovery surface. Declare one
-or more generated guide targets in the same policy:
+Standalone Agents need a repository-local discovery surface, so the policy
+declares one or more managed guide targets:
 
 ```yaml
 agent_guides:
@@ -368,77 +442,114 @@ agent_guides:
   #   format: agents
 ```
 
-The `agent-guide` step inserts or refreshes the deterministic managed block
-without overwriting other project instructions:
+`doc agent-guide` inserts or refreshes one deterministic managed block and leaves
+every other instruction in the file untouched. The block states that the section
+directory is the type, that CODEOWNERS and Git own ownership and edit time, which
+optional frontmatter fields exist, which sections accept a structured contract,
+and which commands to run; it carries a visible renderer marker. `doc tree`
+fails when a configured guide is missing, unreadable, or stale, so CI checks the
+instructions and the documents together. Writes are limited to targets the
+protected policy declares, and both policy versions share one marker identity, so
+upgrading a policy replaces the same block instead of leaving two behind.
 
-The guide tells the Agent to read the effective policy, select an accepted
-route, use canonical YAML/render pairs where required, fail instead of guessing
-when the tool or policy is absent, and run `doc tree`. It includes the current
-route table and a visible renderer marker. `doc tree` fails when a configured
-guide is missing, malformed, or stale, so CI checks the instructions and the
-documents together. Output writes are limited to targets explicitly declared in
-the protected policy. The `agents` format provides the same contract for an
-`AGENTS.md` target.
-
-`researchctl doctor` recognizes a standalone policy when neither `.research`
-nor `.researchctl.toml` exists. In that valid mode it runs policy/tree checks and
+`researchctl doctor` recognizes a standalone policy when neither `.research` nor
+`.researchctl.toml` exists. In that valid mode it runs policy/tree checks and
 marks managed Project, Session, record, and generated-schema checks as not
 applicable instead of emitting missing-schema errors.
 
-The policy is required in standalone mode. If neither it nor a managed Project
-policy exists, commands fail with `document_policy_missing`; `researchctl` does
-not silently choose a repository hierarchy. A one-off caller may instead pass
-an explicit `--policy-file`.
+A policy is required. If neither a standalone nor a managed Project policy
+exists, the document commands fail with `document_policy_missing`; they never
+silently choose a hierarchy. A one-off caller may pass `--policy-file` instead.
 
-The command does not open `.research`, SQLite, a Session, or manager state. It
-checks canonical `a/b:c` classification routes, frontmatter schemas, type/path
-agreement, required relations, directory depth, links, structured YAML/Markdown
-pairs, renderer bytes, optional generated index freshness, and finite legacy
-exceptions. An optional baseline checkout also enforces byte immutability for
-documents already marked `validity: frozen`:
+These standalone document commands open no `.research`, SQLite, Session, or
+manager state. Version 2 tree lint checks sections and depth, CODEOWNERS
+resolution and required ownership, first-heading titles, optional frontmatter
+and its superseded keys, `depends_on` and `superseded_by` targets, links,
+structured YAML/Markdown pairs and renderer bytes, static assets, and managed
+guide freshness. An optional baseline checkout additionally enforces byte
+immutability:
 
 ```bash
 researchctl doc tree --project . --baseline-project /path/to/base-checkout
 ```
 
-The baseline checkout is inspected through a migration-compatible reader. RCP
-validates only its document-root path, then scans raw Markdown frontmatter below
-that root for `validity: frozen`; it does not require an old policy to satisfy
-the newest route schema. A policy-schema upgrade can therefore fix its own base
-without disabling byte protection. Unsafe policy paths, malformed baseline YAML
-or frontmatter, and changed or deleted frozen files still fail closed.
+The baseline reader is deliberately version-blind. It validates only the
+baseline's document-root path and then scans raw Markdown frontmatter below it
+for either immutability marker, `locked: true` or the version 1
+`validity: frozen`, so a policy upgrade in the same change set cannot release a
+document the protected base had immobilized. Unsafe policy paths, malformed
+baseline YAML or frontmatter, and changed or deleted immobilized files fail
+closed.
 
-Manual provenance `value` fields are exact display strings and must be quoted
-when they look numeric (`value: "91.20"`). Each must appear verbatim in the body.
-Both `sources[].location` and `relations.*` paths are repository-root relative.
-Human CLI errors include invalid field paths and available YAML line/column
-locations by default; `--json` exposes the same details for automation.
+Paths written inside a document, including every `depends_on` and
+`superseded_by` target, are repository-root relative. Human CLI errors include
+invalid field paths and available YAML line/column locations by default; `--json`
+exposes the same details for automation.
 
-The lexical label grammar is mandatory. Project policy separately bounds the
-number of namespace segments before `:` through `classification_depth`, whose
-defaults are `minimum: 2` and `maximum: 4`. Filesystem nesting below a mapped
-route uses the independent `max_depth` field (`1..8`, default `4`). A project
-may explicitly tighten or widen these bounded values; every route must comply.
+The policy-adoption PR should attach the exact `doc policy-lint` result and the
+`doc tree --json` envelope. Review automation should consume that JSON rather
+than a manually paraphrased pass/fail statement. An Agent may author documents
+and push them to a proposal branch, but repository CI, CODEOWNER review, and a
+protected merge decide acceptance; changing the policy, the sections, a
+structured contract, CODEOWNERS, or a managed guide is a governance change that
+cannot ride inside a content proposal.
 
-Projects can keep stable machine inputs under paths such as `data/` by declaring
-`machine_artifact_roots` with explicit extension allowlists. Those roots can
-never allow Markdown, so prose moves to `docs/` without forcing scripts to change
-their data paths. `researchctl doc index` deterministically renders the configured
-type/classification/contract/directory table.
+### Version 1 Route Policies
 
-After initialization, the identical policy lives under
-`.research/policies/default.yaml.document_layout`. Changing a label, directory,
-contract, index, artifact root, or route mapping then uses manager-only
-`researchctl doc configure-layout`; protected-base CI verifies that no other
-Project policy field changed. Ordinary tags never affect routing or authority.
+A repository already on the classification-route model keeps working unchanged,
+and a new one may still choose it:
 
-Generated schemas include `document-layout-policy`, `markdown-frontmatter`,
-`design-document`, `project-status-summary`, and `analysis-brief`. Editor and
-Agent integrations should consume `doc schema`, `doc check --json`, or
-`doc tree --json` rather than implementing a second validator. A reusable Skill may teach the generic command
-workflow, and an MCP adapter may expose it remotely, but project taxonomy remains
-in the repository policy and enforcement remains in the CLI/CI core. The exact
-decision is recorded in ADR 0014.
+```bash
+researchctl doc policy-template --policy-version 1 --agent-format claude \
+  --output-file .researchctl-docs.yaml
+```
+
+That renders the original candidate byte for byte. Every route in it carries a
+structured `rationale` placeholder, and `policy-lint` rejects those template
+values until the author cites the existing project artifacts that justify each
+retained or replacement route.
+
+Under a version 1 policy a route is the exact five-part mapping of
+classification, document type, contract, directory, and rationale. Ordinary
+Markdown uses strict frontmatter with `type`, `title`, `owner`, `last_updated`,
+and `validity`; classifications use canonical `a/b:c` labels; `classification_depth`
+bounds the namespace segments before `:` (`minimum: 2`, `maximum: 4` by default)
+while the independent `max_depth` bounds filesystem nesting below a route
+(`1..8`, default `4`). None of that applies to a version 2 tree.
+
+Version 1 also keeps the features built around routes: `doc index` renders the
+configured type/classification/contract/directory table, `machine_artifact_roots`
+hold stable machine inputs such as `data/*.json` under explicit extension
+allowlists that can never permit Markdown, `validity: frozen` marks immutability,
+and a structured route may declare `generated_markdown_frontmatter.required_fields`
+so RCP preserves a project-owned envelope byte for byte around a generated body.
+Manual provenance `value` fields there are exact display strings, must be quoted
+when they look numeric (`value: "91.20"`), and must appear verbatim in the body.
+
+Managed repositories are version 1 today. After `researchctl init` the policy
+lives under `.research/policies/default.yaml.document_layout`, changing a label,
+directory, contract, index, artifact root, or route mapping uses manager-only
+`researchctl doc configure-layout`, and protected-base CI verifies that no other
+Project policy field changed. Extending managed mode to version 2 is a separate
+manager-owned migration and has not landed.
+
+The two policy sources cannot coexist: a managed repository that also defines
+`.researchctl-docs.yaml` fails with `document_policy_shadowed`. So version 2 is
+adoptable today only by a standalone or uninitialized repository, and a
+repository already managed stays on version 1 until that migration lands.
+
+Editor and Agent integrations should consume `doc schema`, `doc check --json`, or
+`doc tree --json` rather than implementing a second validator. `doc contracts`
+lists the five authoring contracts: `markdown-frontmatter`,
+`simple-markdown-frontmatter`, `analysis-brief`, `design-document`, and
+`project-status-summary`. `doc schema --contract` prints those five and, in
+addition, `simple-document-layout-policy`, `document-site-manifest`, and
+`simple-document-site-manifest`; the legacy `document-layout-policy` schema is
+generated but not offered through CLI discovery. A reusable Skill may teach the
+generic command workflow and an MCP adapter may expose it remotely, but taxonomy
+remains in the repository policy and enforcement remains in the CLI/CI core. The
+portable contract is recorded in ADR 0014 and the directory-first model in
+ADR 0017.
 
 ## Session Addressing
 
