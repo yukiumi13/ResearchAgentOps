@@ -16,11 +16,22 @@ from researchctl.domain.models import (
     DocumentSiteExcludedPath,
     DocumentSiteManifest,
     DocumentSitePage,
+    SimpleDocumentSiteAsset,
+    SimpleDocumentSiteExcludedPath,
+    SimpleDocumentSiteManifest,
+    SimpleDocumentSitePage,
+    SimpleDocumentSiteSection,
 )
 from researchctl.integrations.mkdocs import ResearchctlPlugin
 from researchctl.serialization import canonical_digest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _digest(path: Path) -> str:
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Path]:
@@ -211,6 +222,334 @@ def test_mkdocs_core_builds_the_manifest_projection_strictly(tmp_path: Path) -> 
     assert "Overview" in overview
     assert "researchctl-site-metadata:document-site-manifest.v1" in result
     assert "docs/brief/result.yaml" in result
+
+
+# --------------------------------------------------------------------------
+# Directory-first manifests
+# --------------------------------------------------------------------------
+
+
+def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Path]:
+    """A hand-sealed version 2 manifest covering every publishable role."""
+
+    project = tmp_path / "project"
+    docs = project / "docs"
+    (docs / "design").mkdir(parents=True)
+    (docs / "runbooks/cluster/deep").mkdir(parents=True)
+    (project / "mkdocs.yml").write_text("site_name: Test\n", encoding="utf-8")
+    (docs / "CODEOWNERS").write_text("* @docs-team\n", encoding="utf-8")
+    (docs / "README.md").write_text("# Overview\n", encoding="utf-8")
+    (docs / "design/splice.yaml").write_text("title: Splice\n", encoding="utf-8")
+    (docs / "design/splice.md").write_text("# Splice the encoder\n", encoding="utf-8")
+    (docs / "runbooks/evaluation.md").write_text("# Evaluation\n", encoding="utf-8")
+    (docs / "runbooks/retired.md").write_text("# Retired plan\n", encoding="utf-8")
+    (docs / "runbooks/cluster/gpu-nodes.md").write_text("# GPU nodes\n", encoding="utf-8")
+    (docs / "runbooks/cluster/old-plan.md").write_text("# Old plan\n", encoding="utf-8")
+    (docs / "runbooks/cluster/deep/tuning.md").write_text("# Tuning\n", encoding="utf-8")
+    (docs / "runbooks/cluster/plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    def page(relative: str, title: str, **overrides: object) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "path": f"docs/{relative}",
+            "kind": "ordinary",
+            "title": title,
+            "status": "active",
+            "git_history_present": False,
+            "content_digest": _digest(docs / relative),
+        }
+        if "/" in relative:
+            section, _, nested = relative.partition("/")
+            payload["section"] = section
+            payload["section_relative_path"] = nested
+        else:
+            payload["kind"] = "root"
+        payload.update(overrides)
+        return payload
+
+    # Manifest order is the builder's: active before retired, root before
+    # sections, then policy section order, then path.
+    pages = [
+        page("README.md", "Overview"),
+        page(
+            "design/splice.md",
+            "Splice the encoder",
+            kind="structured",
+            status=None,
+            source_path="docs/design/splice.yaml",
+            source_digest=_digest(docs / "design/splice.yaml"),
+            contract="design-document",
+            classification="design/architecture:document",
+            lifecycle="draft",
+        ),
+        page("runbooks/cluster/deep/tuning.md", "Tuning"),
+        page("runbooks/cluster/gpu-nodes.md", "GPU nodes"),
+        page("runbooks/evaluation.md", "Evaluation"),
+        page(
+            "runbooks/cluster/old-plan.md",
+            "Old plan",
+            status="deprecated",
+            in_history=True,
+        ),
+        page("runbooks/retired.md", "Retired plan", status="deprecated", in_history=True),
+    ]
+    payload: dict[str, object] = {
+        "schema_version": "0.1",
+        "manifest_kind": "simple_document_site_manifest",
+        "policy_version": 2,
+        "document_root": "docs",
+        "repository_head": "1" * 40,
+        "repository_state": state,
+        "repository_remote": "https://github.com/acme/site.git",
+        "policy_digest": "sha256:" + "2" * 64,
+        # "profiling" holds nothing, so it must not become a heading.
+        "sections": [
+            SimpleDocumentSiteSection(path=name).model_dump(mode="json")
+            for name in ("design", "profiling", "runbooks")
+        ],
+        "pages": [
+            SimpleDocumentSitePage.model_validate(item).model_dump(mode="json")
+            for item in pages
+        ],
+        "assets": [
+            SimpleDocumentSiteAsset(
+                path="docs/runbooks/cluster/plot.png",
+                section="runbooks",
+                section_relative_path="cluster/plot.png",
+                content_digest=_digest(docs / "runbooks/cluster/plot.png"),
+            ).model_dump(mode="json")
+        ],
+        "excluded_paths": [
+            SimpleDocumentSiteExcludedPath(
+                path="docs/CODEOWNERS",
+                reason="codeowners",
+            ).model_dump(mode="json"),
+            SimpleDocumentSiteExcludedPath(
+                path="docs/design/splice.yaml",
+                reason="structured_source",
+                page_path="docs/design/splice.md",
+            ).model_dump(mode="json"),
+        ],
+    }
+    payload["manifest_digest"] = canonical_digest(payload)
+    manifest = SimpleDocumentSiteManifest.model_validate(payload)
+    manifest_path = project / "site-manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return project, manifest_path
+
+
+DISCOVERED_URIS = [
+    "README.md",
+    "CODEOWNERS",
+    "design/splice.yaml",
+    "design/splice.md",
+    "runbooks/evaluation.md",
+    "runbooks/retired.md",
+    "runbooks/cluster/gpu-nodes.md",
+    "runbooks/cluster/old-plan.md",
+    "runbooks/cluster/deep/tuning.md",
+    "runbooks/cluster/plot.png",
+]
+
+
+def test_version_two_navigation_nests_directories_and_retires_pages(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    _plugin_instance, config = _plugin(project, manifest)
+
+    assert config["nav"] == [
+        {"Overview": [{"Overview": "README.md"}]},
+        {"Design": [{"Splice the encoder": "design/splice.md"}]},
+        {
+            "Runbooks": [
+                {"Evaluation": "runbooks/evaluation.md"},
+                {
+                    "Cluster": [
+                        {"GPU nodes": "runbooks/cluster/gpu-nodes.md"},
+                        {"Deep": [{"Tuning": "runbooks/cluster/deep/tuning.md"}]},
+                    ]
+                },
+            ]
+        },
+        {
+            "History": [
+                {
+                    "Runbooks": [
+                        {"Retired plan": "runbooks/retired.md"},
+                        {"Cluster": [{"Old plan": "runbooks/cluster/old-plan.md"}]},
+                    ]
+                }
+            ]
+        },
+    ]
+
+
+def test_version_two_publishes_only_listed_pages_and_assets(tmp_path: Path) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    filtered = plugin.on_files(
+        [SimpleNamespace(src_uri=uri) for uri in DISCOVERED_URIS],
+        config=config,
+    )
+
+    # The canonical source and the CODEOWNERS file are excluded; the static
+    # asset is published because the manifest listed and digested it.
+    assert [file.src_uri for file in filtered] == [
+        "README.md",
+        "design/splice.md",
+        "runbooks/evaluation.md",
+        "runbooks/retired.md",
+        "runbooks/cluster/gpu-nodes.md",
+        "runbooks/cluster/old-plan.md",
+        "runbooks/cluster/deep/tuning.md",
+        "runbooks/cluster/plot.png",
+    ]
+
+
+@pytest.mark.parametrize(
+    "unlisted",
+    ["stray.md", "runbooks/cluster/stray.png"],
+)
+def test_version_two_rejects_anything_the_manifest_never_saw(
+    tmp_path: Path,
+    unlisted: str,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    with pytest.raises(ConfigurationError, match="absent from"):
+        plugin.on_files([SimpleNamespace(src_uri=unlisted)], config=config)
+
+
+@pytest.mark.parametrize(
+    ("relative", "message"),
+    [
+        ("docs/runbooks/evaluation.md", "site page changed after manifest validation"),
+        ("docs/design/splice.yaml", "structured source changed after manifest validation"),
+        (
+            "docs/runbooks/cluster/plot.png",
+            "static asset changed after manifest validation",
+        ),
+    ],
+)
+def test_version_two_rejects_drift_in_every_published_role(
+    tmp_path: Path,
+    relative: str,
+    message: str,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    (project / relative).write_bytes(b"drifted\n")
+
+    with pytest.raises(ConfigurationError, match=message):
+        _plugin(project, manifest)
+
+
+def test_version_two_requires_a_clean_repository(tmp_path: Path) -> None:
+    project, manifest = _simple_manifest(tmp_path, state="dirty")
+
+    with pytest.raises(ConfigurationError, match="dirty repository"):
+        _plugin(project, manifest)
+
+    # The same manifest is publishable once the operator accepts a dirty tree.
+    _plugin_instance, config = _plugin(project, manifest, require_clean=False)
+    assert config["nav"][0] == {"Overview": [{"Overview": "README.md"}]}
+
+
+@pytest.mark.parametrize("kind", ["site_manifest_v3", None])
+def test_an_undeclared_manifest_kind_is_refused(tmp_path: Path, kind: str | None) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if kind is None:
+        del payload["manifest_kind"]
+    else:
+        payload["manifest_kind"] = kind
+    manifest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # The kind is never inferred from the fields present, so a manifest whose
+    # shape is otherwise valid is still refused.
+    with pytest.raises(ConfigurationError, match="no supported manifest_kind"):
+        _plugin(project, manifest)
+
+
+def test_only_files_discovered_in_the_docs_directory_face_the_closed_world(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    # MkDocs adds theme files to the same collection before on_files runs. They
+    # come from the theme's directory and the manifest never lists them.
+    retained = plugin.on_files(
+        [SimpleNamespace(src_uri="css/base.css", src_dir=str(tmp_path / "theme"))],
+        config=config,
+    )
+    assert [file.src_uri for file in retained] == ["css/base.css"]
+
+    with pytest.raises(ConfigurationError, match="absent from"):
+        plugin.on_files(
+            [SimpleNamespace(src_uri="stray.md", src_dir=str(project / "docs"))],
+            config=config,
+        )
+
+
+def test_an_unreadable_published_file_is_reported_as_a_configuration_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+
+    def refuse_to_read(self: Path) -> bytes:
+        raise OSError(13, "Permission denied")
+
+    # The path still exists and is still a regular file; only the read fails.
+    monkeypatch.setattr(Path, "read_bytes", refuse_to_read)
+
+    with pytest.raises(
+        ConfigurationError,
+        match=r"site page could not be read: docs/README\.md \(PermissionError\)",
+    ):
+        _plugin(project, manifest)
+
+
+def test_version_one_navigation_and_exclusions_survive_the_version_two_wiring(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    assert config["nav"] == [
+        {"Overview": [{"Overview": "README.md"}]},
+        {"Guide": [{"Run": "guide/run.md"}]},
+        {"Brief": [{"Result": "brief/result.md"}]},
+    ]
+    filtered = plugin.on_files(
+        [
+            SimpleNamespace(src_uri="README.md"),
+            SimpleNamespace(src_uri="brief/result.yaml"),
+            SimpleNamespace(src_uri="guide/run.md"),
+            SimpleNamespace(src_uri="brief/result.md"),
+        ],
+        config=config,
+    )
+    assert [file.src_uri for file in filtered] == [
+        "README.md",
+        "guide/run.md",
+        "brief/result.md",
+    ]
+    # A classification-route manifest cannot enumerate assets, so its silence
+    # about a static file is not a verdict and the file is still published.
+    static = plugin.on_files(
+        [SimpleNamespace(src_uri="guide/diagram.png")],
+        config=config,
+    )
+    assert [file.src_uri for file in static] == ["guide/diagram.png"]
+    # Unlisted Markdown stays refused, exactly as before.
+    with pytest.raises(ConfigurationError, match="absent from"):
+        plugin.on_files([SimpleNamespace(src_uri="guide/unlisted.md")], config=config)
 
 
 def test_repository_site_output_is_confined_to_ignored_build_tree() -> None:
