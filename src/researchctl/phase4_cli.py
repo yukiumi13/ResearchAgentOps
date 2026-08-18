@@ -220,7 +220,7 @@ def submit_command(
     operation_id: Annotated[str | None, typer.Option("--operation-id")] = None,
     idempotency_key: Annotated[str | None, typer.Option("--idempotency-key")] = None,
 ) -> None:
-    """Push and open a generated ResearchSubmission PR without accepted fields."""
+    """Prepare a request for trusted App-authored ResearchSubmission delivery."""
 
     def human_request() -> SubmissionCreateRequest:
         if submission_file is None:

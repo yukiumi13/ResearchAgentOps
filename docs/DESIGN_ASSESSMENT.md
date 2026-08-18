@@ -163,12 +163,15 @@ records or launching. A single-maintainer CODEOWNERS baseline is installed;
 branch protection and reviewer policy still require repository configuration
 and verification.
 
-The assigned Agent's `researchctl submit` path now derives one fixed branch,
-pushes only its exact generated commit, and creates or observes one exact
-same-repository GitHub PR through bounded `git` and `gh api` adapters. Offline
-tests cover remote-head conflicts, duplicates, closed or ambiguous PRs, secret
-sanitization, and timeout recovery. No claim is made that a credential or live
-repository rule has been installed.
+The assigned Agent's strict Submission request now enters a trusted host that
+reauthenticates the Session and reuses the existing workflow. It derives one
+fixed branch, pushes only its exact generated commit with a repository-scoped
+App token over isolated HTTPS Git, and creates or observes one exact
+same-repository bot-authored PR. Offline tests cover App/installation/repository
+identity, permission and key bounds, remote-head conflicts, duplicates, closed
+or ambiguous PRs, secret sanitization, and timeout recovery. The App installation
+has been observed, but no claim is made that the isolated service principal,
+live bot canary, or repository rule has been deployed.
 
 ## Final Delivery Plan
 

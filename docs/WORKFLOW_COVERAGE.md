@@ -96,8 +96,9 @@ remain open; a Run never executes inside PR CI.
 ### WF-06 - Agent Submission and Human Acceptance
 
 ```text
-collected Runs -> assigned Agent researchctl submit -> fixed Submission commit
--> push/open-or-observe PR -> source tests plus protected exact-head validation
+collected Runs -> assigned Agent typed request + Session capability
+-> trusted App host -> fixed Submission commit -> push/open-or-observe bot PR
+-> source tests plus protected exact-head validation
 -> manager review preparation -> CODEOWNER approval -> protected merge
 -> accepted Decision and Report
 ```

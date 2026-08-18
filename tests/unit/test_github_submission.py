@@ -49,7 +49,16 @@ class _GitRunner:
 
     def run(self, argv, *, cwd, env, timeout_seconds):
         self.calls.append(_GitCall(argv, cwd, dict(env), timeout_seconds))
-        arguments = argv[5:]
+        assert argv[1:8] == (
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "credential.helper=",
+            "-C",
+        )
+        arguments = argv[9:]
         if arguments == ("remote", "get-url", "origin"):
             return CommandResult(0, stdout=f"{self.remote_url}\n")
         if arguments == ("remote", "get-url", "--push", "origin"):
@@ -212,8 +221,8 @@ def test_exact_branch_is_pushed_and_generated_pull_request_is_created(
     assert pull.author_login == AUTHOR
     assert pull.repository == "owner/project"
     assert pull.number == 17
-    push = next(call for call in git.calls if call.argv[5] == "push")
-    assert push.argv[5:] == (
+    push = next(call for call in git.calls if call.argv[9] == "push")
+    assert push.argv[9:] == (
         "push",
         "--porcelain",
         "origin",
@@ -246,7 +255,7 @@ def test_existing_exact_branch_and_pr_are_observed_without_mutation(
 
     assert branch.pushed is False
     assert pull.created is False
-    assert not any(call.argv[5] == "push" for call in git.calls)
+    assert not any(call.argv[9] == "push" for call in git.calls)
     assert not any("POST" in call.argv for call in gh.calls)
 
 

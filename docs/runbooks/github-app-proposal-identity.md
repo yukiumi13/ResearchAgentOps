@@ -10,8 +10,26 @@ references:
     location: docs/adr/0015-github-proposal-identity-and-protected-acceptance.md
   - kind: repository_path
     location: docs/design/github-app-proposal-broker.yaml
-sources: []
-provenance: []
+sources:
+  - key: github-app-installation
+    kind: external
+    location: github-app:4577593/installation:153350892/repository:yukiumi13/ResearchAgentOps
+provenance:
+  - key: app-id
+    value: "4577593"
+    basis: external
+    source_keys: [github-app-installation]
+    method: Read the authenticated GitHub App identity response.
+  - key: installation-id
+    value: "153350892"
+    basis: external
+    source_keys: [github-app-installation]
+    method: Read the authenticated installation identity response.
+  - key: bot-login
+    value: "rcp-agent[bot]"
+    basis: external
+    source_keys: [github-app-installation]
+    method: Derive the canonical bot login from the API-observed App slug.
 relations:
   supersedes: []
   derived_from: [docs/adr/0015-github-proposal-identity-and-protected-acceptance.md]
@@ -69,12 +87,31 @@ agent_app:
 Do not grant the App manager, CODEOWNER, review, merge, protected-main, or
 ruleset-bypass authority.
 
+The ResearchAgentOps testbed installation was observed through the GitHub App
+API on 2026-08-13:
+
+```yaml
+agent_app:
+  app_id: 4577593
+  installation_id: 153350892
+  login: rcp-agent[bot]
+repository: yukiumi13/ResearchAgentOps
+repository_selection: selected
+permissions:
+  contents: write
+  metadata: read
+  pull_requests: write
+```
+
+The canonical slug returned by GitHub is `rcp-agent`, even if an informal name
+or setup note says `rcp-bot`. Runtime policy must use the API-observed login.
+
 ## Store The Private Key
 
 1. Generate a private key from the App settings page only after installation.
 2. Move the downloaded PEM to a repository-external deployment path owned by
    the trusted broker service account. Do not place it under the workspace,
-   home directories shared with Agents, `/tmp`, or GitHub Actions artifacts.
+   a Unix account shared with Agents, `/tmp`, or GitHub Actions artifacts.
 3. Set the containing directory to owner-only access and the PEM to mode `0400`.
 4. Configure the trusted host with the path through its service manager or
    secret manager. Never pass PEM content on argv or standard input and never
@@ -82,6 +119,11 @@ ruleset-bypass authority.
 5. Verify that Git, shell history, process listings, logs, operation journals,
    receipts, and crash reports contain neither PEM bytes nor installation
    tokens.
+
+Mode `0400` is not an identity boundary when the Agent and broker share a Unix
+UID. The trusted host must run as a principal the Agent cannot inspect, signal,
+or execute arbitrary commands as. A same-UID local installation is suitable for
+fake-port implementation tests only, not the live identity canary.
 
 If a private key enters Git or an Agent-visible environment, revoke it from the
 App settings immediately, stop the broker, generate a new key, and audit open
@@ -123,20 +165,34 @@ the private key in the policy file.
 
 1. Keep protected-main mutation disabled for the App and confirm that the human
    manager remains authenticated separately.
-2. Start the trusted proposal host under its isolated deployment identity. The
-   Agent sends only the existing typed Submission request and Session
-   capability; it receives no GitHub credential.
-3. Submit one documentation-only proposal whose canonical branch and head are
-   derived by researchctl.
-4. Confirm the remote branch has the exact expected commit and the PR author is
+2. Start `researchctl-github-proposal-host submit` under its isolated deployment
+   identity. Its service manager supplies the absolute repository-external PEM
+   path, the existing Session ID and capability, and one strict
+   `SubmissionCreateRequest` JSON object on standard input. Do not put the PEM,
+   Session capability, JWT, or installation token in argv. Pin
+   `--git-executable` and `--gh-executable` to absolute, administrator-controlled
+   executable paths; the host does not trust the Agent's `PATH`, proxy, or CA
+   environment.
+3. Confirm that direct `researchctl submit` from an Agent Session fails with
+   `submission_delivery_not_configured`; only the trusted host may inject the
+   App-backed delivery port.
+4. The host must mint one repository-scoped token, use an isolated HTTPS Git
+   directory for the exact canonical ref, use the same token for PR create and
+   observation, and return only a JSON receipt with non-secret App identity and
+   expiry metadata.
+5. The first implementation brokers the existing `ResearchSubmission`
+   workflow. It is not a generic arbitrary-branch or arbitrary-document PR API.
+6. Submit one bounded proposal whose canonical branch and head are derived by
+   researchctl.
+7. Confirm the remote branch has the exact expected commit and the PR author is
    the configured App bot.
-5. Confirm the App cannot approve, merge, push `main`, change workflows, change
+8. Confirm the App cannot approve, merge, push `main`, change workflows, change
    repository settings, publish checks, or bypass a rule.
-6. Let both exact-head checks finish. Review the latest head as `yukiumi13` and
+9. Let both exact-head checks finish. Review the latest head as `yukiumi13` and
    merge only after the broker receipt, GitHub UI, and check SHAs agree.
-7. Push a follow-up canary commit and verify that stale approval is dismissed
+10. Push a follow-up canary commit and verify that stale approval is dismissed
    and latest-push approval is required again.
-8. Run post-merge identity verification and record the App author, human
+11. Run post-merge identity verification and record the App author, human
    reviewer/merger, head, check SHAs, policy digest, and installation ID without
    recording credentials.
 

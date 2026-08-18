@@ -65,8 +65,10 @@ writer, consistent backups, and a tested restore procedure.
 A final Report is not authored by CI or invented after merge:
 
 1. The Agent proposes a canonical Submission and evidence.
-   `researchctl submit` pushes the one derived Submission branch and creates or
-   observes its deterministic GitHub PR; it does not ask the human to open it.
+   It sends the strict `SubmissionCreateRequest` and its Session capability to
+   the trusted proposal host. That host runs the same Submission workflow,
+   pushes the one derived branch, and creates or observes the deterministic PR
+   as the accepted Agent App; it does not ask the human to open the PR.
 2. `researchctl review accept` is manager-only and materializes a candidate
    Decision, Report YAML, Report Markdown, and credential-free Linear preview
    on the exact proposal head.

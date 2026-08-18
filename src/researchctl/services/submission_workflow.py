@@ -179,6 +179,10 @@ class SubmissionWorkflowService:
             raise RCPError(
                 code="submission_delivery_not_configured",
                 message="Submission GitHub delivery is not configured.",
+                remediation=(
+                    "Use the trusted GitHub proposal host so Agent credentials cannot "
+                    "fall back to a human Git identity."
+                ),
             )
         prepared = self.prepare_proposal(request, task)
         self._event(

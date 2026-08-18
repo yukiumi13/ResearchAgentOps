@@ -29,7 +29,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "cryptography==45.0.5",
     "pydantic==2.12.5",
+    "PyJWT[crypto]==2.10.1",
     "PyYAML==6.0.3",
     "typer==0.24.1",
 ]
@@ -51,6 +53,7 @@ docs-site = [
 
 [project.scripts]
 researchctl = "researchctl.cli:app"
+researchctl-github-proposal-host = "researchctl.github_proposal_host:app"
 researchctl-linear-host = "researchctl.trusted_linear_host:app"
 researchctl-github-post-merge = "researchctl.github_post_merge_host:app"
 

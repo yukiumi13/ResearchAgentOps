@@ -121,17 +121,27 @@ class GitHubSubmissionDelivery:
         git_runner: CommandRunner | None = None,
         gh_runner: GhSubmissionCommandRunner | None = None,
         environment: Mapping[str, str] | None = None,
+        git_environment: Mapping[str, str] | None = None,
+        identity_git_environment: Mapping[str, str] | None = None,
+        gh_environment: Mapping[str, str] | None = None,
+        mutation_remote_url: str | None = None,
+        git_executable: str = "git",
+        gh_executable: str = "gh",
         timeout_seconds: float = 20.0,
         max_json_bytes: int = _MAX_GITHUB_JSON_BYTES,
     ) -> None:
         if timeout_seconds <= 0 or max_json_bytes < 1:
             raise ValueError("Submission delivery limits must be positive")
         source = os.environ if environment is None else environment
-        self._git_environment = {
-            key: value
-            for key, value in source.items()
-            if key in _GIT_ENVIRONMENT_KEYS and value
-        }
+        self._git_environment = (
+            dict(git_environment)
+            if git_environment is not None
+            else {
+                key: value
+                for key, value in source.items()
+                if key in _GIT_ENVIRONMENT_KEYS and value
+            }
+        )
         self._git_environment.update(
             {
                 "GIT_CONFIG_NOSYSTEM": "1",
@@ -139,12 +149,24 @@ class GitHubSubmissionDelivery:
                 "GIT_TERMINAL_PROMPT": "0",
             }
         )
-        self._gh_environment = {
-            key: value
-            for key, value in source.items()
-            if key in _GH_ENVIRONMENT_KEYS and value
-        }
+        self._identity_git_environment = (
+            dict(identity_git_environment)
+            if identity_git_environment is not None
+            else self._git_environment
+        )
+        self._gh_environment = (
+            dict(gh_environment)
+            if gh_environment is not None
+            else {
+                key: value
+                for key, value in source.items()
+                if key in _GH_ENVIRONMENT_KEYS and value
+            }
+        )
         self._accepted_remote_url = accepted_remote_url
+        self._mutation_remote_url = mutation_remote_url
+        self._git_executable = git_executable
+        self._gh_executable = gh_executable
         self._governance = governance
         self._git_runner = git_runner or SubprocessCommandRunner()
         self._gh_runner = gh_runner or SubprocessGhSubmissionCommandRunner()
@@ -184,8 +206,9 @@ class GitHubSubmissionDelivery:
                 root,
                 "push",
                 "--porcelain",
-                _REMOTE_NAME,
+                self._mutation_remote(),
                 f"{commit}:refs/heads/{branch}",
+                mutation=True,
             )
         except (subprocess.TimeoutExpired, TimeoutError):
             push_uncertain = True
@@ -316,12 +339,25 @@ class GitHubSubmissionDelivery:
                 message="Accepted Project configuration has no GitHub remote.",
             )
         self._require_governance(self._identity())
+        if self._mutation_remote_url is not None:
+            mutation_identity = parse_github_remote(self._mutation_remote_url)
+            accepted_identity = self._identity()
+            if (
+                not self._mutation_remote_url.startswith("https://")
+                or mutation_identity.host.lower() != accepted_identity.host.lower()
+                or mutation_identity.repository.lower()
+                != accepted_identity.repository.lower()
+            ):
+                raise RCPError(
+                    code="submission_remote_identity_mismatch",
+                    message="Authenticated mutation remote differs from accepted GitHub identity.",
+                )
         for arguments in (
             ("remote", "get-url", _REMOTE_NAME),
             ("remote", "get-url", "--push", _REMOTE_NAME),
         ):
             try:
-                result = self._git(root, *arguments)
+                result = self._git(root, *arguments, mutation=False)
             except (subprocess.TimeoutExpired, TimeoutError) as error:
                 raise RCPError(
                     code="submission_remote_observation_failed",
@@ -344,8 +380,9 @@ class GitHubSubmissionDelivery:
                 root,
                 "ls-remote",
                 "--refs",
-                _REMOTE_NAME,
+                self._mutation_remote(),
                 f"refs/heads/{branch}",
+                mutation=True,
             )
         except (subprocess.TimeoutExpired, TimeoutError) as error:
             raise RCPError(
@@ -534,18 +571,34 @@ class GitHubSubmissionDelivery:
                 message="Accepted Project remote is not a supported GitHub repository URL.",
             ) from error
 
-    def _git(self, root: Path, *arguments: str) -> CommandResult:
+    def _mutation_remote(self) -> str:
+        return self._mutation_remote_url or _REMOTE_NAME
+
+    def _git(
+        self,
+        root: Path,
+        *arguments: str,
+        mutation: bool,
+    ) -> CommandResult:
         return self._git_runner.run(
             (
-                "git",
+                self._git_executable,
                 "-c",
                 "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "credential.helper=",
                 "-C",
                 str(root),
                 *arguments,
             ),
             cwd=None,
-            env=self._git_environment,
+            env=(
+                self._git_environment
+                if mutation
+                else self._identity_git_environment
+            ),
             timeout_seconds=self._timeout_seconds,
         )
 
@@ -556,7 +609,7 @@ class GitHubSubmissionDelivery:
         input_bytes: bytes | None,
     ) -> GhSubmissionCommandResult:
         return self._gh_runner.run(
-            ("gh", "api", "--hostname", identity.host, *arguments),
+            (self._gh_executable, "api", "--hostname", identity.host, *arguments),
             env=self._gh_environment,
             input_bytes=input_bytes,
             timeout_seconds=self._timeout_seconds,
