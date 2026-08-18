@@ -168,10 +168,13 @@ class ResearchctlPlugin(BasePlugin):
         del config, files
         uri = PurePosixPath(page.file.src_uri).as_posix()
         document = self._pages_by_uri.get(uri)
-        if not isinstance(document, DocumentSitePage):
-            # Directory-first metadata injection is a later phase. Until then a
-            # version 2 page is published exactly as it was authored.
+        if document is None:
             return markdown
+        if isinstance(document, SimpleDocumentSitePage):
+            # Frontmatter is how a version 2 document records its own facts. The
+            # manifest already carries them, so the envelope is source metadata
+            # and never prose to publish.
+            return self._simple_metadata(document) + self._without_frontmatter(markdown)
         if document.kind in {"manual", "structured"}:
             envelope = inspect_project_frontmatter(markdown.encode("utf-8"))
             if envelope is not None:
@@ -404,6 +407,62 @@ class ResearchctlPlugin(BasePlugin):
         """
 
         return segment.replace("-", " ").title()
+
+    @staticmethod
+    def _without_frontmatter(markdown: str) -> str:
+        envelope = inspect_project_frontmatter(markdown.encode("utf-8"))
+        if envelope is None:
+            return markdown
+        return envelope.body.decode("utf-8")
+
+    def _simple_metadata(self, page: SimpleDocumentSitePage) -> str:
+        """State what the manifest knows about one version 2 page, and no more.
+
+        Every line here is a fact some source of truth already settled:
+        CODEOWNERS decided the owners, the document decided its own review date
+        and status, and Git decided when it was last edited. Where a fact does
+        not exist, the block says so rather than leaving a reader to guess
+        whether it is absent or merely unrendered.
+        """
+
+        values: list[str] = [
+            "Owned by " + (self._code_spans(page.owners) or "Unassigned"),
+            (
+                f"Reviewed `{page.reviewed_on.isoformat()}`"
+                if page.reviewed_on is not None
+                else "Reviewed Not recorded"
+            ),
+            (
+                f"Edited `{page.last_edited_at.date().isoformat()}`"
+                if page.last_edited_at is not None
+                else "Edited Not recorded in Git"
+            ),
+            "Tags " + (self._code_spans(page.tags) or "None"),
+        ]
+        # An ordinary page states a status and a structured one states a
+        # lifecycle, but only if its contract has one. A contract that states
+        # neither gets neither invented for it.
+        if page.status is not None:
+            values.append(f"Status `{html.escape(page.status)}`")
+        elif page.lifecycle is not None:
+            values.append(f"Lifecycle `{html.escape(page.lifecycle)}`")
+        values.append("Locked Yes" if page.locked else "Locked No")
+        if page.source_path is not None:
+            label = html.escape(page.source_path)
+            source_url = self._source_url(page.source_path)
+            values.append(
+                f"Source [`{label}`]({source_url})" if source_url else f"Source `{label}`"
+            )
+        return (
+            "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+            + "> Document metadata: "
+            + " | ".join(values)
+            + "\n\n"
+        )
+
+    @staticmethod
+    def _code_spans(values: tuple[str, ...]) -> str:
+        return ", ".join(f"`{html.escape(value)}`" for value in values)
 
     def _metadata(self, page: DocumentSitePage) -> str:
         values: list[str] = []

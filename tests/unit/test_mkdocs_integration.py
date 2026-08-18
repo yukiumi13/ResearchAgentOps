@@ -235,13 +235,31 @@ def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Pat
     project = tmp_path / "project"
     docs = project / "docs"
     (docs / "design").mkdir(parents=True)
+    (docs / "profiling").mkdir()
     (docs / "runbooks/cluster/deep").mkdir(parents=True)
     (project / "mkdocs.yml").write_text("site_name: Test\n", encoding="utf-8")
     (docs / "CODEOWNERS").write_text("* @docs-team\n", encoding="utf-8")
-    (docs / "README.md").write_text("# Overview\n", encoding="utf-8")
+    # A root page carrying an envelope: the frontmatter must not reach the site.
+    (docs / "README.md").write_text(
+        "---\nstatus: active\n---\n\n# Overview\n", encoding="utf-8"
+    )
     (docs / "design/splice.yaml").write_text("title: Splice\n", encoding="utf-8")
-    (docs / "design/splice.md").write_text("# Splice the encoder\n", encoding="utf-8")
-    (docs / "runbooks/evaluation.md").write_text("# Evaluation\n", encoding="utf-8")
+    # A generated page may still carry a project-owned envelope.
+    (docs / "design/splice.md").write_text(
+        "---\nlifecycle: draft\n---\n\n# Splice the encoder\n", encoding="utf-8"
+    )
+    (docs / "profiling/memory.yaml").write_text("question: memory\n", encoding="utf-8")
+    (docs / "profiling/memory.md").write_text("# Memory at 16k\n", encoding="utf-8")
+    (docs / "runbooks/evaluation.md").write_text(
+        "---\n"
+        "status: active\n"
+        "tags: [evaluation, cluster]\n"
+        "reviewed_on: 2026-05-04\n"
+        "locked: true\n"
+        "---\n"
+        "\n# Evaluation\n\nHow to evaluate.\n",
+        encoding="utf-8",
+    )
     (docs / "runbooks/retired.md").write_text("# Retired plan\n", encoding="utf-8")
     (docs / "runbooks/cluster/gpu-nodes.md").write_text("# GPU nodes\n", encoding="utf-8")
     (docs / "runbooks/cluster/old-plan.md").write_text("# Old plan\n", encoding="utf-8")
@@ -269,7 +287,7 @@ def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Pat
     # Manifest order is the builder's: active before retired, root before
     # sections, then policy section order, then path.
     pages = [
-        page("README.md", "Overview"),
+        page("README.md", "Overview", owners=("@docs-team",)),
         page(
             "design/splice.md",
             "Splice the encoder",
@@ -280,10 +298,33 @@ def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Pat
             contract="design-document",
             classification="design/architecture:document",
             lifecycle="draft",
+            owners=("@docs-team",),
+            tags=("encoder",),
         ),
-        page("runbooks/cluster/deep/tuning.md", "Tuning"),
+        # An analysis brief has no envelope, so it has no lifecycle to show.
+        page(
+            "profiling/memory.md",
+            "Memory at 16k",
+            kind="structured",
+            status=None,
+            source_path="docs/profiling/memory.yaml",
+            source_digest=_digest(docs / "profiling/memory.yaml"),
+            contract="analysis-brief",
+            owners=("@perf-team",),
+        ),
+        page("runbooks/cluster/deep/tuning.md", "Tuning", owners=("@docs-team",)),
+        # Nobody owns it, nobody reviewed it, Git has never seen it.
         page("runbooks/cluster/gpu-nodes.md", "GPU nodes"),
-        page("runbooks/evaluation.md", "Evaluation"),
+        page(
+            "runbooks/evaluation.md",
+            "Evaluation",
+            owners=("@docs-team", "ops@example.com"),
+            tags=("evaluation", "cluster"),
+            reviewed_on="2026-05-04",
+            locked=True,
+            git_history_present=True,
+            last_edited_at="2026-06-07T08:09:10Z",
+        ),
         page(
             "runbooks/cluster/old-plan.md",
             "Old plan",
@@ -301,10 +342,10 @@ def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Pat
         "repository_state": state,
         "repository_remote": "https://github.com/acme/site.git",
         "policy_digest": "sha256:" + "2" * 64,
-        # "profiling" holds nothing, so it must not become a heading.
+        # "experiments" holds nothing, so it must not become a heading.
         "sections": [
             SimpleDocumentSiteSection(path=name).model_dump(mode="json")
-            for name in ("design", "profiling", "runbooks")
+            for name in ("design", "profiling", "experiments", "runbooks")
         ],
         "pages": [
             SimpleDocumentSitePage.model_validate(item).model_dump(mode="json")
@@ -328,6 +369,11 @@ def _simple_manifest(tmp_path: Path, *, state: str = "clean") -> tuple[Path, Pat
                 reason="structured_source",
                 page_path="docs/design/splice.md",
             ).model_dump(mode="json"),
+            SimpleDocumentSiteExcludedPath(
+                path="docs/profiling/memory.yaml",
+                reason="structured_source",
+                page_path="docs/profiling/memory.md",
+            ).model_dump(mode="json"),
         ],
     }
     payload["manifest_digest"] = canonical_digest(payload)
@@ -345,6 +391,8 @@ DISCOVERED_URIS = [
     "CODEOWNERS",
     "design/splice.yaml",
     "design/splice.md",
+    "profiling/memory.yaml",
+    "profiling/memory.md",
     "runbooks/evaluation.md",
     "runbooks/retired.md",
     "runbooks/cluster/gpu-nodes.md",
@@ -354,37 +402,41 @@ DISCOVERED_URIS = [
 ]
 
 
+EXPECTED_VERSION_TWO_NAV = [
+    {"Overview": [{"Overview": "README.md"}]},
+    {"Design": [{"Splice the encoder": "design/splice.md"}]},
+    {"Profiling": [{"Memory at 16k": "profiling/memory.md"}]},
+    {
+        "Runbooks": [
+            {"Evaluation": "runbooks/evaluation.md"},
+            {
+                "Cluster": [
+                    {"GPU nodes": "runbooks/cluster/gpu-nodes.md"},
+                    {"Deep": [{"Tuning": "runbooks/cluster/deep/tuning.md"}]},
+                ]
+            },
+        ]
+    },
+    {
+        "History": [
+            {
+                "Runbooks": [
+                    {"Retired plan": "runbooks/retired.md"},
+                    {"Cluster": [{"Old plan": "runbooks/cluster/old-plan.md"}]},
+                ]
+            }
+        ]
+    },
+]
+
+
 def test_version_two_navigation_nests_directories_and_retires_pages(
     tmp_path: Path,
 ) -> None:
     project, manifest = _simple_manifest(tmp_path)
     _plugin_instance, config = _plugin(project, manifest)
 
-    assert config["nav"] == [
-        {"Overview": [{"Overview": "README.md"}]},
-        {"Design": [{"Splice the encoder": "design/splice.md"}]},
-        {
-            "Runbooks": [
-                {"Evaluation": "runbooks/evaluation.md"},
-                {
-                    "Cluster": [
-                        {"GPU nodes": "runbooks/cluster/gpu-nodes.md"},
-                        {"Deep": [{"Tuning": "runbooks/cluster/deep/tuning.md"}]},
-                    ]
-                },
-            ]
-        },
-        {
-            "History": [
-                {
-                    "Runbooks": [
-                        {"Retired plan": "runbooks/retired.md"},
-                        {"Cluster": [{"Old plan": "runbooks/cluster/old-plan.md"}]},
-                    ]
-                }
-            ]
-        },
-    ]
+    assert config["nav"] == EXPECTED_VERSION_TWO_NAV
 
 
 def test_version_two_publishes_only_listed_pages_and_assets(tmp_path: Path) -> None:
@@ -396,11 +448,12 @@ def test_version_two_publishes_only_listed_pages_and_assets(tmp_path: Path) -> N
         config=config,
     )
 
-    # The canonical source and the CODEOWNERS file are excluded; the static
+    # The canonical sources and the CODEOWNERS file are excluded; the static
     # asset is published because the manifest listed and digested it.
     assert [file.src_uri for file in filtered] == [
         "README.md",
         "design/splice.md",
+        "profiling/memory.md",
         "runbooks/evaluation.md",
         "runbooks/retired.md",
         "runbooks/cluster/gpu-nodes.md",
@@ -473,6 +526,137 @@ def test_an_undeclared_manifest_kind_is_refused(tmp_path: Path, kind: str | None
     # shape is otherwise valid is still refused.
     with pytest.raises(ConfigurationError, match="no supported manifest_kind"):
         _plugin(project, manifest)
+
+
+SOURCE_URL = "https://github.com/acme/site/blob/" + "1" * 40
+
+
+def _rendered(plugin, config, project: Path, uri: str) -> str:  # type: ignore[no-untyped-def]
+    page = SimpleNamespace(file=SimpleNamespace(src_uri=uri))
+    markdown = (project / "docs" / uri).read_text(encoding="utf-8")
+    return plugin.on_page_markdown(markdown, page=page, config=config, files=[])
+
+
+def test_version_two_metadata_states_only_what_the_manifest_knows(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    assert _rendered(plugin, config, project, "runbooks/evaluation.md") == (
+        "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+        "> Document metadata: Owned by `@docs-team`, `ops@example.com` | "
+        "Reviewed `2026-05-04` | Edited `2026-06-07` | "
+        "Tags `evaluation`, `cluster` | Status `active` | Locked Yes\n"
+        "\n"
+        "# Evaluation\n\nHow to evaluate.\n"
+    )
+    # Absence is stated, never left for the reader to infer.
+    assert _rendered(plugin, config, project, "runbooks/cluster/gpu-nodes.md") == (
+        "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+        "> Document metadata: Owned by Unassigned | Reviewed Not recorded | "
+        "Edited Not recorded in Git | Tags None | Status `active` | Locked No\n"
+        "\n"
+        "# GPU nodes\n"
+    )
+    # A root page is treated exactly like an ordinary one, envelope included.
+    assert _rendered(plugin, config, project, "README.md") == (
+        "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+        "> Document metadata: Owned by `@docs-team` | Reviewed Not recorded | "
+        "Edited Not recorded in Git | Tags None | Status `active` | Locked No\n"
+        "\n"
+        "# Overview\n"
+    )
+
+
+def test_a_structured_page_shows_a_lifecycle_only_when_its_contract_has_one(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+
+    assert _rendered(plugin, config, project, "design/splice.md") == (
+        "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+        "> Document metadata: Owned by `@docs-team` | Reviewed Not recorded | "
+        "Edited Not recorded in Git | Tags `encoder` | Lifecycle `draft` | "
+        "Locked No | Source [`docs/design/splice.yaml`]"
+        f"({SOURCE_URL}/docs/design/splice.yaml)\n"
+        "\n"
+        "# Splice the encoder\n"
+    )
+    # An analysis brief has no envelope. Nothing invents a lifecycle or a
+    # status for it, and the v1 classification taxonomy stays out of v2.
+    brief = _rendered(plugin, config, project, "profiling/memory.md")
+    assert brief == (
+        "<!-- researchctl-site-metadata:simple-document-site-manifest.v1 -->\n"
+        "> Document metadata: Owned by `@perf-team` | Reviewed Not recorded | "
+        "Edited Not recorded in Git | Tags None | Locked No | "
+        "Source [`docs/profiling/memory.yaml`]"
+        f"({SOURCE_URL}/docs/profiling/memory.yaml)\n"
+        "\n"
+        "# Memory at 16k\n"
+    )
+    assert "Lifecycle" not in brief
+    assert "Status" not in brief
+    assert "Classification" not in brief
+
+
+def test_mkdocs_core_builds_a_version_two_site_strictly(tmp_path: Path) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    config = load_config(config_file=str(project / "mkdocs.yml"), strict=True)
+    plugin = ResearchctlPlugin()
+    errors, warnings = plugin.load_config(
+        {"manifest": str(manifest), "require_clean": True}
+    )
+    assert errors == []
+    assert warnings == []
+    config.plugins["researchctl"] = plugin
+    plugin.on_config(config)
+    assert config["nav"] == EXPECTED_VERSION_TWO_NAV
+
+    build(config)
+
+    site = project / "site"
+    pages = {
+        "index.html": "Overview",
+        "design/splice/index.html": "Splice the encoder",
+        "profiling/memory/index.html": "Memory at 16k",
+        "runbooks/evaluation/index.html": "Evaluation",
+        "runbooks/cluster/gpu-nodes/index.html": "GPU nodes",
+        "runbooks/cluster/deep/tuning/index.html": "Tuning",
+        "runbooks/retired/index.html": "Retired plan",
+        "runbooks/cluster/old-plan/index.html": "Old plan",
+    }
+    rendered = {}
+    for relative, heading in pages.items():
+        html_text = (site / relative).read_text(encoding="utf-8")
+        assert heading in html_text, relative
+        assert "researchctl-site-metadata:simple-document-site-manifest.v1" in html_text
+        rendered[relative] = html_text
+
+    # The nav MkDocs built is the nav the manifest projected, empty section and
+    # History group included.
+    overview = rendered["index.html"]
+    for heading in ("Design", "Profiling", "Runbooks", "History"):
+        assert heading in overview
+    assert "Experiments" not in overview
+
+    # Frontmatter is source metadata and never reaches the page.
+    assert "status: active" not in rendered["runbooks/evaluation/index.html"]
+    assert "reviewed_on" not in rendered["runbooks/evaluation/index.html"]
+    assert "lifecycle: draft" not in rendered["design/splice/index.html"]
+
+    assert "Owned by" in rendered["runbooks/evaluation/index.html"]
+    assert "Locked Yes" in rendered["runbooks/evaluation/index.html"]
+    assert f"{SOURCE_URL}/docs/design/splice.yaml" in rendered["design/splice/index.html"]
+    assert "Lifecycle" not in rendered["profiling/memory/index.html"]
+
+    # Listed assets ship byte for byte; excluded paths never leave the tree.
+    assert (site / "runbooks/cluster/plot.png").read_bytes() == (
+        project / "docs/runbooks/cluster/plot.png"
+    ).read_bytes()
+    for absent in ("CODEOWNERS", "design/splice.yaml", "profiling/memory.yaml"):
+        assert not (site / absent).exists(), absent
 
 
 def test_only_files_discovered_in_the_docs_directory_face_the_closed_world(
