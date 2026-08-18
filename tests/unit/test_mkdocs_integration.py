@@ -537,6 +537,42 @@ def _rendered(plugin, config, project: Path, uri: str) -> str:  # type: ignore[n
     return plugin.on_page_markdown(markdown, page=page, config=config, files=[])
 
 
+def test_invalid_page_frontmatter_is_a_named_configuration_error(tmp_path: Path) -> None:
+    project, manifest = _simple_manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+    page = SimpleNamespace(file=SimpleNamespace(src_uri="runbooks/evaluation.md"))
+
+    with pytest.raises(
+        ConfigurationError,
+        match=r"page frontmatter is invalid: runbooks/evaluation\.md .*ParserError.*line 1",
+    ):
+        plugin.on_page_markdown(
+            "---\ntags: [unterminated\n---\n# Evaluation\n",
+            page=page,
+            config=config,
+            files=[],
+        )
+
+
+def test_invalid_version_one_frontmatter_uses_the_same_error_boundary(
+    tmp_path: Path,
+) -> None:
+    project, manifest = _manifest(tmp_path)
+    plugin, config = _plugin(project, manifest)
+    page = SimpleNamespace(file=SimpleNamespace(src_uri="guide/run.md"))
+
+    with pytest.raises(
+        ConfigurationError,
+        match=r"page frontmatter is invalid: guide/run\.md .*ParserError.*line 1",
+    ):
+        plugin.on_page_markdown(
+            "---\ntags: [unterminated\n---\n# Run\n",
+            page=page,
+            config=config,
+            files=[],
+        )
+
+
 def test_version_two_metadata_states_only_what_the_manifest_knows(
     tmp_path: Path,
 ) -> None:

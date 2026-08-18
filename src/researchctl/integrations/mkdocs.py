@@ -21,6 +21,7 @@ from researchctl.domain.models import (
 )
 from researchctl.errors import RCPError
 from researchctl.repository import safe_repository_path
+from researchctl.serialization import SerializationError
 from researchctl.services.generated_markdown import inspect_project_frontmatter
 
 #: A manifest says which kind it is. Nothing here guesses from the fields it
@@ -174,11 +175,12 @@ class ResearchctlPlugin(BasePlugin):
             # Frontmatter is how a version 2 document records its own facts. The
             # manifest already carries them, so the envelope is source metadata
             # and never prose to publish.
-            return self._simple_metadata(document) + self._without_frontmatter(markdown)
+            return self._simple_metadata(document) + self._without_frontmatter(
+                markdown,
+                uri=uri,
+            )
         if document.kind in {"manual", "structured"}:
-            envelope = inspect_project_frontmatter(markdown.encode("utf-8"))
-            if envelope is not None:
-                markdown = envelope.body.decode("utf-8")
+            markdown = self._without_frontmatter(markdown, uri=uri)
         metadata = self._metadata(document)
         return metadata + markdown
 
@@ -409,8 +411,14 @@ class ResearchctlPlugin(BasePlugin):
         return segment.replace("-", " ").title()
 
     @staticmethod
-    def _without_frontmatter(markdown: str) -> str:
-        envelope = inspect_project_frontmatter(markdown.encode("utf-8"))
+    def _without_frontmatter(markdown: str, *, uri: str) -> str:
+        try:
+            envelope = inspect_project_frontmatter(markdown.encode("utf-8"))
+        except (UnicodeError, SerializationError) as error:
+            raise ConfigurationError(
+                f"researchctl page frontmatter is invalid: {uri} "
+                f"({type(error).__name__}: {error})"
+            ) from error
         if envelope is None:
             return markdown
         return envelope.body.decode("utf-8")
