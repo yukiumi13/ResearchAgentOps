@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from researchctl.domain.models import (
+    SIMPLE_MARKDOWN_CONTRACT,
     AgentGuideFormat,
     AgentGuideTarget,
     SimpleDocumentLayoutPolicy,
@@ -151,6 +152,7 @@ def render_simple_agent_guide(
     begin, end = agent_guide_markers(guide_format)
     subject = "Claude" if guide_format == "claude" else "Repository agents"
     root = markdown_code(policy.root)
+    ordinary_contract = markdown_code(SIMPLE_MARKDOWN_CONTRACT)
     lines = [
         begin,
         "## Researchctl Document Workflow",
@@ -162,11 +164,12 @@ def render_simple_agent_guide(
         "and the standalone policy is `.researchctl-docs.yaml`. Never invent a section,",
         "a contract, or a directory that the policy does not already accept.",
         "",
-        "An ordinary document is plain Markdown. Its section directory is its type:",
-        "there is no separate label to keep in sync, and no `a/b:c` classification to",
-        "write. Its title is the first level-one heading in the file. Its owners come",
-        "from CODEOWNERS, which is the only review authority, and the date it was last",
-        "edited comes from Git rather than from anything written in the document.",
+        f"An ordinary document satisfies the {ordinary_contract} contract: plain",
+        "Markdown whose section directory is its type. There is no separate label to",
+        "keep in sync, and no `a/b:c` classification to write. Its title is the first",
+        "level-one heading in the file. Its owners come from CODEOWNERS, which is the",
+        "only review authority, and the date it was last edited comes from Git rather",
+        "than from anything written in the document.",
         "",
         "Frontmatter is optional and a document with none is valid. When present it",
         "accepts only these fields:",
@@ -190,13 +193,16 @@ def render_simple_agent_guide(
         "",
         "Use these commands:",
         "",
-        "1. `researchctl doc contracts` and `researchctl doc schema --contract CONTRACT`",
-        "   to discover what a structured section accepts.",
-        "2. `researchctl doc scaffold --type SECTION --title TITLE` to start a document.",
-        "3. `researchctl doc check PATH` to validate one file.",
-        "4. `researchctl doc render PATH --output-file PATH.md` to regenerate the",
+        "1. `researchctl doc contracts --project .` to see every contract this policy",
+        "   accepts, section by section.",
+        f"2. `researchctl doc schema --contract {SIMPLE_MARKDOWN_CONTRACT}` for the",
+        "   optional frontmatter fields, or `researchctl doc schema --contract CONTRACT`",
+        "   for what a structured section accepts.",
+        "3. `researchctl doc scaffold --type SECTION --title TITLE` to start a document.",
+        "4. `researchctl doc check PATH` to validate one file.",
+        "5. `researchctl doc render PATH --output-file PATH.md` to regenerate the",
         "   Markdown beside a canonical YAML source.",
-        "5. `researchctl doc tree --project .` to validate the whole tree before opening",
+        "6. `researchctl doc tree --project .` to validate the whole tree before opening",
         "   or updating a pull request. Add `--json` when review automation consumes the",
         "   findings.",
         "",
@@ -212,8 +218,11 @@ def render_simple_agent_guide(
         "",
         "### Accepted Sections",
         "",
-        "| Section | Structured contract | Classification compatibility |",
-        "| --- | --- | --- |",
+        (
+            "| Section | Ordinary contract | Structured contract | "
+            "Classification compatibility |"
+        ),
+        "| --- | --- | --- | --- |",
     ]
     for section in policy.sections:
         structured = section.structured
@@ -222,6 +231,9 @@ def render_simple_agent_guide(
             + " | ".join(
                 (
                     markdown_code(section.path),
+                    # Every section takes ordinary Markdown. A structured
+                    # contract is an addition to that, never a replacement.
+                    ordinary_contract,
                     markdown_code(structured.contract) if structured is not None else "-",
                     (
                         markdown_code(structured.classification)

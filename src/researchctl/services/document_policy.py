@@ -13,9 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from researchctl.domain.models import DocumentLayoutPolicy, SimpleDocumentLayoutPolicy
+from researchctl.domain.models import (
+    SIMPLE_MARKDOWN_CONTRACT,
+    AgentGuideFormat,
+    DocumentLayoutPolicy,
+    SimpleDocumentLayoutPolicy,
+)
 from researchctl.errors import RCPError
-from researchctl.serialization import load_yaml
+from researchctl.serialization import dump_yaml, load_yaml
 
 LEGACY_POLICY_VERSION = 1
 SIMPLE_POLICY_VERSION = 2
@@ -132,3 +137,76 @@ def load_effective_policy(path: Path) -> EffectiveDocumentPolicy:
         load_yaml(path.read_text(encoding="utf-8")),
         path=path,
     )
+
+
+#: Comments that belong beside the field they explain, not in a preamble the
+#: adopter scrolls past. ``sections`` carries the longest one because it is the
+#: only field this template deliberately refuses to fill.
+_SIMPLE_TEMPLATE_HEADER = (
+    "# researchctl standalone document policy candidate (version 2)\n"
+    "# Directory-first: a section directory under the document root is the\n"
+    "# document type. There is no classification to invent and no route table to\n"
+    "# keep in sync. Adopting this policy, and every later change to its\n"
+    "# sections, is a governance change needing manager/CODEOWNER review.\n"
+)
+
+_SIMPLE_TEMPLATE_COMMENTS: dict[str, str] = {
+    "root": "# Every governed document lives under this directory.\n",
+    "sections": (
+        "# Inventory this repository before filling this in. Directory names are\n"
+        "# facts about this project, so the list ships empty and\n"
+        "# `researchctl doc policy-lint` refuses the candidate until you write\n"
+        "# down the sections this repository actually has. Copying another\n"
+        "# project's layout is the failure this gate exists to prevent.\n"
+        "# Every section accepts ordinary Markdown under the\n"
+        f"# {SIMPLE_MARKDOWN_CONTRACT} contract. Add `structured` only where a\n"
+        "# section really keeps canonical YAML sources:\n"
+        "#\n"
+        "#   sections:\n"
+        "#     - path: runbooks\n"
+        "#     - path: experiments\n"
+        "#       structured:\n"
+        "#         contract: analysis-brief\n"
+    ),
+    "root_pages": "# Markdown pages published directly from the document root.\n",
+    "max_depth": "# Directory depth allowed below a section directory.\n",
+    "ownership": (
+        "# CODEOWNERS is the only review authority. `required` refuses a document\n"
+        "# that no CODEOWNERS rule matches.\n"
+    ),
+    "agent_guides": (
+        "# Files whose managed block `researchctl doc agent-guide` writes. A guide\n"
+        "# must live outside the document root.\n"
+    ),
+}
+
+
+def simple_document_policy_template(
+    guide_format: AgentGuideFormat,
+) -> dict[str, Any]:
+    """The version 2 adoption candidate as data, with no section chosen yet."""
+
+    return {
+        "version": SIMPLE_POLICY_VERSION,
+        "root": "docs",
+        "sections": [],
+        "root_pages": ["README.md"],
+        "max_depth": 3,
+        "ownership": {"source": "codeowners", "required": True},
+        "agent_guides": [
+            {
+                "path": "CLAUDE.md" if guide_format == "claude" else "AGENTS.md",
+                "format": guide_format,
+            }
+        ],
+    }
+
+
+def render_simple_document_policy_template(guide_format: AgentGuideFormat) -> bytes:
+    """Render the candidate one field at a time so each keeps its comment."""
+
+    blocks = [_SIMPLE_TEMPLATE_HEADER]
+    for key, value in simple_document_policy_template(guide_format).items():
+        blocks.append(_SIMPLE_TEMPLATE_COMMENTS.get(key, ""))
+        blocks.append(dump_yaml({key: value}))
+    return "".join(blocks).encode("utf-8")

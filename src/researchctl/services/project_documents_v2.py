@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from researchctl.domain.models import (
+    SIMPLE_MARKDOWN_CONTRACT,
     SimpleDocumentLayoutPolicy,
     SimpleDocumentSection,
 )
@@ -65,6 +66,7 @@ from researchctl.services.structured_documents_v2 import (
 
 __all__ = [
     "LEGACY_FRONTMATTER_REPLACEMENTS",
+    "SIMPLE_MARKDOWN_CONTRACT",
     "OwnershipResolution",
     "SimpleDocumentFacts",
     "SimpleDocumentTreeLintResult",
@@ -616,5 +618,9 @@ def check_simple_document(
         owners=owners,
     )
     findings.extend(document_findings)
-    payload = {"kind": "markdown", "contract": "markdown", **facts.as_dict()}
+    payload = {
+        "kind": "markdown",
+        "contract": SIMPLE_MARKDOWN_CONTRACT,
+        **facts.as_dict(),
+    }
     return findings, payload

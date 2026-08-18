@@ -56,6 +56,7 @@ from researchctl.services.document_policy import (
     EffectiveDocumentPolicy,
     build_effective_policy,
     load_effective_policy,
+    render_simple_document_policy_template,
 )
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
@@ -79,6 +80,7 @@ from researchctl.services.project_documents import (
     require_adopted_document_policy,
 )
 from researchctl.services.project_documents_v2 import (
+    SIMPLE_MARKDOWN_CONTRACT,
     SimpleDocumentTreeLintResult,
     check_simple_document,
     lint_simple_document_tree,
@@ -104,14 +106,19 @@ doc_app = typer.Typer(
 )
 
 _STANDALONE_POLICY = ".researchctl-docs.yaml"
-_DOCUMENT_CONTRACTS: tuple[DocumentSchema, ...] = (
+#: Contract names `doc contracts` describes. The directory-first ordinary
+#: contract sits beside the classification-route ones: both policy versions
+#: stay discoverable from one command.
+_DOCUMENT_CONTRACTS: tuple[str, ...] = (
     "markdown-frontmatter",
+    SIMPLE_MARKDOWN_CONTRACT,
     "analysis-brief",
     "design-document",
     "project-status-summary",
 )
 DiscoverableDocumentSchema = Literal[
     "markdown-frontmatter",
+    "simple-markdown-frontmatter",
     "analysis-brief",
     "design-document",
     "project-status-summary",
@@ -742,9 +749,23 @@ def _slugify(title: str) -> str:
     return slug[:80].rstrip("-")
 
 
-def _contract_data(contract: DocumentSchema) -> dict[str, object]:
+#: What an author has to know about the directory-first ordinary contract that
+#: its JSON Schema cannot say, because these facts live in the tree, in
+#: CODEOWNERS, and in Git rather than in the document.
+_SIMPLE_MARKDOWN_FACTS: tuple[str, ...] = (
+    "Frontmatter is optional; a document with none is valid.",
+    "The title is the first level-one heading, never a frontmatter field.",
+    "The document type is its section directory under the document root.",
+    "Owners come from CODEOWNERS, which is the only review authority.",
+    "The last edited date comes from Git, not from the document.",
+    "There is no standalone check: `doc check` needs the policy that routes the file.",
+)
+
+
+def _contract_data(contract: str) -> dict[str, object]:
     schema = json.loads(generate_schema_files()[f"{contract}.schema.json"])
     properties = schema.get("properties", {})
+    simple_markdown = contract == SIMPLE_MARKDOWN_CONTRACT
     prose_limits: dict[str, object] = {}
     if isinstance(schema.get("x-researchctl-prose"), dict):
         prose_limits["$"] = schema["x-researchctl-prose"]
@@ -754,11 +775,12 @@ def _contract_data(contract: DocumentSchema) -> dict[str, object]:
                 value.get("x-researchctl-prose"), dict
             ):
                 prose_limits[str(name)] = value["x-researchctl-prose"]
-    source_format = (
-        "Markdown with YAML frontmatter"
-        if contract == "markdown-frontmatter"
-        else "YAML"
-    )
+    if simple_markdown:
+        source_format = "Markdown with optional YAML frontmatter"
+    elif contract == "markdown-frontmatter":
+        source_format = "Markdown with YAML frontmatter"
+    else:
+        source_format = "YAML"
     standalone_check = (
         "researchctl brief lint PATH"
         if contract == "analysis-brief"
@@ -769,32 +791,51 @@ def _contract_data(contract: DocumentSchema) -> dict[str, object]:
         if contract == "analysis-brief"
         else None
     )
+    no_renderer = simple_markdown or contract == "markdown-frontmatter"
+    if simple_markdown:
+        # The directory-first contract has no sources or provenance field and
+        # its linter rejects both, so pointing an author at them here would
+        # contradict `doc check`.
+        provenance = (
+            "Cite with ordinary Markdown links or depends_on; quantitative "
+            "provenance belongs to a structured contract."
+        )
+    elif contract == "markdown-frontmatter":
+        provenance = (
+            "Use keyed sources + provenance for measured, estimated, derived, or "
+            "external Markdown claims."
+        )
+    else:
+        provenance = "Use the contract's keyed sources/evidence fields."
     return {
         "contract": contract,
         "source_format": source_format,
         "required_fields": schema.get("required", []),
-        "check_command": standalone_check or "researchctl doc check PATH",
+        "optional_fields": sorted(properties) if simple_markdown else [],
+        "authoring_facts": list(_SIMPLE_MARKDOWN_FACTS) if simple_markdown else [],
+        "check_command": (
+            # This contract is only meaningful inside a policy that routes the
+            # document, so there is no standalone form to offer.
+            "researchctl doc check PATH --project ."
+            if simple_markdown
+            else standalone_check or "researchctl doc check PATH"
+        ),
         "standalone_check_command": standalone_check,
         "routed_check_command": "researchctl doc check PATH --project .",
         "render_command": standalone_render or (
             None
-            if contract == "markdown-frontmatter"
+            if no_renderer
             else "researchctl doc render PATH --output-file PATH.md"
         ),
         "standalone_render_command": standalone_render,
         "routed_render_command": (
             None
-            if contract == "markdown-frontmatter"
+            if no_renderer
             else "researchctl doc render PATH --project . --output-file PATH.md"
         ),
         "schema_command": f"researchctl doc schema --contract {contract}",
         "prose_limits": prose_limits,
-        "provenance": (
-            "Use keyed sources + provenance for measured, estimated, derived, or "
-            "external Markdown claims."
-            if contract == "markdown-frontmatter"
-            else "Use the contract's keyed sources/evidence fields."
-        ),
+        "provenance": provenance,
         "source_storage": (
             "Standalone lint/render may use any YAML path. Governed route checking "
             "tracks SOURCE.yaml beside generated SOURCE.md; the marker source digest "
@@ -1004,8 +1045,87 @@ def _scaffold_source(
     raise AssertionError(f"unsupported document contract: {contract}")
 
 
+def _effective_policy_contracts(effective: EffectiveDocumentPolicy) -> dict[str, object]:
+    """Say which contracts this project's own policy actually accepts.
+
+    Everything here is read from the policy that was loaded. Nothing is guessed
+    for a project that has no policy: the caller fails before reaching this.
+    """
+
+    if effective.simple is not None:
+        sections: list[dict[str, object]] = []
+        for section in effective.simple.sections:
+            entry: dict[str, object] = {
+                "section": section.path,
+                "directory": effective.simple.section_directory(section),
+                # Every section accepts ordinary Markdown; a structured
+                # contract is an addition, never a replacement.
+                "ordinary_contract": SIMPLE_MARKDOWN_CONTRACT,
+            }
+            if section.structured is not None:
+                entry["structured_contract"] = section.structured.contract
+                if section.structured.classification is not None:
+                    entry["classification"] = section.structured.classification
+            sections.append(entry)
+        return {
+            "policy_version": effective.version,
+            "source": str(effective.source) if effective.source is not None else None,
+            "root": effective.simple.root,
+            "sections": sections,
+        }
+    legacy = effective.require_legacy(command="doc contracts")
+    return {
+        "policy_version": effective.version,
+        "source": str(effective.source) if effective.source is not None else None,
+        "root": legacy.root,
+        "routes": [
+            {
+                "document_type": route.document_type,
+                "classification": route.classification,
+                "contract": route.contract,
+                "directory": route.directory,
+            }
+            for route in legacy.routes
+        ],
+    }
+
+
+def _echo_effective_policy_contracts(summary: dict[str, object]) -> None:
+    typer.echo("")
+    typer.echo(f"Effective policy: version {summary['policy_version']}")
+    typer.echo(f"  Source: {summary['source']}")
+    typer.echo(f"  Document root: {summary['root']}")
+    for section in summary.get("sections", []) or []:
+        if not isinstance(section, dict):
+            raise AssertionError("effective policy sections must be mappings")
+        typer.echo(f"  Section: {section['section']} ({section['directory']})")
+        typer.echo(f"    Ordinary: {section['ordinary_contract']}")
+        if "structured_contract" in section:
+            typer.echo(f"    Structured: {section['structured_contract']}")
+        if "classification" in section:
+            typer.echo(f"    Classification: {section['classification']}")
+    for route in summary.get("routes", []) or []:
+        if not isinstance(route, dict):
+            raise AssertionError("effective policy routes must be mappings")
+        typer.echo(f"  Route: {route['document_type']} ({route['directory']})")
+        typer.echo(f"    Classification: {route['classification']}")
+        typer.echo(f"    Contract: {route['contract']}")
+
+
 @doc_app.command("contracts")
 def doc_contracts_command(
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            "--project",
+            "-C",
+            help="Also report which contracts this project's policy accepts.",
+        ),
+    ] = None,
+    policy_file: Annotated[
+        Path | None,
+        typer.Option("--policy-file", help="Standalone document policy YAML."),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit a stable JSON envelope."),
@@ -1014,13 +1134,25 @@ def doc_contracts_command(
     """List built-in document contracts and the commands that handle them."""
 
     contracts = [_contract_data(contract) for contract in _DOCUMENT_CONTRACTS]
+    data: dict[str, object] = {"contracts": contracts}
+    try:
+        if project is not None or policy_file is not None:
+            # A project was named, so the answer must come from that project's
+            # policy. A missing policy is an error, never a default.
+            _repository, effective = _repository_and_effective_policy(
+                project if project is not None else Path("."),
+                policy_file,
+            )
+            data["effective_policy"] = _effective_policy_contracts(effective)
+    except Exception as exc:
+        _abort(_error(exc), command="doc.contracts", json_output=json_output)
     if json_output:
         typer.echo(
             dump_envelope(
                 envelope(
                     command="doc.contracts",
                     success=True,
-                    data={"contracts": contracts},
+                    data=data,
                 )
             )
         )
@@ -1031,7 +1163,17 @@ def doc_contracts_command(
         required = item["required_fields"]
         if not isinstance(required, list):
             raise AssertionError("JSON Schema required fields must be a list")
-        typer.echo(f"  Required: {', '.join(required)}")
+        typer.echo(f"  Required: {', '.join(required) or 'none'}")
+        optional = item["optional_fields"]
+        if not isinstance(optional, list):
+            raise AssertionError("optional contract fields must be a list")
+        if optional:
+            typer.echo(f"  Optional: {', '.join(str(name) for name in optional)}")
+        facts = item["authoring_facts"]
+        if not isinstance(facts, list):
+            raise AssertionError("contract authoring facts must be a list")
+        for fact in facts:
+            typer.echo(f"  Note: {fact}")
         typer.echo(f"  Check: {item['check_command']}")
         standalone_check = item["standalone_check_command"]
         if standalone_check is not None:
@@ -1050,6 +1192,11 @@ def doc_contracts_command(
         source_storage = item["source_storage"]
         if source_storage is not None:
             typer.echo(f"  Source storage: {source_storage}")
+    summary = data.get("effective_policy")
+    if summary is not None:
+        if not isinstance(summary, dict):
+            raise AssertionError("effective policy summary must be a mapping")
+        _echo_effective_policy_contracts(summary)
 
 
 @doc_app.command("schema")
@@ -1838,18 +1985,27 @@ def doc_policy_template_command(
             help="Project instruction target included in the example policy.",
         ),
     ] = "claude",
+    policy_version: Annotated[
+        Literal[1, 2],
+        typer.Option(
+            "--policy-version",
+            help="Policy contract to render: 2 is directory-first, 1 is route-based.",
+        ),
+    ] = SIMPLE_POLICY_VERSION,
     output_file: Annotated[
         Path | None,
         typer.Option("--output-file", help="Write the standalone policy candidate here."),
     ] = None,
 ) -> None:
-    """Render a structural policy candidate with required rationale placeholders."""
+    """Render a policy candidate the adopter must still complete before linting."""
 
     try:
-        _write_or_echo(
-            render_standalone_document_policy_template(agent_format),
-            output_file,
+        rendered = (
+            render_simple_document_policy_template(agent_format)
+            if policy_version == SIMPLE_POLICY_VERSION
+            else render_standalone_document_policy_template(agent_format)
         )
+        _write_or_echo(rendered, output_file)
     except Exception as exc:
         _abort(_error(exc), command="doc.policy-template", json_output=False)
 

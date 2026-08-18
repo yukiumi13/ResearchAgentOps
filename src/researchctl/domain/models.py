@@ -1452,6 +1452,11 @@ class MarkdownFrontmatter(StrictModel):
         return self
 
 
+#: The contract an ordinary version 2 document satisfies. Its JSON Schema is
+#: registered under the same name, so what `doc check` reports, what the managed
+#: Agent guide names, and what `doc schema --contract` prints are one string.
+SIMPLE_MARKDOWN_CONTRACT = "simple-markdown-frontmatter"
+
 SIMPLE_MARKDOWN_FRONTMATTER_FIELDS: tuple[str, ...] = (
     "status",
     "tags",

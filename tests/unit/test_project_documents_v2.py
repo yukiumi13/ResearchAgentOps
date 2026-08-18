@@ -42,6 +42,7 @@ from researchctl.services.markdown_source import (
 from researchctl.services.project_documents import (
     PROJECT_AGENT_GUIDE_RENDERER_IDS,
     render_project_agent_guide,
+    render_standalone_document_policy_template,
 )
 from researchctl.services.project_documents_v2 import (
     check_simple_document,
@@ -827,7 +828,7 @@ def test_doc_check_reports_links_and_dependencies(tmp_path: Path) -> None:
     data = json.loads(result.stdout)["data"]
     assert data["section"] == "design"
     assert data["document_type"] == "design"
-    assert data["contract"] == "markdown"
+    assert data["contract"] == "simple-markdown-frontmatter"
     assert data["depends_on"] == ["docs/runbooks/run.md"]
     assert data["links"] == ["docs/runbooks/run.md"]
 
@@ -1169,7 +1170,7 @@ def test_doc_check_accepts_both_kinds_inside_a_structured_section(
     assert ordinary.exit_code == 0, ordinary.stdout
     ordinary_data = json.loads(ordinary.stdout)["data"]
     assert ordinary_data["kind"] == "markdown"
-    assert ordinary_data["contract"] == "markdown"
+    assert ordinary_data["contract"] == "simple-markdown-frontmatter"
     assert ordinary_data["title"] == "Encoder notes"
 
 
@@ -2738,17 +2739,20 @@ def test_the_version_two_guide_states_the_directory_first_contract() -> None:
     assert "project-document-agent-guide.claude.v5" not in guide
 
     for statement in (
-        "Its section directory is its type",
+        "An ordinary document satisfies the `simple-markdown-frontmatter` contract",
+        "Markdown whose section directory is its type",
         "no `a/b:c` classification",
-        "title is the first level-one heading",
-        "owners come\nfrom CODEOWNERS, which is the only review authority",
+        "Its title is the first\nlevel-one heading in the file",
+        "owners come from CODEOWNERS, which is the\nonly review authority",
         "edited comes from Git",
         "Frontmatter is optional and a document with none is valid",
         "A structured YAML contract is opt-in per section",
         "a direct child of the section directory",
         "regenerate it, never edit it by hand",
         "repository-root-relative path",
-        "researchctl doc contracts",
+        "researchctl doc contracts --project .",
+        "researchctl doc schema --contract simple-markdown-frontmatter",
+        "researchctl doc schema --contract CONTRACT",
         "researchctl doc scaffold --type SECTION --title TITLE",
         "researchctl doc check PATH",
         "researchctl doc render PATH --output-file PATH.md",
@@ -2764,10 +2768,21 @@ def test_the_version_two_guide_states_the_directory_first_contract() -> None:
         assert f"- `{field}` --" in guide, field
     assert guide.count(" -- ") == len(SIMPLE_MARKDOWN_FRONTMATTER_FIELDS)
 
-    assert "| Section | Structured contract | Classification compatibility |" in guide
-    assert "| `design` | `design-document` | `design/architecture:document` |" in guide
-    assert "| `profiling` | `analysis-brief` | - |" in guide
-    assert "| `runbooks` | - | - |" in guide
+    # Every section names the ordinary contract, so no reader concludes that a
+    # section without a structured contract accepts nothing.
+    assert (
+        "| Section | Ordinary contract | Structured contract | "
+        "Classification compatibility |"
+    ) in guide
+    assert (
+        "| `design` | `simple-markdown-frontmatter` | `design-document` | "
+        "`design/architecture:document` |"
+    ) in guide
+    assert "| `profiling` | `simple-markdown-frontmatter` | `analysis-brief` | - |" in (
+        guide
+    )
+    assert "| `runbooks` | `simple-markdown-frontmatter` | - | - |" in guide
+    assert guide.count("| `simple-markdown-frontmatter` |") == 3
     assert (
         "Directory depth below a section: at most 3. "
         "Accepted root pages: `README.md`. Ownership: CODEOWNERS, required."
@@ -2894,3 +2909,289 @@ def test_any_edit_to_the_managed_block_is_reported_as_drift(tmp_path: Path) -> N
     assert _invalid(lint_simple_document_tree(repository, _simple(widened))) == [
         "agent_guide_mismatch"
     ]
+
+
+# --------------------------------------------------------------------------
+# Discovering the directory-first contract, and adopting a policy that uses it
+# --------------------------------------------------------------------------
+
+
+def _contract_block(stdout: str, contract: str) -> str:
+    """Return only the human paragraph describing one contract."""
+
+    blocks = stdout.split("Contract: ")
+    matching = [block for block in blocks if block.startswith(f"{contract}\n")]
+    assert len(matching) == 1, f"{contract} appears {len(matching)} times"
+    return matching[0]
+
+
+def test_the_contract_doc_check_reports_is_the_one_doc_schema_prints(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    note = repository / "docs/runbooks/operate.md"
+    note.write_text("# Operate the worker\n", encoding="utf-8")
+    runner = CliRunner()
+
+    checked = runner.invoke(
+        app,
+        ["doc", "check", str(note), "--project", str(repository), "--json"],
+    )
+
+    assert checked.exit_code == 0, checked.stdout
+    reported = json.loads(checked.stdout)["data"]["contract"]
+    assert reported == "simple-markdown-frontmatter"
+
+    # The name is not decoration: whatever `doc check` prints has to be a
+    # registered schema, or an author cannot look up what it accepts.
+    schema = runner.invoke(app, ["doc", "schema", "--contract", reported])
+
+    assert schema.exit_code == 0, schema.stdout + str(schema.stderr)
+    document = json.loads(schema.stdout)
+    assert document["title"] == "SimpleMarkdownFrontmatter"
+    assert document["$id"].endswith(f":{reported}")
+    assert sorted(document["properties"]) == sorted(SIMPLE_MARKDOWN_FRONTMATTER_FIELDS)
+    assert "required" not in document
+
+
+def test_doc_contracts_describes_the_directory_first_ordinary_contract() -> None:
+    runner = CliRunner()
+
+    human = runner.invoke(app, ["doc", "contracts"])
+    machine = runner.invoke(app, ["doc", "contracts", "--json"])
+
+    assert human.exit_code == 0, human.stdout
+    assert machine.exit_code == 0, machine.stdout
+    block = _contract_block(human.stdout, "simple-markdown-frontmatter")
+    assert "Source: Markdown with optional YAML frontmatter" in block
+    assert "Required: none" in block
+    assert (
+        "Optional: depends_on, locked, reviewed_on, status, superseded_by, tags"
+    ) in block
+    assert "Note: Frontmatter is optional; a document with none is valid." in block
+    assert "Note: The title is the first level-one heading" in block
+    assert "Note: The document type is its section directory" in block
+    assert "Note: Owners come from CODEOWNERS" in block
+    assert "Note: The last edited date comes from Git" in block
+    assert "Check: researchctl doc check PATH --project ." in block
+    assert "Schema: researchctl doc schema --contract simple-markdown-frontmatter" in (
+        block
+    )
+    assert "Render: none (manual Markdown is canonical)" in block
+    # There is no standalone form of this check, so the listing must not offer
+    # one; the classification-route contracts keep theirs.
+    assert "Standalone check" not in block
+    assert "Standalone check (no policy): researchctl brief lint PATH" in human.stdout
+    # `doc check` rejects sources and provenance frontmatter here, so the
+    # listing must not send an author toward the version 1 answer.
+    assert "keyed sources" not in block
+    assert "Provenance: Cite with ordinary Markdown links or depends_on" in block
+    assert "keyed sources" in _contract_block(human.stdout, "markdown-frontmatter")
+
+    contracts = json.loads(machine.stdout)["data"]["contracts"]
+    entry = next(
+        item for item in contracts if item["contract"] == "simple-markdown-frontmatter"
+    )
+    assert entry["required_fields"] == []
+    assert entry["optional_fields"] == sorted(SIMPLE_MARKDOWN_FRONTMATTER_FIELDS)
+    assert entry["standalone_check_command"] is None
+    assert entry["check_command"] == "researchctl doc check PATH --project ."
+    assert entry["render_command"] is None
+    assert entry["routed_render_command"] is None
+    assert len(entry["authoring_facts"]) == 6
+
+
+def test_doc_contracts_binds_each_section_to_the_contracts_it_accepts(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path, _structured_policy())
+    runner = CliRunner()
+
+    human = runner.invoke(app, ["doc", "contracts", "--project", str(repository)])
+    machine = runner.invoke(app, ["doc", "contracts", "-C", str(repository), "--json"])
+
+    assert human.exit_code == 0, human.stdout
+    assert machine.exit_code == 0, machine.stdout
+    assert "Effective policy: version 2" in human.stdout
+    assert "Section: design (docs/design)" in human.stdout
+    assert "Classification: design/architecture:document" in human.stdout
+    assert human.stdout.count("Ordinary: simple-markdown-frontmatter") == 3
+
+    summary = json.loads(machine.stdout)["data"]["effective_policy"]
+    # Each section reports its own contracts and nothing else: a structured
+    # contract belongs to the one section that configures it, and a
+    # classification only to a contract that has the field.
+    assert summary == {
+        "policy_version": 2,
+        "source": str(repository / ".researchctl-docs.yaml"),
+        "root": "docs",
+        "sections": [
+            {
+                "section": "design",
+                "directory": "docs/design",
+                "ordinary_contract": "simple-markdown-frontmatter",
+                "structured_contract": "design-document",
+                "classification": "design/architecture:document",
+            },
+            {
+                "section": "profiling",
+                "directory": "docs/profiling",
+                "ordinary_contract": "simple-markdown-frontmatter",
+                "structured_contract": "analysis-brief",
+            },
+            {
+                "section": "runbooks",
+                "directory": "docs/runbooks",
+                "ordinary_contract": "simple-markdown-frontmatter",
+            },
+        ],
+    }
+
+
+def test_doc_contracts_keeps_route_facts_under_a_version_one_policy(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".researchctl-docs.yaml").write_text(
+        dump_yaml({"routes": [dict(LEGACY_ROUTE)]}),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    human = runner.invoke(app, ["doc", "contracts", "--project", str(tmp_path)])
+    machine = runner.invoke(app, ["doc", "contracts", "-C", str(tmp_path), "--json"])
+
+    assert human.exit_code == 0, human.stdout
+    assert machine.exit_code == 0, machine.stdout
+    assert "Effective policy: version 1" in human.stdout
+    assert "Route: reference (docs/reference)" in human.stdout
+    assert "Classification: reference/project:document" in human.stdout
+    assert "Contract: markdown-frontmatter" in human.stdout
+    assert "ordinary_contract" not in machine.stdout
+
+    summary = json.loads(machine.stdout)["data"]["effective_policy"]
+    assert summary["policy_version"] == 1
+    assert summary["routes"] == [
+        {
+            "document_type": "reference",
+            "classification": "reference/project:document",
+            "contract": "markdown-frontmatter",
+            "directory": "docs/reference",
+        }
+    ]
+    assert "sections" not in summary
+
+
+def test_doc_contracts_refuses_to_describe_a_project_with_no_policy(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    runner = CliRunner()
+
+    human = runner.invoke(app, ["doc", "contracts", "--project", str(tmp_path)])
+    machine = runner.invoke(app, ["doc", "contracts", "-C", str(tmp_path), "--json"])
+
+    # Naming a project is a question about that project. Answering it from a
+    # default layout would be a guess, so the command fails instead.
+    assert human.exit_code == 2
+    assert "document_policy_missing" in str(human.stderr)
+    assert "Effective policy" not in human.stdout
+    assert machine.exit_code == 2
+    envelope = json.loads(machine.stdout)
+    assert envelope["success"] is False
+    assert envelope["errors"][0]["code"] == "document_policy_missing"
+    assert envelope["data"] == {}
+
+
+def test_the_version_two_policy_template_is_blocked_only_by_its_empty_sections(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / ".researchctl-docs.yaml"
+    runner = CliRunner()
+
+    rendered = runner.invoke(
+        app,
+        ["doc", "policy-template", "--output-file", str(candidate)],
+    )
+
+    assert rendered.exit_code == 0, rendered.stdout + str(rendered.stderr)
+    template = candidate.read_text(encoding="utf-8")
+    # The one field the template refuses to fill is the one only this
+    # repository knows. Everything else is ready to adopt as written.
+    assert "sections: []\n" in template
+    assert "version: 2\n" in template
+    assert "root: docs\n" in template
+    assert "max_depth: 3\n" in template
+    assert "- README.md\n" in template
+    assert "  source: codeowners\n" in template
+    assert "  required: true\n" in template
+    assert "  path: CLAUDE.md\n" in template
+    assert "Inventory this repository before filling this in" in template
+    assert "Directory names are\n# facts about this project" in template
+    assert "#     - path: runbooks" in template
+    assert "#       structured:\n#         contract: analysis-brief" in template
+    assert "simple-markdown-frontmatter contract" in template
+
+    blocked = runner.invoke(app, ["doc", "policy-lint", str(candidate), "--json"])
+
+    assert blocked.exit_code == 2
+    details = json.loads(blocked.stdout)["errors"][0]["context"]["details"]
+    assert [detail["loc"] for detail in details] == [["sections"]]
+    assert details[0]["type"] == "too_short"
+
+    filled = template.replace(
+        "sections: []\n",
+        "sections:\n"
+        "- path: runbooks\n"
+        "- path: experiments\n"
+        "  structured:\n"
+        "    contract: analysis-brief\n",
+    )
+    assert filled != template
+    candidate.write_text(filled, encoding="utf-8")
+
+    adopted = runner.invoke(app, ["doc", "policy-lint", str(candidate), "--json"])
+
+    # Listing the sections is the whole of the work: nothing else in the
+    # template was left incomplete.
+    assert adopted.exit_code == 0, adopted.stdout
+    data = json.loads(adopted.stdout)["data"]
+    assert data["policy_version"] == 2
+    assert data["sections"] == ["runbooks", "experiments"]
+    assert data["structured_sections"] == ["experiments"]
+    assert data["ownership"] == {"source": "codeowners", "required": True}
+    assert data["root_pages"] == ["README.md"]
+    assert data["max_depth"] == 3
+    assert data["agent_guides"] == 1
+
+
+@pytest.mark.parametrize(
+    ("guide_format", "guide_path"),
+    [("claude", "CLAUDE.md"), ("agents", "AGENTS.md")],
+)
+def test_explicit_version_one_still_renders_the_original_template(
+    tmp_path: Path,
+    guide_format: str,
+    guide_path: str,
+) -> None:
+    candidate = tmp_path / "candidate.yaml"
+
+    rendered = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "policy-template",
+            "--policy-version",
+            "1",
+            "--agent-format",
+            guide_format,
+            "--output-file",
+            str(candidate),
+        ],
+    )
+
+    assert rendered.exit_code == 0, rendered.stdout + str(rendered.stderr)
+    assert candidate.read_bytes() == render_standalone_document_policy_template(
+        guide_format  # type: ignore[arg-type]
+    )
+    assert guide_path in candidate.read_text(encoding="utf-8")

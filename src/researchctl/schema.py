@@ -39,6 +39,7 @@ from researchctl.domain.models import (
     RunSpec,
     SimpleDocumentLayoutPolicy,
     SimpleDocumentSiteManifest,
+    SimpleMarkdownFrontmatter,
     StatusUpdate,
     TaskRecord,
 )
@@ -72,6 +73,7 @@ SCHEMA_MODELS: Mapping[str, type[BaseModel]] = {
     "run-spec": RunSpec,
     "simple-document-layout-policy": SimpleDocumentLayoutPolicy,
     "simple-document-site-manifest": SimpleDocumentSiteManifest,
+    "simple-markdown-frontmatter": SimpleMarkdownFrontmatter,
     "status-update": StatusUpdate,
     "task": TaskRecord,
 }
