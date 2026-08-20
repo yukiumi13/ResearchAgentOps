@@ -278,12 +278,17 @@ def test_site_manifest_records_dirty_state_and_refuses_an_invalid_tree(tmp_path:
 
 
 def test_site_manifest_cli_streams_json_and_safely_replaces_output(tmp_path: Path) -> None:
-    repository, _policy_value = _repository(tmp_path)
+    repository, policy_value = _repository(tmp_path)
     runner = CliRunner()
 
     streamed = runner.invoke(app, ["doc", "site-manifest", "-C", str(repository)])
     assert streamed.exit_code == 0
     assert json.loads(streamed.stdout)["manifest_kind"] == "document_site_manifest"
+    # Version dispatch must leave a classification-route policy on exactly the
+    # two functions it already used, byte for byte.
+    assert streamed.stdout.encode("utf-8") == render_document_site_manifest(
+        build_document_site_manifest(repository, policy_value)
+    )
 
     output = tmp_path / "site-manifest.json"
     rendered = runner.invoke(

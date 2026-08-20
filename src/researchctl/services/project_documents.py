@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import os
 import re
@@ -38,9 +37,23 @@ from researchctl.serialization import (
     load_yaml,
     validation_error_details,
 )
+from researchctl.services.agent_guides import (
+    agent_guide_markers,
+    lint_agent_guide_targets,
+)
+from researchctl.services.document_findings import DocumentFinding
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
     render_generated_markdown,
+)
+from researchctl.services.generated_markdown import (
+    markdown_code as _code,
+)
+from researchctl.services.generated_markdown import (
+    markdown_text as _text,
+)
+from researchctl.services.generated_markdown import (
+    renderer_marker as _visible_marker,
 )
 
 DESIGN_DOCUMENT_RENDERER_ID = "research-design-document.v2"
@@ -57,23 +70,7 @@ StructuredDocument = ProjectDocument | AnalysisBrief
 ProjectDocumentKind = Literal["design_document", "project_status_summary"]
 
 
-@dataclass(frozen=True, slots=True)
-class DocumentFinding:
-    kind: Literal["warning", "invalid"]
-    code: str
-    path: str
-    message: str
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "kind": self.kind,
-            "code": self.code,
-            "path": self.path,
-            "message": self.message,
-        }
-
-
-def _schema_validation_findings(
+def schema_validation_findings(
     error: ValidationError,
     *,
     source_path: Path,
@@ -223,23 +220,6 @@ def lint_project_document(
     )
 
 
-def _text(value: object) -> str:
-    rendered = html.escape(str(value), quote=False).replace("\r\n", "\n").replace("\r", "\n")
-    for character in ("\\", "`", "*", "_", "[", "]", "#", "|"):
-        rendered = rendered.replace(character, f"\\{character}")
-    return "<br>".join(rendered.split("\n"))
-
-
-def _code(value: object) -> str:
-    rendered = str(value).replace("\r", " ").replace("\n", " ")
-    delimiter = "`" if "`" not in rendered else "``"
-    return f"{delimiter}{rendered}{delimiter}"
-
-
-def _visible_marker(renderer_id: str) -> str:
-    return f"> Renderer: {_code(f'researchctl-renderer:{renderer_id}')}"
-
-
 def render_document_index(policy: DocumentLayoutPolicy) -> bytes:
     lines = [
         "# Documentation",
@@ -324,14 +304,6 @@ def render_standalone_document_policy_template(
     return (
         header + dump_yaml(standalone_document_policy_template(guide_format))
     ).encode("utf-8")
-
-
-def agent_guide_markers(guide_format: AgentGuideFormat) -> tuple[str, str]:
-    identity = f"project-document-agent-guide.{guide_format}"
-    return (
-        f"<!-- researchctl-agent-guide:{identity}:begin -->",
-        f"<!-- researchctl-agent-guide:{identity}:end -->",
-    )
 
 
 def render_project_agent_guide(
@@ -704,7 +676,7 @@ def _is_within(path: str, directory: str) -> bool:
     )
 
 
-def _collect_files(root: Path, findings: list[DocumentFinding]) -> list[Path]:
+def collect_document_files(root: Path, findings: list[DocumentFinding]) -> list[Path]:
     collected: list[Path] = []
 
     def walk(directory: Path) -> None:
@@ -761,85 +733,12 @@ def _lint_agent_guides(
     policy: DocumentLayoutPolicy,
     findings: list[DocumentFinding],
 ) -> int:
-    checked = 0
-    for target in policy.agent_guides:
-        try:
-            guide_path = safe_repository_path(repository, target.path)
-        except RCPError:
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="agent_guide_path_invalid",
-                    path=target.path,
-                    message="Configured agent guide path contains a symbolic link.",
-                )
-            )
-            continue
-        if not guide_path.exists():
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="agent_guide_missing",
-                    path=target.path,
-                    message="Configured agent guide is missing.",
-                )
-            )
-            continue
-        if guide_path.is_symlink() or not guide_path.is_file():
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="agent_guide_path_invalid",
-                    path=target.path,
-                    message="Configured agent guide must be a regular non-symlink file.",
-                )
-            )
-            continue
-        checked += 1
-        try:
-            observed = guide_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="agent_guide_unreadable",
-                    path=target.path,
-                    message=f"Configured agent guide cannot be read: {type(error).__name__}.",
-                )
-            )
-            continue
-        expected = render_project_agent_guide(policy, target.format).decode("utf-8")
-        begin, end = agent_guide_markers(target.format)
-        marker_identity = begin.removeprefix("<!-- researchctl-agent-guide:").removesuffix(
-            ":begin -->"
-        )
-        marker_prefix = f"<!-- researchctl-agent-guide:{marker_identity}"
-        begin_index = observed.find(begin)
-        end_index = observed.find(end)
-        if (
-            begin_index < 0
-            or end_index < begin_index
-            or observed.count(begin) != 1
-            or observed.count(end) != 1
-            or observed.count(marker_prefix) != 2
-        ):
-            matches = False
-        else:
-            observed_block = observed[begin_index : end_index + len(end)] + "\n"
-            matches = observed_block == expected
-        if not matches:
-            findings.append(
-                DocumentFinding(
-                    kind="invalid",
-                    code="agent_guide_mismatch",
-                    path=target.path,
-                    message=(
-                        "Agent guide is missing its managed block or differs from the "
-                        "effective document policy."
-                    ),
-                )
-            )
-    return checked
+    return lint_agent_guide_targets(
+        repository,
+        policy.agent_guides,
+        findings,
+        render=lambda guide_format: render_project_agent_guide(policy, guide_format),
+    )
 
 
 def lint_document_tree(
@@ -874,7 +773,7 @@ def lint_document_tree(
             ),
         )
 
-    files = _collect_files(document_root, findings)
+    files = collect_document_files(document_root, findings)
     agent_guide_count = _lint_agent_guides(repository, policy, findings)
     root_files = set(policy.root_files)
     legacy = {item.path: item for item in policy.legacy_files}
@@ -973,7 +872,7 @@ def lint_document_tree(
                 )
             except ValidationError as error:
                 findings.extend(
-                    _schema_validation_findings(
+                    schema_validation_findings(
                         error,
                         source_path=file_path,
                         relative_path=relative,
@@ -1080,7 +979,7 @@ def lint_document_tree(
                 document = load_project_document(file_path)
         except ValidationError as error:
             findings.extend(
-                _schema_validation_findings(
+                schema_validation_findings(
                     error,
                     source_path=file_path,
                     relative_path=relative,
@@ -1272,7 +1171,7 @@ def lint_document_tree(
                 )
             )
             continue
-        artifact_files = _collect_files(artifact_root, findings)
+        artifact_files = collect_document_files(artifact_root, findings)
         artifact_file_count += len(artifact_files)
         allowed_extensions = set(artifact_policy.allowed_extensions)
         for artifact_file in artifact_files:
@@ -1297,7 +1196,7 @@ def lint_document_tree(
             baseline_document_root
             or (baseline_policy.root if baseline_policy is not None else policy.root)
         )
-        _lint_frozen_documents(
+        lint_locked_baseline_documents(
             repository,
             baseline_repository,
             selected_baseline_root,
@@ -1376,7 +1275,7 @@ def build_document_site_manifest(
     git_repository = discover_repository(repository)
     document_root = repository / policy.root
     collection_findings: list[DocumentFinding] = []
-    files = _collect_files(document_root, collection_findings)
+    files = collect_document_files(document_root, collection_findings)
     if any(finding.kind == "invalid" for finding in collection_findings):
         raise RCPError(
             code="document_site_tree_changed",
@@ -1576,7 +1475,7 @@ def render_document_site_manifest(manifest: DocumentSiteManifest) -> bytes:
     ).encode("utf-8")
 
 
-def _lint_frozen_documents(
+def lint_locked_baseline_documents(
     repository: Path,
     baseline_repository: Path,
     baseline_document_root_path: str,
@@ -1584,6 +1483,14 @@ def _lint_frozen_documents(
     *,
     allow_missing_root: bool = False,
 ) -> None:
+    """Hold every document the baseline immobilized at its exact bytes.
+
+    The scan is deliberately version-blind. It reads only the baseline's own
+    document root and each Markdown file's raw frontmatter, looking for either
+    immutability marker, so a policy upgrade in the same change set can never
+    release a document the protected base had locked.
+    """
+
     if baseline_repository.is_symlink() or not baseline_repository.is_dir():
         raise RCPError(
             code="document_baseline_invalid",
@@ -1622,7 +1529,7 @@ def _lint_frozen_documents(
         return
 
     baseline_findings: list[DocumentFinding] = []
-    baseline_files = _collect_files(baseline_document_root, baseline_findings)
+    baseline_files = collect_document_files(baseline_document_root, baseline_findings)
     for finding in baseline_findings:
         findings.append(
             DocumentFinding(
@@ -1678,7 +1585,7 @@ def _lint_frozen_documents(
                 )
             )
             continue
-        if frontmatter.get("validity") != "frozen":
+        if frontmatter.get("validity") != "frozen" and frontmatter.get("locked") is not True:
             continue
         current_file = repository / relative
         try:

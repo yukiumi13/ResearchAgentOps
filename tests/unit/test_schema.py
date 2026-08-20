@@ -4,6 +4,11 @@ import hashlib
 import json
 
 from researchctl.constants import PROTOCOL_VERSION
+from researchctl.domain.models import (
+    SIMPLE_MARKDOWN_CONTRACT,
+    SIMPLE_MARKDOWN_FRONTMATTER_FIELDS,
+    SimpleMarkdownFrontmatter,
+)
 from researchctl.schema import SCHEMA_MODELS, generate_schema_files
 
 EXPECTED_FILE_SHA256 = {
@@ -44,7 +49,9 @@ EXPECTED_FILE_SHA256 = {
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
     "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
-    "manifest.json": "7febe3df7f63bffecde45c1762d23664f0cb8dffad6dedd19336db43e0597001",
+    "manifest.json": (
+        "f244f70b7dae7ac6829dae94691bfe055501579ba88aa7b6a80fec6131fad461"
+    ),
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
         "556f29e29dfe6fdea09e9f4457eb8a9def0671893f9b2644231a40544b79bfd4"
@@ -76,6 +83,15 @@ EXPECTED_FILE_SHA256 = {
     ),
     "run-spec.schema.json": (
         "51cf40b156c485ed4c0dea1c2f6eca7a4e1ff3de6d32f70b78c5e2a2e5cbfa4b"
+    ),
+    "simple-document-layout-policy.schema.json": (
+        "6385190c45fe3482f9841a9119365058ee8f5013b7cd385ef6d77013bd893de9"
+    ),
+    "simple-document-site-manifest.schema.json": (
+        "4c9861117705762a2de2b3d5d0bd53d7da8519abd53cb5f69f99ad0e01d4df2c"
+    ),
+    "simple-markdown-frontmatter.schema.json": (
+        "43a030240f586ca41415edd5217b927625545ac577459b3a0f4e7b675952596e"
     ),
     "status-update.schema.json": (
         "17401b3348a639ae1fb86502653a4ec74aa87c07b740ca325ce8ba6c636e5251"
@@ -141,6 +157,24 @@ def test_analysis_brief_schema_exposes_every_prose_budget() -> None:
             "max_english_words": 45,
             "max_cjk_characters": 120,
         }
+
+
+def test_simple_markdown_frontmatter_is_registered_and_entirely_optional() -> None:
+    # The contract `doc check` names has to be a schema an author can print,
+    # so the registry key and the reported contract are the same string.
+    assert SCHEMA_MODELS[SIMPLE_MARKDOWN_CONTRACT] is SimpleMarkdownFrontmatter
+
+    schema = json.loads(
+        generate_schema_files()[f"{SIMPLE_MARKDOWN_CONTRACT}.schema.json"]
+    )
+    properties = schema["properties"]
+
+    assert schema["title"] == "SimpleMarkdownFrontmatter"
+    assert sorted(properties) == sorted(SIMPLE_MARKDOWN_FRONTMATTER_FIELDS)
+    assert schema["additionalProperties"] is False
+    # Every field defaults, so a document with no frontmatter satisfies this.
+    assert "required" not in schema
+    assert all("default" in properties[name] for name in properties)
 
 
 def test_input_identity_schema_requires_a_non_null_version_or_digest() -> None:

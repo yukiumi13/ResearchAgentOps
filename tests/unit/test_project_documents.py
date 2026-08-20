@@ -899,6 +899,8 @@ def test_doc_cli_renders_and_lints_policy_before_repository_adoption(
         [
             "doc",
             "policy-template",
+            "--policy-version",
+            "1",
             "--agent-format",
             "claude",
             "--output-file",
@@ -1243,11 +1245,19 @@ def test_routed_render_preserves_project_frontmatter_and_owns_only_the_body(
 def test_policy_template_can_render_to_standard_output() -> None:
     result = CliRunner().invoke(
         app,
-        ["doc", "policy-template", "--output-file", "/dev/stdout"],
+        [
+            "doc",
+            "policy-template",
+            "--policy-version",
+            "1",
+            "--output-file",
+            "/dev/stdout",
+        ],
     )
 
     assert result.exit_code == 0
     assert result.stdout.startswith("# researchctl standalone document policy candidate")
+    assert "Replace every TEMPLATE: rationale" in result.stdout
     assert "document_output_conflict" not in result.stdout
 
 

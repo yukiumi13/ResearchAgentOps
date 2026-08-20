@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import re
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from researchctl.serialization import canonical_digest, load_yaml
+from researchctl.services.markdown_source import blockquote_texts, html_block_texts
 
 _PROVENANCE = re.compile(
     rb"<!-- researchctl-generated:"
@@ -55,6 +57,29 @@ def inspect_project_frontmatter(
     return ProjectFrontmatterEnvelope(values=payload, prefix=prefix, body=body)
 
 
+def markdown_text(value: object) -> str:
+    """Escape a value so it reads as prose inside a generated table cell."""
+
+    rendered = html.escape(str(value), quote=False).replace("\r\n", "\n").replace("\r", "\n")
+    for character in ("\\", "`", "*", "_", "[", "]", "#", "|"):
+        rendered = rendered.replace(character, f"\\{character}")
+    return "<br>".join(rendered.split("\n"))
+
+
+def markdown_code(value: object) -> str:
+    """Render a value as a code span that cannot be broken by its own content."""
+
+    rendered = str(value).replace("\r", " ").replace("\n", " ")
+    delimiter = "`" if "`" not in rendered else "``"
+    return f"{delimiter}{rendered}{delimiter}"
+
+
+def renderer_marker(renderer_id: str) -> str:
+    """The visible line that tells a reader which renderer owns the block."""
+
+    return f"> Renderer: {markdown_code(f'researchctl-renderer:{renderer_id}')}"
+
+
 def _digest(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
@@ -79,6 +104,42 @@ def render_generated_markdown(
     rendered = list(lines)
     rendered.insert(marker_indexes[0] + 1, provenance)
     return ("\n".join(rendered).rstrip() + "\n").encode("utf-8")
+
+
+#: The provenance comment the renderers emit, and the visible header above it.
+_MARKER_TOKEN = "researchctl-generated"
+_RENDERER_TOKEN = "researchctl-renderer"
+_COMMENT_OPEN = "<!--"
+
+
+def claims_generated_markdown(content: bytes) -> bool:
+    """Report whether the content claims to be renderer-owned output.
+
+    This is deliberately looser than :func:`inspect_generated_markdown`, which
+    parses the provenance comment and verifies the recorded body digest. Here
+    the question is only whether the file *claims* renderer ownership, so a
+    truncated comment or a corrupted colon still counts, as does nothing but
+    the visible ``> Renderer:`` header. A damaged render must be diagnosed as a
+    damaged render, never silently accepted as ordinary prose.
+
+    The looseness stops at Markdown structure. A claim must be a real HTML
+    block or a real block quote, as CommonMark parses them, so prose that names
+    the marker and code samples that quote it stay ordinary documentation: a
+    runbook explaining how renders are marked must not become an orphan for
+    saying so.
+    """
+
+    text = content.decode("utf-8", errors="replace")
+    for block in html_block_texts(text):
+        stripped = block.strip()
+        if not stripped.startswith(_COMMENT_OPEN):
+            continue
+        if stripped[len(_COMMENT_OPEN) :].lstrip().startswith(_MARKER_TOKEN):
+            return True
+    return any(
+        quote.startswith("Renderer:") and _RENDERER_TOKEN in quote
+        for quote in blockquote_texts(text)
+    )
 
 
 def inspect_generated_markdown(
