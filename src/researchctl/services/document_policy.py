@@ -14,20 +14,22 @@ from pathlib import Path
 from typing import Any
 
 from researchctl.domain.models import (
+    PROJECT_DOCUMENT_LAYOUT_POLICY_VERSIONS,
     SIMPLE_MARKDOWN_CONTRACT,
     AgentGuideFormat,
     DocumentLayoutPolicy,
+    ProjectDocumentLayoutPolicy,
     SimpleDocumentLayoutPolicy,
+    select_project_document_layout_version,
 )
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml, load_yaml
 
-LEGACY_POLICY_VERSION = 1
-SIMPLE_POLICY_VERSION = 2
-SUPPORTED_POLICY_VERSIONS: tuple[int, ...] = (
+(
     LEGACY_POLICY_VERSION,
     SIMPLE_POLICY_VERSION,
-)
+) = PROJECT_DOCUMENT_LAYOUT_POLICY_VERSIONS
+SUPPORTED_POLICY_VERSIONS = PROJECT_DOCUMENT_LAYOUT_POLICY_VERSIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,10 +47,18 @@ class EffectiveDocumentPolicy:
 
     @property
     def root(self) -> str:
+        return self.layout.root
+
+    @property
+    def layout(self) -> ProjectDocumentLayoutPolicy:
         if self.simple is not None:
-            return self.simple.root
-        assert self.legacy is not None
-        return self.legacy.root
+            return self.simple
+        if self.legacy is not None:
+            return self.legacy
+        raise RCPError(
+            code="document_policy_effective_invalid",
+            message="Effective document policy has no validated layout.",
+        )
 
     def require_legacy(self, *, command: str) -> DocumentLayoutPolicy:
         if self.legacy is None:
@@ -82,14 +92,10 @@ class EffectiveDocumentPolicy:
 def select_policy_version(payload: dict[str, Any], *, path: Path | None = None) -> int:
     """Read the explicit policy version, defaulting to the original contract."""
 
-    if "version" not in payload:
-        return LEGACY_POLICY_VERSION
-    declared = payload["version"]
-    if isinstance(declared, bool) or not isinstance(declared, int):
-        raise _unsupported_version(declared, path)
-    if declared not in SUPPORTED_POLICY_VERSIONS:
-        raise _unsupported_version(declared, path)
-    return declared
+    try:
+        return select_project_document_layout_version(payload)
+    except ValueError as error:
+        raise _unsupported_version(payload.get("version"), path) from error
 
 
 def _unsupported_version(declared: object, path: Path | None) -> RCPError:
@@ -117,16 +123,34 @@ def build_effective_policy(
 
     version = select_policy_version(payload, path=path)
     if version == SIMPLE_POLICY_VERSION:
-        return EffectiveDocumentPolicy(
-            version=version,
-            source=path,
-            simple=SimpleDocumentLayoutPolicy.model_validate(payload),
+        return effective_policy_from_layout(
+            SimpleDocumentLayoutPolicy.model_validate(payload),
+            path=path,
         )
     legacy_payload = {key: value for key, value in payload.items() if key != "version"}
+    return effective_policy_from_layout(
+        DocumentLayoutPolicy.model_validate(legacy_payload),
+        path=path,
+    )
+
+
+def effective_policy_from_layout(
+    policy: ProjectDocumentLayoutPolicy,
+    *,
+    path: Path | None = None,
+) -> EffectiveDocumentPolicy:
+    """Tag one already-validated standalone or managed layout consistently."""
+
+    if isinstance(policy, SimpleDocumentLayoutPolicy):
+        return EffectiveDocumentPolicy(
+            version=SIMPLE_POLICY_VERSION,
+            source=path,
+            simple=policy,
+        )
     return EffectiveDocumentPolicy(
-        version=version,
+        version=LEGACY_POLICY_VERSION,
         source=path,
-        legacy=DocumentLayoutPolicy.model_validate(legacy_payload),
+        legacy=policy,
     )
 
 

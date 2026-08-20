@@ -2,12 +2,16 @@
 type: adr
 title: Directory-first document governance
 owner: person:yl2708
-last_updated: 2026-08-18
+last_updated: 2026-08-20
 validity: valid
 tags: [documents, governance, codeowners, migration, mkdocs]
 references:
   - kind: repository_path
     location: src/researchctl/services/document_policy.py
+  - kind: repository_path
+    location: src/researchctl/services/control_document_layout_policy.py
+  - kind: repository_path
+    location: src/researchctl/services/ci_dispatch.py
   - kind: repository_path
     location: src/researchctl/services/project_documents_v2.py
   - kind: repository_path
@@ -26,8 +30,8 @@ relations:
 ---
 # ADR 0017: Directory-First Document Governance
 
-Status: accepted design; standalone version 2 implemented, managed migration and
-publication pilots pending
+Status: accepted design; standalone and managed version 2 implemented,
+repository migration and publication pilots pending
 
 ## Context
 
@@ -175,16 +179,24 @@ inventories the repository and writes down the directories it actually has.
 Directory names are facts about a specific project, and a template that linted
 while empty would invite copying another repository's layout.
 
-## Current Limitation
+## Managed Policy Support
 
-Version 2 is standalone-policy-first. A `.researchctl-docs.yaml` declaring
-`version: 2` is fully supported end to end. A managed repository's
-`.research/policies/default.yaml.document_layout` is still read as a version 1
-route policy, and manager-only `doc configure-layout` still carries the version 1
-shape, so a managed repository cannot yet adopt the directory-first model.
-Extending the managed policy, its proposal path, and its protected field-scope
-replay to version 2 is a separate manager-owned migration and is deliberately not
-bundled here.
+Version 2 is supported in both standalone and managed repositories. The managed
+`ProjectPolicy.document_layout` field accepts the version 1 route policy or the
+version 2 directory-first policy. Its existing unversioned default remains
+version 1, while `version: 2` selects the directory-first branch explicitly.
+Both managed and standalone loading produce the same effective-policy value
+before command dispatch.
+
+Manager-only `doc configure-layout` accepts either layout version without
+changing its authorization boundary or proposal commit protocol. Protected-base
+CI replays the resulting `ProjectPolicy` transition, permits only the
+`document_layout` field to differ, and rejects a proposal that changes any other
+Project policy field. Baseline enforcement continues to read only the protected
+document root and locked/frozen bytes, so an older policy schema cannot deadlock
+the proposal that repairs or upgrades it.
+
+## Current Limitation
 
 `doc index` is also not implemented for version 2 and fails closed with an
 explicit unsupported-command error, because the generated index table is a
@@ -194,6 +206,13 @@ one is wanted, is the site manifest rather than a tracked Markdown table.
 ResearchAgentOps itself still runs on its version 1 policy. Migrating this
 repository is a later proposal, so every claim here about version 2 rests on the
 test suite and on fixture repositories rather than on this tree.
+
+Adding the v2 branch to `ProjectPolicy` changes the generated schema-manifest
+digest. Existing managed repositories pinned to an earlier manifest remain
+protocol-locked until a manager-reviewed migration republishes the generated
+schemas and re-pins `.researchctl.toml` in one proposal. `researchctl upgrade`
+still checks rather than applies that migration, so this release obligation is
+explicit rather than automatic.
 
 ## Consequences
 
@@ -215,8 +234,9 @@ test suite and on fixture repositories rather than on this tree.
 - Two supported policy versions are two code paths to keep honest; the shared
   CLI, finding-code vocabulary, and guide markers are what keep that cost
   bounded.
-- Managed repositories gain nothing yet, and the split between standalone and
-  managed behaviour is visible until that migration lands.
+- Managed repositories can adopt either model through the existing
+  manager-owned proposal path; they do not gain a second policy mutation or CI
+  protocol.
 
 ## Verification
 
@@ -229,7 +249,10 @@ baseline immutability across a version upgrade, structured pair rendering,
 contract and schema discovery, the deliberately incomplete version 2 template,
 the managed Agent guide including in-place replacement of a version 1 block, the
 closed-world site manifest, and a real strict MkDocs build over a version 2
-fixture. Version 1 behaviour is pinned by its own unchanged suite.
+fixture. Managed tests additionally cover v1 default compatibility, v2 effective
+policy loading, manager-only proposal preparation, exact CI field-scope replay,
+and locked baseline enforcement. Version 1 behaviour is pinned by its own
+unchanged suite.
 
 No static host has been deployed, no managed repository has been migrated, and
 no long-lived repository has yet been converted from routes to sections. Those

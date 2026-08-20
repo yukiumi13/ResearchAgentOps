@@ -15,6 +15,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     TypeAdapter,
+    field_validator,
     model_validator,
 )
 
@@ -552,6 +553,37 @@ class SimpleDocumentLayoutPolicy(StrictModel):
         return tuple(f"{self.root}/{page}" for page in self.root_pages)
 
 
+PROJECT_DOCUMENT_LAYOUT_POLICY_VERSIONS: tuple[int, ...] = (1, 2)
+ProjectDocumentLayoutPolicy = DocumentLayoutPolicy | SimpleDocumentLayoutPolicy
+
+
+def select_project_document_layout_version(payload: dict[str, object]) -> int:
+    """Select the managed layout contract without asking a union to infer it."""
+
+    if "version" not in payload:
+        return 1
+    declared = payload["version"]
+    if (
+        isinstance(declared, bool)
+        or not isinstance(declared, int)
+        or declared not in PROJECT_DOCUMENT_LAYOUT_POLICY_VERSIONS
+    ):
+        raise ValueError(f"document policy version {declared!r} is not supported")
+    return declared
+
+
+def _parse_project_document_layout(value: object) -> object:
+    if isinstance(value, (DocumentLayoutPolicy, SimpleDocumentLayoutPolicy)):
+        return value
+    if not isinstance(value, dict):
+        return value
+    version = select_project_document_layout_version(value)
+    if version == 2:
+        return SimpleDocumentLayoutPolicy.model_validate(value)
+    legacy = {key: nested for key, nested in value.items() if key != "version"}
+    return DocumentLayoutPolicy.model_validate(legacy)
+
+
 class GitHubAgentAppPrincipal(StrictModel):
     app_id: Annotated[StrictInt, Field(ge=1)]
     installation_id: Annotated[StrictInt, Field(ge=1)]
@@ -667,8 +699,15 @@ class ProjectPolicy(ProtocolRecord):
     execution_domains: tuple[ExecutionDomainPolicy, ...] = ()
     plan_choices: dict[ShortText, JsonValue] = Field(default_factory=dict)
     plan_review: PlanReviewPolicy | None = None
-    document_layout: DocumentLayoutPolicy = Field(default_factory=DocumentLayoutPolicy)
+    document_layout: ProjectDocumentLayoutPolicy = Field(
+        default_factory=DocumentLayoutPolicy
+    )
     github: GitHubGovernancePolicy | None = None
+
+    @field_validator("document_layout", mode="before")
+    @classmethod
+    def select_document_layout_contract(cls, value: object) -> object:
+        return _parse_project_document_layout(value)
 
     @model_validator(mode="after")
     def require_unique_execution_domains(self) -> ProjectPolicy:

@@ -1,7 +1,7 @@
 # Workflow and Use-Case Coverage
 
 Status: audited implementation checklist
-Updated: 2026-08-06
+Updated: 2026-08-20
 
 The private chat export is design research, not an executable contract. Its 77
 prompt anchors are normalized into the 33 stable scenarios in
@@ -275,15 +275,17 @@ fixture. Version 1 keeps its own unchanged suite: policy template and rationale
 rejection, schema/tree/index/guide/frozen checks, machine artifact roots that
 reject Markdown, project-frontmatter preservation, and YAML diagnostics.
 
-Version 2 is standalone-policy-first. A managed repository's ProjectPolicy
-`document_layout` and manager-only `doc.configure-layout` are still read as
-version 1, and `doc index` is not implemented for version 2 and fails closed. A
-managed version 2 migration is a separate manager-owned change and has not
-landed. No static host has been deployed. ResearchAgentOps itself still runs on
-its version 1 policy, so no long-lived repository has yet been converted from
-routes to sections. That conversion pilot, an editor/language-server adapter, a
-protected publication pilot, and a protected-repository acceptance pilot remain
-open. ADR 0017 records the directory-first decision and these limits.
+Managed ProjectPolicy accepts either layout and defaults to version 1.
+Manager-only `doc.configure-layout` prepares both versions through the same
+control proposal, and protected-base replay permits only that field to change.
+Managed tests cover v1/v2 pass paths, v2-on-v2 canonical retry, and a stale
+managed baseline that still protects locked bytes. `doc index` is not
+implemented for version 2 and fails closed. No static host has been deployed.
+ResearchAgentOps itself still runs on its version 1 policy, so no long-lived
+repository has yet been converted from routes to sections. That conversion
+pilot, schema-pin migration, an editor/language-server adapter, a protected
+publication pilot, and a protected-repository acceptance pilot remain open.
+ADR 0017 records the directory-first decision and these limits.
 
 ResearchAgentOps itself supplies a presentation-only `mkdocs.yml` with no
 hand-maintained navigation. Its existing `researchctl/source-tests` job creates

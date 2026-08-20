@@ -526,17 +526,19 @@ so RCP preserves a project-owned envelope byte for byte around a generated body.
 Manual provenance `value` fields there are exact display strings, must be quoted
 when they look numeric (`value: "91.20"`), and must appear verbatim in the body.
 
-Managed repositories are version 1 today. After `researchctl init` the policy
-lives under `.research/policies/default.yaml.document_layout`, changing a label,
-directory, contract, index, artifact root, or route mapping uses manager-only
-`researchctl doc configure-layout`, and protected-base CI verifies that no other
-Project policy field changed. Extending managed mode to version 2 is a separate
-manager-owned migration and has not landed.
+After `researchctl init`, the policy lives under
+`.research/policies/default.yaml.document_layout`. Its unversioned default is
+version 1, while `version: 2` selects the directory-first model. Changing either
+layout uses manager-only `researchctl doc configure-layout`, and protected-base
+CI verifies that no other Project policy field changed. An existing managed
+version 1 repository can therefore migrate through the same reviewed control
+proposal rather than through a second mutation path.
 
 The two policy sources cannot coexist: a managed repository that also defines
-`.researchctl-docs.yaml` fails with `document_policy_shadowed`. So version 2 is
-adoptable today only by a standalone or uninitialized repository, and a
-repository already managed stays on version 1 until that migration lands.
+`.researchctl-docs.yaml` fails with `document_policy_shadowed`. Version 2 is
+available from either source, but only the managed source carries accepted
+Project policy authority. `doc index` remains version 1-only; version 2 uses the
+site manifest instead of projecting a route table it does not have.
 
 Editor and Agent integrations should consume `doc schema`, `doc check --json`, or
 `doc tree --json` rather than implementing a second validator. `doc contracts`

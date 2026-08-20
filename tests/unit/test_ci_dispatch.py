@@ -21,6 +21,7 @@ from researchctl.domain.models import (
     ProjectPolicy,
     ProjectRecord,
     ReportRecord,
+    SimpleDocumentLayoutPolicy,
     TaskRecord,
 )
 from researchctl.errors import RCPError
@@ -371,8 +372,10 @@ def test_plan_review_policy_control_rejects_other_project_policy_changes(
     assert raised.value.code == "ci_plan_review_policy_scope_invalid"
 
 
+@pytest.mark.parametrize("policy_version", [1, 2])
 def test_document_layout_policy_control_is_field_scoped_and_exact_head(
     initialized_repository: Path,
+    policy_version: int,
 ) -> None:
     base = _promote_test_project(initialized_repository)
     worktrees = initialized_repository / ".git" / "researchctl" / "worktrees"
@@ -384,18 +387,29 @@ def test_document_layout_policy_control_is_field_scoped_and_exact_head(
         operation_id=DOCUMENT_LAYOUT_OPERATION_ID,
         expected_default_head=base,
     )
-    payload = DocumentLayoutPolicy().model_dump(mode="json")
-    payload["routes"].append(
-        {
-            "classification": "research/evidence:ledger",
-            "document_type": "ledger",
-            "directory": "docs/ledger",
-            "contract": "markdown-frontmatter",
-            "rationale": "Existing evidence ledgers require this route.",
-            "required_relations": [],
-        }
-    )
-    written = control.configure(DocumentLayoutPolicy.model_validate(payload))
+    if policy_version == 1:
+        payload = DocumentLayoutPolicy().model_dump(mode="json")
+        payload["routes"].append(
+            {
+                "classification": "research/evidence:ledger",
+                "document_type": "ledger",
+                "directory": "docs/ledger",
+                "contract": "markdown-frontmatter",
+                "rationale": "Existing evidence ledgers require this route.",
+                "required_relations": [],
+            }
+        )
+        requested = DocumentLayoutPolicy.model_validate(payload)
+    else:
+        requested = SimpleDocumentLayoutPolicy.model_validate(
+            {
+                "version": 2,
+                "root": "docs",
+                "sections": [{"path": "design"}, {"path": "runbooks"}],
+                "root_pages": ["README.md"],
+            }
+        )
+    written = control.configure(requested)
 
     result = ProtectedBasePRDispatcher().validate(
         initialized_repository,
@@ -407,6 +421,7 @@ def test_document_layout_policy_control_is_field_scoped_and_exact_head(
     )
 
     assert result.attestation.pr_type == "document_layout_policy_control"
+    assert written.document_layout == requested
     assert {item.name for item in result.attestation.checks} == {
         "document_layout_policy",
         "project_policy_transition",

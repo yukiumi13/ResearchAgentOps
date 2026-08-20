@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -10,7 +11,12 @@ from typer.testing import CliRunner
 from researchctl.cli import app
 from researchctl.constants import PROJECT_POLICY_PATH
 from researchctl.domain.enums import ProjectState
-from researchctl.domain.models import DocumentLayoutPolicy, ProjectPolicy, ProjectRecord
+from researchctl.domain.models import (
+    DocumentLayoutPolicy,
+    ProjectPolicy,
+    ProjectRecord,
+    SimpleDocumentLayoutPolicy,
+)
 from researchctl.errors import RCPError
 from researchctl.serialization import dump_yaml, load_model
 from researchctl.services.actor import ActorContext, ActorRole, CredentialKind
@@ -82,6 +88,17 @@ def _layout() -> DocumentLayoutPolicy:
         }
     )
     return DocumentLayoutPolicy.model_validate(payload)
+
+
+def _simple_layout() -> SimpleDocumentLayoutPolicy:
+    return SimpleDocumentLayoutPolicy.model_validate(
+        {
+            "version": 2,
+            "root": "docs",
+            "sections": [{"path": "design"}, {"path": "runbooks"}],
+            "root_pages": ["README.md"],
+        }
+    )
 
 
 def _control(
@@ -220,3 +237,75 @@ def test_document_layout_cli_has_human_and_json_idempotent_outputs(
     assert machine.exit_code == 0, machine.stdout
     assert '"command": "doc.configure-layout"' in machine.stdout
     assert '"terminal_result": "proposal_prepared"' in machine.stdout
+
+
+def test_document_layout_cli_prepares_a_managed_v2_policy_proposal(
+    initialized_repository: Path,
+) -> None:
+    base = _commit_managed(initialized_repository)
+    policy_file = initialized_repository / "document-layout-v2.yaml"
+    policy_file.write_text(dump_yaml(_simple_layout()), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "configure-layout",
+            "--policy-file",
+            str(policy_file),
+            "--expected-default-head",
+            base,
+            "--project",
+            str(initialized_repository),
+            "--operation-id",
+            OPERATION_ID,
+            "--idempotency-key",
+            "document-layout-v2-cli",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    data = json.loads(result.stdout)["data"]
+    assert data["document_layout"]["version"] == 2
+    assert data["terminal_result"] == "proposal_prepared"
+
+
+def test_document_layout_v2_proposal_is_stable_over_an_accepted_v2_base(
+    initialized_repository: Path,
+) -> None:
+    _commit_managed(initialized_repository)
+    policy_path = initialized_repository / PROJECT_POLICY_PATH
+    accepted = load_model(policy_path, ProjectPolicy).model_copy(
+        update={"document_layout": _simple_layout()}
+    )
+    policy_path.write_text(dump_yaml(accepted), encoding="utf-8")
+    _git(initialized_repository, "add", PROJECT_POLICY_PATH)
+    _git(
+        initialized_repository,
+        "-c",
+        "user.name=Tests",
+        "-c",
+        "user.email=tests@example.invalid",
+        "commit",
+        "--no-gpg-sign",
+        "-m",
+        "accept v2 document layout",
+    )
+    base = _git(initialized_repository, "rev-parse", "HEAD").strip()
+    requested = _simple_layout().model_copy(update={"max_depth": 4})
+
+    first = _control(
+        initialized_repository,
+        operation_id=OTHER_OPERATION_ID,
+        expected_head=base,
+    ).configure(requested)
+    repeated = _control(
+        initialized_repository,
+        operation_id=OTHER_OPERATION_ID,
+        expected_head=base,
+    ).configure(requested)
+
+    assert first.project_policy.document_layout == requested
+    assert repeated.proposal.commit == first.proposal.commit
+    assert repeated.proposal.changed is False

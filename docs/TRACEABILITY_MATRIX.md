@@ -1,7 +1,7 @@
 # Requirement Traceability Matrix
 
 Status: Phase 0 baseline
-Updated: 2026-08-10
+Updated: 2026-08-20
 
 `docs/USER_SCENARIOS.md` is the scenario catalog. The contract column points to
 the current authoritative specification and ADRs. Phase 9 rows are deliberate
@@ -89,4 +89,4 @@ the stable `US-*` catalog.
 | `REQ-20260810-001` | `US-014`, `US-015`, `US-022`, `US-031` | Spec Section 10.1; ADR 0014; document-site manifest/schema/CLI and strict MkDocs adapter tests |
 | `REQ-20260812-001` | `US-014`, `US-025`, `US-027` | system stability snapshot; Ruff/source-test gate; traceability and benchmark tests |
 | `REQ-20260813-001` | `US-014`, `US-015`, `US-021`, `US-022`, `US-031` | routed requirement/design/runbook/status documents; baseline tree and strict MkDocs dogfood |
-| `REQ-20260818-001` | `US-014`, `US-015`, `US-022`, `US-031` | ADR 0017; version-discriminated policy, directory-first tree/ownership/guide, and closed-world manifest tests |
+| `REQ-20260818-001` | `US-014`, `US-015`, `US-022`, `US-031` | ADR 0017; version-discriminated standalone/managed policy, manager-only layout control, exact CI replay, directory-first tree/ownership/guide, baseline lock, and closed-world manifest tests |
