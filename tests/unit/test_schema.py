@@ -48,9 +48,9 @@ EXPECTED_FILE_SHA256 = {
     "plan-review.schema.json": (
         "f5ee98589661badf473e4f5b47bdee6b83432a89ca501934316d9b02070e2b9d"
     ),
-    "policy.schema.json": "43521afbccf6c02edb8cd8ba41e02b98696ea75bbac7f141cdde113906226586",
+    "policy.schema.json": "cf834f33bdd515e7cda3a373bedd440f4aeefe359ca5a97a9fa86cf7f3b3944d",
     "manifest.json": (
-        "f244f70b7dae7ac6829dae94691bfe055501579ba88aa7b6a80fec6131fad461"
+        "f5e577318181840bcd4de7b340294da02c9d369e666211d3771c34ada595b562"
     ),
     "project.schema.json": "14f86275ae17891280548b32cff9cb3998fea09424933525b5152efcd3ea0235",
     "project-status-summary.schema.json": (
@@ -121,6 +121,15 @@ def test_schema_manifest_covers_and_authenticates_every_schema() -> None:
 
     for path, recorded_digest in manifest["schemas"].items():
         assert recorded_digest == "sha256:" + hashlib.sha256(files[path]).hexdigest()
+
+
+def test_project_policy_schema_exposes_both_document_layout_versions() -> None:
+    schema = json.loads(generate_schema_files()["policy.schema.json"])
+
+    assert schema["properties"]["document_layout"]["anyOf"] == [
+        {"$ref": "#/$defs/DocumentLayoutPolicy"},
+        {"$ref": "#/$defs/SimpleDocumentLayoutPolicy"},
+    ]
 
 
 def test_each_schema_has_a_stable_id_and_json_file_format() -> None:

@@ -14,12 +14,12 @@ from researchctl.domain.enums import (
 )
 from researchctl.domain.models import (
     DependencySet,
-    DocumentLayoutPolicy,
     ExperimentPlan,
     GitHubGovernancePolicy,
     LinearProjectionPolicy,
     PlanReview,
     PlanReviewPolicy,
+    ProjectDocumentLayoutPolicy,
     ReportProposal,
     ResearchSubmission,
     RunSpec,
@@ -85,7 +85,7 @@ class PlanReviewConfigureRequest(MutationRequest):
 
 class DocumentLayoutConfigureRequest(MutationRequest):
     expected_default_head: GitObjectId
-    document_layout: DocumentLayoutPolicy
+    document_layout: ProjectDocumentLayoutPolicy
 
 
 class GitHubGovernanceConfigureRequest(MutationRequest):

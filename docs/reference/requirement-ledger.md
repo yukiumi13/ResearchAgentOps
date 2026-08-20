@@ -2,7 +2,7 @@
 type: reference
 title: Post-export requirement ledger
 owner: person:yukiumi13
-last_updated: 2026-08-18
+last_updated: 2026-08-20
 validity: valid
 tags: [requirements, traceability, governance]
 references:
@@ -378,9 +378,10 @@ later requirements so traceability does not silently stop at that boundary.
 - Source: post-dogfood document authoring-cost review and g3doc-style layout
   evaluation, 2026-08-18.
 - Maps to: `US-014`, `US-015`, `US-022`, `US-031`.
-- Acceptance: a standalone policy declares its contract with an explicit
-  `version`, and any value other than the supported ones fails closed. Under
-  version 2 a direct child directory of the document root is the document type,
+- Acceptance: a standalone policy or managed ProjectPolicy selects its document
+  contract by `version`, defaulting to version 1, and any value other than the
+  supported ones fails closed. Under version 2 a direct child directory of the
+  document root is the document type,
   deeper folders only organize or version documents within that type, and tags
   stay descriptive. CODEOWNERS is the sole owner and review authority, Git is the
   edit-time authority, and the first level-one heading is the title, so no
@@ -401,7 +402,8 @@ later requirements so traceability does not silently stop at that boundary.
   supported and unchanged. An Agent may author documents on a proposal branch
   only; repository CI, CODEOWNER review, and a protected merge decide acceptance,
   and policy, section, structured-contract, CODEOWNERS, or managed-guide changes
-  stay manager-owned. Version 2 is standalone-policy-first: managed ProjectPolicy
-  `document_layout` and `doc.configure-layout` remain version 1 pending a
-  separate migration, `doc index` is unimplemented for version 2, and no static
-  host or converted long-lived repository may be claimed.
+  stay manager-owned. Managed `document_layout` accepts either version through
+  manager-only `doc.configure-layout`, protected-base CI rejects every unrelated
+  ProjectPolicy change, and baseline locking remains version-blind. `doc index`
+  is unimplemented for version 2, and no static host or converted long-lived
+  repository may be claimed.

@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from researchctl.adapters import GitWorktreeAdapter, WorktreeSpec
 from researchctl.adapters.git_control import ControlCommitReceipt, GitControlCommitAdapter
 from researchctl.constants import PROJECT_POLICY_PATH
-from researchctl.domain.models import DocumentLayoutPolicy, ProjectPolicy
+from researchctl.domain.models import ProjectDocumentLayoutPolicy, ProjectPolicy
 from researchctl.domain.types import Sha256Digest
 from researchctl.errors import RCPError
 from researchctl.repository import safe_repository_path
@@ -29,7 +29,7 @@ _COMMAND = "doc.configure-layout"
 
 @dataclass(frozen=True, slots=True)
 class DocumentLayoutPolicyWriteResult:
-    document_layout: DocumentLayoutPolicy
+    document_layout: ProjectDocumentLayoutPolicy
     project_policy: ProjectPolicy
     base_commit: str
     previous_policy_digest: Sha256Digest
@@ -88,7 +88,7 @@ class ControlDocumentLayoutPolicyRepository:
 
     def configure(
         self,
-        document_layout: DocumentLayoutPolicy,
+        document_layout: ProjectDocumentLayoutPolicy,
     ) -> DocumentLayoutPolicyWriteResult:
         with self._exclusive():
             base = self.git.resolve_commit(

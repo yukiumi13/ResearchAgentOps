@@ -11,13 +11,15 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from researchctl.cli import app
+from researchctl.constants import PROJECT_POLICY_PATH
 from researchctl.domain.models import (
     SIMPLE_MARKDOWN_FRONTMATTER_FIELDS,
     DocumentLayoutPolicy,
+    ProjectPolicy,
     SimpleDocumentLayoutPolicy,
 )
 from researchctl.errors import RCPError
-from researchctl.serialization import dump_yaml
+from researchctl.serialization import dump_yaml, load_yaml
 from researchctl.services.agent_guides import (
     agent_guide_markers,
     render_simple_agent_guide,
@@ -58,6 +60,16 @@ LEGACY_ROUTE: dict[str, Any] = {
     "contract": "markdown-frontmatter",
     "rationale": "The fixture keeps long-lived references here.",
 }
+MANAGED_AGENT_POLICY = {
+    "accepted_paths_denied": [
+        ".research/decisions/**",
+        ".research/policies/**",
+        ".research/project.yaml",
+        ".research/impacts/**",
+        ".research/reports/**",
+        ".research/tasks/**",
+    ]
+}
 
 
 def _policy(**overrides: Any) -> dict[str, Any]:
@@ -83,6 +95,31 @@ def _repository(tmp_path: Path, policy: dict[str, Any] | None = None) -> Path:
     for section in (policy if policy is not None else _policy())["sections"]:
         (tmp_path / "docs" / section["path"]).mkdir(parents=True, exist_ok=True)
     return tmp_path
+
+
+def _managed_repository(
+    root: Path,
+    policy: dict[str, Any] | None = None,
+) -> Path:
+    """Wrap the same v2 layout in the managed Project policy envelope."""
+
+    repository = _repository(root, policy)
+    (repository / ".researchctl-docs.yaml").unlink()
+    policy_path = repository / PROJECT_POLICY_PATH
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text(
+        dump_yaml(
+            ProjectPolicy.model_validate(
+                {
+                    "schema_version": "0.1",
+                    "agent": MANAGED_AGENT_POLICY,
+                    "document_layout": policy if policy is not None else _policy(),
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+    return repository
 
 
 def _simple(payload: dict[str, Any] | None = None) -> SimpleDocumentLayoutPolicy:
@@ -228,6 +265,109 @@ def test_version_two_selects_the_simple_contract() -> None:
     assert effective.is_simple
     assert effective.legacy is None
     assert effective.root == "docs"
+
+
+def test_managed_project_policy_defaults_to_v1_and_accepts_explicit_v2() -> None:
+    agent = ProjectPolicy.model_validate(
+        {
+            "schema_version": "0.1",
+            "agent": MANAGED_AGENT_POLICY,
+        }
+    ).agent
+
+    legacy = ProjectPolicy(agent=agent)
+    simple = ProjectPolicy.model_validate(
+        {
+            **legacy.model_dump(mode="json"),
+            "document_layout": _policy(),
+        }
+    )
+
+    assert isinstance(legacy.document_layout, DocumentLayoutPolicy)
+    assert isinstance(simple.document_layout, SimpleDocumentLayoutPolicy)
+    assert simple.document_layout.version == 2
+
+    with pytest.raises(ValidationError):
+        ProjectPolicy.model_validate(
+            {
+                **legacy.model_dump(mode="json"),
+                "document_layout": {
+                    "version": 3,
+                    "sections": [{"path": "design"}],
+                },
+            }
+        )
+
+
+def test_managed_policy_keeps_v1_diagnostics_and_rejects_unknown_versions(
+    tmp_path: Path,
+) -> None:
+    repository = _managed_repository(tmp_path)
+    policy_path = repository / PROJECT_POLICY_PATH
+    payload = load_yaml(policy_path.read_text(encoding="utf-8"))
+    payload["document_layout"] = {"max_dept": 3}
+    policy_path.write_text(dump_yaml(payload), encoding="utf-8")
+    runner = CliRunner()
+
+    typo = runner.invoke(
+        app,
+        ["doc", "tree", "--project", str(repository), "--json"],
+    )
+
+    assert typo.exit_code == 2
+    details = json.loads(typo.stdout)["errors"][0]["context"]["details"]
+    assert [detail["loc"] for detail in details] == [
+        ["document_layout", "max_dept"]
+    ]
+    expected_line = next(
+        number
+        for number, line in enumerate(
+            policy_path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        )
+        if line.strip() == "max_dept: 3"
+    )
+    assert details[0]["line"] == expected_line
+    assert "function-after" not in typo.stdout
+
+    payload["document_layout"] = {
+        "version": 3,
+        "sections": [{"path": "design"}],
+    }
+    policy_path.write_text(dump_yaml(payload), encoding="utf-8")
+    unsupported = runner.invoke(
+        app,
+        ["doc", "tree", "--project", str(repository), "--json"],
+    )
+
+    assert unsupported.exit_code == 2
+    error = json.loads(unsupported.stdout)["errors"][0]
+    assert error["code"] == "document_policy_version_unsupported"
+    assert error["context"]["declared_version"] == 3
+
+
+def test_managed_v2_policy_drives_the_same_directory_first_tree(
+    tmp_path: Path,
+) -> None:
+    repository = _managed_repository(tmp_path)
+    (repository / "docs/design/overview.md").write_text(
+        "# Managed design overview\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["doc", "tree", "--project", str(repository), "--json"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    data = json.loads(result.stdout)["data"]
+    assert data["policy_version"] == 2
+    assert data["terminal_result"] == "passed"
+    assert [item["path"] for item in data["document_facts"]] == [
+        "docs/README.md",
+        "docs/design/overview.md",
+    ]
 
 
 @pytest.mark.parametrize("declared", [0, 3, 99, "2", True, None, 2.0])
@@ -1029,6 +1169,51 @@ def test_a_locked_baseline_document_is_protected_across_policy_versions(
     )
     assert replaced.exit_code == 2
     assert '"code": "frozen_document_modified"' in replaced.stdout
+
+
+def test_managed_v2_baseline_keeps_locked_documents_immutable(
+    tmp_path: Path,
+) -> None:
+    baseline = _managed_repository(tmp_path / "base")
+    head = _managed_repository(tmp_path / "head")
+    locked_path = "docs/design/locked.md"
+    locked = b"---\nlocked: true\n---\n\n# Locked\n\nAccepted bytes.\n"
+    (baseline / locked_path).write_bytes(locked)
+    (head / locked_path).write_bytes(locked + b"Changed.\n")
+    (baseline / PROJECT_POLICY_PATH).write_text(
+        dump_yaml(
+            {
+                "document_layout": {
+                    "version": 99,
+                    "root": "docs",
+                    "sections": "future-shape",
+                },
+                "unknown_future_policy_field": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "doc",
+            "tree",
+            "--project",
+            str(head),
+            "--baseline-project",
+            str(baseline),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    codes = [
+        finding["code"]
+        for finding in json.loads(result.stdout)["data"]["findings"]
+    ]
+    assert "frozen_document_modified" in codes
+    assert "document_baseline_policy_invalid" not in codes
 
 
 def test_an_unlocked_baseline_document_places_no_restriction(tmp_path: Path) -> None:

@@ -51,12 +51,13 @@ from researchctl.serialization import (
 )
 from researchctl.services.agent_guides import render_simple_agent_guide
 from researchctl.services.document_policy import (
-    LEGACY_POLICY_VERSION,
     SIMPLE_POLICY_VERSION,
     EffectiveDocumentPolicy,
     build_effective_policy,
+    effective_policy_from_layout,
     load_effective_policy,
     render_simple_document_policy_template,
+    select_policy_version,
 )
 from researchctl.services.generated_markdown import (
     inspect_project_frontmatter,
@@ -599,15 +600,17 @@ def _repository_and_effective_policy(
                 message="Managed projects cannot also define a standalone document policy.",
             )
         try:
-            policy = load_model(managed_policy, ProjectPolicy).document_layout
+            payload = load_yaml(managed_policy.read_text(encoding="utf-8"))
+            raw_layout = payload.get("document_layout")
+            if isinstance(raw_layout, dict):
+                select_policy_version(raw_layout, path=managed_policy)
+            policy = ProjectPolicy.model_validate(payload).document_layout
         except ValidationError as error:
             raise _policy_validation_error(error, managed_policy) from error
-        require_adopted_document_policy(policy)
-        return repository, EffectiveDocumentPolicy(
-            version=LEGACY_POLICY_VERSION,
-            source=managed_policy,
-            legacy=policy,
-        )
+        effective = effective_policy_from_layout(policy, path=managed_policy)
+        if effective.legacy is not None:
+            require_adopted_document_policy(effective.legacy)
+        return repository, effective
     if standalone_policy.is_file() and not standalone_policy.is_symlink():
         return repository, _effective_policy_from_file(standalone_policy)
     if standalone_policy.is_symlink():
@@ -2171,7 +2174,10 @@ def doc_agent_guide_command(
 def doc_configure_layout_command(
     policy_file: Annotated[
         Path,
-        typer.Option("--policy-file", help="Complete DocumentLayoutPolicy YAML."),
+        typer.Option(
+            "--policy-file",
+            help="Complete version 1 or version 2 document layout policy YAML.",
+        ),
     ],
     expected_default_head: Annotated[
         str,
@@ -2187,11 +2193,12 @@ def doc_configure_layout_command(
     command = "doc.configure-layout"
     selected_operation = operation_id or new_id("operation")
     try:
+        effective = load_effective_policy(policy_file)
         request = DocumentLayoutConfigureRequest(
             operation_id=selected_operation,
             idempotency_key=idempotency_key or f"human:{selected_operation}",
             expected_default_head=expected_default_head,
-            document_layout=load_model(policy_file, DocumentLayoutPolicy),
+            document_layout=effective.layout,
         )
         from researchctl.services.factory import open_application
 
